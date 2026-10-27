@@ -191,6 +191,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     if (now.recordBusy || now.speakBusy || now.plantBusy) {
       // A camera session must never open while Bluetooth audio is open or
       // about to open: the two are never held together (see the Voice screen).
+      // A refused capture also disarms any reference routing a caller set
+      // up for it, so no later photo can be misrouted by this refusal.
+      pendingRefSlug = null
+      pendingRefKind = null
       _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
       return
     }
@@ -360,12 +364,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         pendingRefKind = null
         val reply = withContext(Dispatchers.IO) { client.postPlantRef(jpegFile, refSlug, refKind) }
         val next = reply.getString("next")
-        if (reply.getString("state") == "standing" && plantQueue.firstOrNull() == refSlug) {
+        val completed = reply.getString("state") == "standing"
+        if (completed && plantQueue.firstOrNull() == refSlug) {
           // The queue head is fully planted. If a round is being planted, move
           // the Plant screen on to its next question; if that was the last one,
           // clear the planting target so its looks cannot be overwritten by a
-          // stray tap. A completion for anything but the head (a planting that
-          // was replaced mid-capture) only updates the prompt.
+          // stray tap.
           plantQueue = plantQueue.drop(1)
           val nextSlug = plantQueue.firstOrNull()
           if (nextSlug != null) {
@@ -376,9 +380,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           } else {
             _uiState.update { it.copy(plantSlug = null, plantPrompt = next) }
           }
-        } else {
+        } else if (!completed) {
           _uiState.update { it.copy(plantPrompt = next) }
         }
+        // A standing completion for a question that is not the queue head
+        // (a planting replaced mid-capture) is only logged below: the
+        // current question keeps its prompt and its place.
         plantLog(next)
         photoLog("Reference look saved. $next")
       } else {
@@ -691,6 +698,13 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       requestPermission: suspend (Permission) -> PermissionStatus,
   ) {
     if (_uiState.value.photoBusy) return
+    val now = _uiState.value
+    if (now.recordBusy || now.speakBusy || now.plantBusy) {
+      // Refuse before arming the reference routing, so a refused capture
+      // can never leave the routing set for a later photo.
+      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
+      return
+    }
     val slug = _uiState.value.plantSlug
     if (slug == null) {
       _uiState.update { it.copy(lastError = "Plant a question first, then show its looks.") }

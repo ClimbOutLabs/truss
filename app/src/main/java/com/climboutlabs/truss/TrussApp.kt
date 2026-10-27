@@ -185,7 +185,10 @@ private fun PlantScreen(
       singleLine = true,
       modifier = Modifier.fillMaxWidth(),
   )
-  Button(onClick = onRecordQuestion, enabled = !state.plantBusy && !state.photoBusy) {
+  Button(
+      onClick = onRecordQuestion,
+      enabled = !state.plantBusy && !state.photoBusy && !state.recordBusy && !state.speakBusy,
+  ) {
     Text(if (state.plantBusy) "Working..." else "Record the question")
   }
   Button(
@@ -199,10 +202,16 @@ private fun PlantScreen(
   }
   state.plantPrompt?.let { Text(it) }
   if (state.plantSlug != null) {
-    Button(onClick = { onCaptureRef("yes") }, enabled = !state.photoBusy) {
+    Button(
+        onClick = { onCaptureRef("yes") },
+        enabled = !state.photoBusy && !state.recordBusy && !state.speakBusy && !state.plantBusy,
+    ) {
       Text("Capture the yes look")
     }
-    Button(onClick = { onCaptureRef("no") }, enabled = !state.photoBusy) {
+    Button(
+        onClick = { onCaptureRef("no") },
+        enabled = !state.photoBusy && !state.recordBusy && !state.speakBusy && !state.plantBusy,
+    ) {
       Text("Capture the no look")
     }
   }
