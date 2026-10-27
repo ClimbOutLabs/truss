@@ -26,13 +26,21 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _reason_text(result):
+    """The checker's one-sentence reason, as text. A model can return a
+    reason that is not a string at all; anything that is not text counts
+    as no reason, rather than breaking the answer it came with."""
+    reason = result.get("reason")
+    return reason.strip() if isinstance(reason, str) else ""
+
+
 def speak_text(entry, result):
     """The spoken line for a firing: the question, the answer, and the
     checker's one-sentence observation. Only yes verdicts are spoken."""
     question = entry["question"].strip()
     if not question.endswith("?"):
         question += "?"
-    reason = (result.get("reason") or "").strip()
+    reason = _reason_text(result)
     if reason:
         return f"{question} Yes. {reason}"
     return f"{question} Yes."
@@ -145,7 +153,7 @@ class CheckLoop:
 
     def _append_log(self, entry, result, evidence, now):
         day = self._day_dir(now)
-        reason = (result.get("reason") or "").strip()
+        reason = _reason_text(result)
         line = (
             f"{now.strftime('%H:%M:%S')} | {entry['question']} | yes | "
             f"{reason} | evidence: {evidence.name}\n"

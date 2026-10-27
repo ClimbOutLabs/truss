@@ -337,6 +337,48 @@ def test_evidence_names_never_overwrite():
     check("both evidence photos kept", first.exists() and second.exists())
 
 
+def test_malformed_reason_still_speaks():
+    """A model can answer yes with a reason that is not a string. The
+    answer must still be spoken (without the reason), logged, and marked
+    answered, and a healthy question in the same frame must not lose
+    its line."""
+    store, loop, spoken, captures = rig(
+        {
+            "is-the-stove-off": [
+                {"verdict": "yes", "reason": 123, "latency_ms": 1, "usage": {}}
+            ],
+            "is-the-front-door-locked": [
+                verdict("yes", "The deadbolt is thrown.")
+            ],
+        }
+    )
+    stove = plant(store, "Is the stove off?", {"kind": "interval", "minutes": 0})
+    door = plant(
+        store, "Is the front door locked?", {"kind": "interval", "minutes": 0}
+    )
+    result = loop.process_frame(frame(captures, "a.jpg"))
+    check(
+        "both questions fire despite the malformed reason",
+        sorted(result["fired"]) == sorted([stove, door]),
+    )
+    check(
+        "malformed reason spoken without it, healthy reason spoken with it",
+        sorted(spoken)
+        == sorted(
+            [
+                "Is the stove off? Yes.",
+                "Is the front door locked? Yes. The deadbolt is thrown.",
+            ]
+        ),
+    )
+    check("malformed reason is handled, not an error", result["errors"] == 0)
+    check(
+        "both questions answered",
+        store.get(stove)["state"] == "answered"
+        and store.get(door)["state"] == "answered",
+    )
+
+
 if __name__ == "__main__":
     test_unmanaged_without_standing_questions()
     test_cannot_tell_is_silent_and_deletes()
@@ -351,4 +393,5 @@ if __name__ == "__main__":
     test_nondict_check_result_is_a_silent_error()
     test_bookkeeping_failure_skips_one_question_only()
     test_evidence_names_never_overwrite()
+    test_malformed_reason_still_speaks()
     print("ALL PASS")
