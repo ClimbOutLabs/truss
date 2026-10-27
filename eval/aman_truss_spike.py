@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Spike: can the Truss server use Aman as its checker for now?
 
-Run this on the Mac where Aman and Truss both live. It changes nothing
-in either repo. It answers four questions, in order:
+Run this on the Mac where Aman and Truss both live. It changes no repo
+and no code. Probe mode only reads; turn mode posts one real turn into
+the chat you choose, and that turn stays in that chat, so use a
+throwaway chat. It answers four questions, in order:
 
   1. Is Aman reachable at http://127.0.0.1:8791 from a plain script?
   2. What auth does a script need (none, a bearer token, a cookie)?
@@ -18,10 +20,14 @@ Usage:
 
 If you have a bearer token, put it in AMAN_TOKEN in the environment.
 If your Aman uses the sign-in profile, a browser cookie header can go
-in AMAN_COOKIE instead. Both are read from the environment only and
-are never printed.
+in AMAN_COOKIE instead. Both are read from the environment only. The
+script redacts their exact values from anything it prints, and it does
+not follow redirects, so the headers can only ever reach the Aman
+address in AMAN_BASE.
 
-Paste the whole output back to whoever asked you to run this.
+The output itself carries live details from your Aman: session ids,
+chat titles, and model replies, which can describe your home. Paste
+the whole output back only to a place you trust with that.
 Verdict lines start with SPIKE.
 """
 
@@ -32,11 +38,62 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 BASE = os.environ.get("AMAN_BASE", "http://127.0.0.1:8791")
 EXTERNAL_ID = "truss-spike"
+
+
+def _secret_values():
+    """The credential values in play, for redaction. Read fresh each
+    time so nothing stale is kept."""
+    values = []
+    for name in ("AMAN_TOKEN", "AMAN_COOKIE"):
+        value = os.environ.get(name)
+        if value:
+            values.append(value)
+    return values
+
+
+def _redact(text):
+    """Remove credential values and any password in the Aman address
+    from a string before it can be printed."""
+    out = text
+    for value in _secret_values():
+        out = out.replace(value, "[redacted]")
+    parsed = urllib.parse.urlparse(BASE)
+    if parsed.password:
+        out = out.replace(parsed.password, "[redacted]")
+    if parsed.username:
+        out = out.replace(parsed.username, "[redacted]")
+    return out
+
+
+def _safe_base():
+    """The Aman address with any userinfo taken out, for printing."""
+    parsed = urllib.parse.urlparse(BASE)
+    if parsed.username or parsed.password:
+        host = parsed.hostname or ""
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        parsed = parsed._replace(netloc=host)
+        return urllib.parse.urlunparse(parsed)
+    return BASE
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect. Following one would re-send the auth
+    headers to whatever address the redirect names, possibly a
+    different origin. A 3xx comes back as a plain HTTP error instead,
+    and the spike reports it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
 
 QUESTION_SUFFIX = (
     " Reply with JSON only, in exactly this shape: "
@@ -64,14 +121,15 @@ def call(method, path, body=None, timeout=30):
     req = urllib.request.Request(url, data=data, headers=headers(), method=method)
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _OPENER.open(req, timeout=timeout) as resp:
             text = resp.read().decode("utf-8", "replace")
-            return resp.status, text, int((time.monotonic() - started) * 1000)
+            return resp.status, _redact(text), int((time.monotonic() - started) * 1000)
     except urllib.error.HTTPError as e:
         text = e.read().decode("utf-8", "replace")
-        return e.code, text, int((time.monotonic() - started) * 1000)
+        return e.code, _redact(text), int((time.monotonic() - started) * 1000)
     except Exception as e:
-        return None, f"{type(e).__name__}: {e}", int((time.monotonic() - started) * 1000)
+        note = _redact(f"{type(e).__name__}: {e}")
+        return None, note, int((time.monotonic() - started) * 1000)
 
 
 def short(text, limit=600):
@@ -84,7 +142,7 @@ def probe():
     status, text, ms = call("GET", "/")
     print(f"SPIKE reach: GET / -> {status} in {ms} ms")
     if status is None:
-        print(f"SPIKE reach: FAILED, Aman did not answer at {BASE}: {short(text)}")
+        print(f"SPIKE reach: FAILED, Aman did not answer at {_safe_base()}: {short(text)}")
         print("SPIKE next: start Aman on this Mac, then run the probe again.")
         return 1
     status, text, ms = call("GET", "/api/v1/sessions?limit=5")
@@ -120,11 +178,17 @@ def probe():
 
 def turn(session_id, photo, question):
     photo_path = Path(photo)
-    data = base64.b64encode(photo_path.read_bytes()).decode("ascii")
+    try:
+        raw = photo_path.read_bytes()
+    except OSError as e:
+        print(f"SPIKE turn: FAILED, could not read the photo: {e}")
+        return 1
+    data = base64.b64encode(raw).decode("ascii")
+    mime = "image/png" if photo_path.suffix.lower() == ".png" else "image/jpeg"
     parts = [
         {"type": "text", "text": f"Question: {question}{QUESTION_SUFFIX}"},
         {"type": "file", "name": photo_path.name,
-         "data": f"data:image/jpeg;base64,{data}"},
+         "data": f"data:{mime};base64,{data}"},
     ]
     body = {
         "input": [{"type": "user.message", "content": parts}],
