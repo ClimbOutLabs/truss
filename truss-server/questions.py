@@ -63,12 +63,18 @@ class QuestionStore:
         while self._folder(slug).exists():
             slug = f"{base}-{n}"
             n += 1
+        # Planting order is a fact about the store, not the clock: two
+        # questions planted in the same second still have an order.
+        # Counted before the new folder exists, so the half-planted
+        # folder is never read back.
+        seq = max((e["seq"] for e in self.list()), default=0) + 1
         folder = self._folder(slug)
         folder.mkdir(parents=True)
         (folder / "question.txt").write_text(text + "\n")
         watch = {
             "pattern": pattern or {"kind": "interval", "minutes": 15},
             "state": "planting",
+            "seq": seq,
             "planted_at": datetime.now().isoformat(timespec="seconds"),
             "last_checked_at": None,
             "answered_at": None,
@@ -111,6 +117,7 @@ class QuestionStore:
             "pattern": watch["pattern"],
             "state": watch["state"],
             "planted_at": watch["planted_at"],
+            "seq": watch.get("seq", 0),
             "last_checked_at": watch["last_checked_at"],
             "answered_at": watch["answered_at"],
             "has_ref_yes": (folder / "ref-yes.jpg").exists(),
@@ -126,6 +133,11 @@ class QuestionStore:
                 entry = self.get(folder.name)
                 if entry is not None:
                     out.append(entry)
+        # Planting order, not folder order: it is the order the wearer
+        # meets the questions in, and the order due() hands them to
+        # the check loop. Questions planted before seq existed all
+        # carry 0 and fall back to their timestamps.
+        out.sort(key=lambda e: (e["seq"], e["planted_at"] or "", e["slug"]))
         return out
 
     # -- the check loop's view ---------------------------------------------

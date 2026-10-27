@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from bedtime import plant_round
 from checkloop import CheckLoop
 from questions import QuestionStore
 
@@ -140,6 +141,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_tts()
         elif path == "/plant/question":
             self.handle_plant_question()
+        elif path == "/plant/bedtime":
+            self.handle_plant_bedtime()
         elif path == "/plant/ref":
             self.handle_plant_ref()
         else:
@@ -186,6 +189,38 @@ class TrussHandler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"POST /plant/question -> ERROR: {e}")
             self.send_error(500, str(e))
+
+    def handle_plant_bedtime(self):
+        """Plant the bedtime round: POST JSON, optional "after" (HH:MM)
+        and "gap_minutes". The three questions are planted in walk
+        order; their reference looks are then shown one question at a
+        time through /plant/ref, as for any planting."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        opts = {}
+        if length:
+            try:
+                opts = json.loads(self.rfile.read(length) or b"{}")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                self.send_error(400, "Body must be JSON")
+                return
+            if not isinstance(opts, dict):
+                self.send_error(400, "Body must be a JSON object")
+                return
+        try:
+            slugs = plant_round(
+                STORE,
+                after=opts.get("after", "20:00"),
+                gap_minutes=opts.get("gap_minutes", 1),
+            )
+        except ValueError as e:
+            self.send_error(400, str(e))
+            return
+        questions = [STORE.get(slug)["question"] for slug in slugs]
+        self.send_json({"slugs": slugs, "questions": questions})
+        print(f"POST /plant/bedtime -> {slugs}")
 
     def handle_plant_ref(self):
         """Save a reference look: POST multipart image, ?slug=...&kind=yes|no."""
