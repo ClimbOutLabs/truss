@@ -43,6 +43,10 @@ The server will:
 - `POST /tts` - Send JSON `{"text": "..."}`, returns audio/wav file
 - `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}`, returns the slug and the next prompt
 - `POST /plant/bedtime` - Plant the bedtime round (stove, front door, tonight's pills) in walk order, JSON with optional `"after"` and `"gap_minutes"`
+- `POST /guide/start` - Start a guided job, JSON `{"title": "...", "steps": ["Is the water shut off?", ...]}`, returns the first step as a line to speak
+- `POST /guide/skip` - Skip the guide's current step
+- `POST /guide/stop` - Stop the guide at once; nothing is kept
+- `GET /guide/status` - The guide's state, step, and current step
 - `POST /plant/ref?slug=...&kind=yes|no` - Save a reference look (multipart field "image")
 - `GET /questions` - List the standing questions and their states
 
@@ -63,6 +67,17 @@ is standing, `/capture` behaves exactly as it did before the loop.
 Checks run through the canonical checker in `eval/checker.py`, in planted
 mode. Without `MODEL_API_KEY` in the environment no real check can be
 made, and every check honestly reports cannot-tell.
+
+## The guide
+
+`guide.py` is the over-the-shoulder mode: the wearer states a job as
+steps, each step a question a glance can settle, and the guide speaks
+one step at a time, checking each captured photo against the current
+step only. While a guide is running, captures go to it instead of the
+standing questions. A yes advances, a no is silent, two cannot-tells
+in a row speak the step again, and the wearer can skip a step or stop
+at any moment. The guide keeps no photos; a finished job leaves one
+line in the day's answer log, a stopped one leaves nothing.
 
 ## The bedtime round
 

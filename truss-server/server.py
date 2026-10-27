@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 from bedtime import plant_round
 from checkloop import CheckLoop
+from guide import Guide
 from questions import QuestionStore
 
 # The canonical checker lives in eval/ (see eval/checker.py). Import it
@@ -77,19 +78,9 @@ CAPTURES_DIR.mkdir(exist_ok=True)
 STORE = QuestionStore(Path(__file__).parent / "questions")
 
 
-def production_check(frame_path, entry):
-    """The loop's check function. With a model key in the environment,
-    run the canonical checker in planted mode with the question's own
-    reference looks. Without a key, no real check can be made, so the
-    honest answer is cannot_tell: silent, and the frame is not kept."""
-    if os.environ.get("MODEL_API_KEY") and eval_checker is not None:
-        return eval_checker.check(
-            str(frame_path),
-            entry["question"],
-            "planted",
-            ref_yes=entry["ref_yes_path"],
-            ref_no=entry["ref_no_path"],
-        )
+def no_key_result():
+    """The honest answer when no real check can be made: cannot_tell,
+    silent, and nothing is kept or confirmed on its word."""
     return {
         "verdict": "cannot_tell",
         "reason": "No model key is set, so no real check was made.",
@@ -98,9 +89,36 @@ def production_check(frame_path, entry):
     }
 
 
+def production_check(frame_path, entry):
+    """The loop's check function. With a model key in the environment,
+    run the canonical checker in planted mode with the question's own
+    reference looks. Without a key, no real check can be made."""
+    if os.environ.get("MODEL_API_KEY") and eval_checker is not None:
+        return eval_checker.check(
+            str(frame_path),
+            entry["question"],
+            "planted",
+            ref_yes=entry["ref_yes_path"],
+            ref_no=entry["ref_no_path"],
+        )
+    return no_key_result()
+
+
+def guide_check(frame_path, question_text):
+    """The guide's check function: the canonical checker in generic
+    mode, since guide steps carry no reference looks."""
+    if os.environ.get("MODEL_API_KEY") and eval_checker is not None:
+        return eval_checker.check(str(frame_path), question_text, "generic")
+    return no_key_result()
+
+
 # The check loop (see checkloop.py). Spoken answers are returned to the
 # app in the /capture response; speaking them is the app's side.
 LOOP = CheckLoop(STORE, production_check, Path(__file__).parent / "log")
+
+# The over-the-shoulder guide (see guide.py). One session at a time, in
+# memory; while a guide is active, captures go to it instead of the loop.
+GUIDE = {"session": None}
 
 class TrussHandler(BaseHTTPRequestHandler):
     
@@ -127,6 +145,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             print(f"GET / -> 200 OK")
         elif path == "/questions":
             self.handle_questions()
+        elif path == "/guide/status":
+            self.handle_guide_status()
         else:
             self.send_error(404, "Not Found")
 
@@ -143,6 +163,12 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_plant_question()
         elif path == "/plant/bedtime":
             self.handle_plant_bedtime()
+        elif path == "/guide/start":
+            self.handle_guide_start()
+        elif path == "/guide/skip":
+            self.handle_guide_skip()
+        elif path == "/guide/stop":
+            self.handle_guide_stop()
         elif path == "/plant/ref":
             self.handle_plant_ref()
         else:
@@ -239,6 +265,104 @@ class TrussHandler(BaseHTTPRequestHandler):
         )
         print(f"POST /plant/bedtime -> {slugs}")
 
+    def _guide_body(self):
+        """The JSON body of a guide call, or None after a 400 was sent."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        if not length:
+            return {}
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_error(400, "Body must be JSON")
+            return None
+        if not isinstance(body, dict):
+            self.send_error(400, "Body must be a JSON object")
+            return None
+        return body
+
+    def handle_guide_start(self):
+        """Start a guide: POST JSON {"title": ..., "steps": [...]}. Each
+        step is a question a glance can settle. The reply carries the
+        first step's prompt as a line to speak."""
+        body = self._guide_body()
+        if body is None:
+            return
+        session = GUIDE["session"]
+        if session is not None and session.state == "active":
+            self.send_error(400, "A guide is already running. Stop it first.")
+            return
+        steps = body.get("steps")
+        if not isinstance(steps, list) or not all(
+            isinstance(s, str) for s in steps
+        ):
+            self.send_error(400, "Steps must be a list of step questions.")
+            return
+        try:
+            session = Guide(
+                steps,
+                title=str(body.get("title") or "Guided job"),
+                log_dir=Path(__file__).parent / "log",
+            )
+        except ValueError as e:
+            self.send_error(400, str(e))
+            return
+        GUIDE["session"] = session
+        self.send_json(
+            {
+                "speak": session.start(),
+                "step": 1,
+                "of": len(session.steps),
+                "title": session.title,
+            }
+        )
+        print(f"POST /guide/start -> {session.title}: {len(session.steps)} steps")
+
+    def handle_guide_skip(self):
+        """Skip the current step, at the wearer's word."""
+        session = GUIDE["session"]
+        if session is None or session.state != "active":
+            self.send_error(400, "No guide is running.")
+            return
+        speak = session.skip()
+        self.send_json(
+            {"speak": speak, "state": session.state, "step": session.index + 1}
+        )
+        print(f"POST /guide/skip -> state {session.state}")
+
+    def handle_guide_stop(self):
+        """Stop the guide at once. Nothing is kept."""
+        session = GUIDE["session"]
+        if session is None or session.state != "active":
+            self.send_error(400, "No guide is running.")
+            return
+        speak = session.stop()
+        self.send_json({"speak": speak, "state": session.state})
+        print("POST /guide/stop -> stopped")
+
+    def handle_guide_status(self):
+        """Where the guide stands: step, state, and the current step."""
+        session = GUIDE["session"]
+        if session is None:
+            self.send_json({"active": False, "state": "none"})
+            return
+        self.send_json(
+            {
+                "active": session.state == "active",
+                "state": session.state,
+                "title": session.title,
+                "step": session.index + 1 if session.state == "active" else None,
+                "of": len(session.steps),
+                "current": (
+                    session.steps[session.index]
+                    if session.state == "active"
+                    else None
+                ),
+            }
+        )
+
     def handle_plant_ref(self):
         """Save a reference look: POST multipart image, ?slug=...&kind=yes|no."""
         try:
@@ -305,6 +429,36 @@ class TrussHandler(BaseHTTPRequestHandler):
             
             file_size = len(image_data)
 
+            response = {"bytes": file_size}
+            session = GUIDE["session"]
+            if session is not None and session.state == "active":
+                # A guide is running: the wearer's attention is on the
+                # current step, so the frame goes to the guide and the
+                # standing questions wait. A guide failure must never
+                # break the capture itself.
+                try:
+                    guide_result = session.process_frame(filepath, guide_check)
+                except Exception as e:
+                    print(f"POST /capture -> guide failed, frame kept: {e}")
+                    guide_result = {"managed": False, "speak": [], "errors": 1}
+                response["guide"] = {
+                    "state": session.state,
+                    "step": session.index + 1 if session.state == "active" else None,
+                    "of": len(session.steps),
+                }
+                if guide_result["managed"]:
+                    response["speak"] = guide_result["speak"]
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+                print(f"POST /capture -> saved {filename} ({file_size} bytes)")
+                print(
+                    f"POST /capture -> guide: state={session.state} "
+                    f"speak={len(guide_result['speak'])} errors={guide_result['errors']}"
+                )
+                return
+
             # Offer the frame to the check loop. When questions are
             # standing, the loop may move the frame into the answer log
             # as evidence or delete it; when none are standing, the
@@ -315,7 +469,6 @@ class TrussHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"POST /capture -> loop failed, frame kept: {e}")
                 loop_result = {"managed": False, "fired": [], "speak": []}
-            response = {"bytes": file_size}
             if loop_result["managed"]:
                 response["fired"] = loop_result["fired"]
                 response["speak"] = loop_result["speak"]
