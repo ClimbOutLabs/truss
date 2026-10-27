@@ -12,7 +12,9 @@ import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
+
+from questions import QuestionStore
 
 # Get the Wi-Fi interface address
 def get_wifi_address():
@@ -60,35 +62,130 @@ else:
 CAPTURES_DIR = Path(__file__).parent / "captures"
 CAPTURES_DIR.mkdir(exist_ok=True)
 
-class MannieHandler(BaseHTTPRequestHandler):
+# The standing-question store (see questions.py)
+STORE = QuestionStore(Path(__file__).parent / "questions")
+
+class TrussHandler(BaseHTTPRequestHandler):
     
     def log_message(self, format, *args):
         """Override to customize logging format."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] {format % args}")
     
+    def send_json(self, obj, status=200):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(obj).encode())
+
     def do_GET(self):
         """Handle GET requests."""
-        if self.path == "/":
+        path = urlparse(self.path).path
+        if path == "/":
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             message = "Truss server is running.\n"
             self.wfile.write(message.encode())
             print(f"GET / -> 200 OK")
+        elif path == "/questions":
+            self.handle_questions()
         else:
             self.send_error(404, "Not Found")
-    
+
     def do_POST(self):
         """Handle POST requests."""
-        if self.path == "/capture":
+        path = urlparse(self.path).path
+        if path == "/capture":
             self.handle_capture()
-        elif self.path == "/stt":
+        elif path == "/stt":
             self.handle_stt()
-        elif self.path == "/tts":
+        elif path == "/tts":
             self.handle_tts()
+        elif path == "/plant/question":
+            self.handle_plant_question()
+        elif path == "/plant/ref":
+            self.handle_plant_ref()
         else:
             self.send_error(404, "Not Found")
+
+    def handle_questions(self):
+        """List the standing questions and their states."""
+        entries = []
+        for entry in STORE.list():
+            entries.append({
+                "slug": entry["slug"],
+                "question": entry["question"],
+                "state": entry["state"],
+                "pattern": entry["pattern"],
+                "has_ref_yes": entry["has_ref_yes"],
+                "has_ref_no": entry["has_ref_no"],
+            })
+        self.send_json({"questions": entries})
+        print(f"GET /questions -> {len(entries)} questions")
+
+    def handle_plant_question(self):
+        """Start planting a question: POST JSON {"text": ..., "pattern": ...}.
+
+        Voice planting uses the same endpoint: the app sends the recording
+        to /stt first, then posts the transcript here as text.
+        """
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode())
+            text = data.get("text", "").strip()
+            if not text:
+                self.send_error(400, "No question text provided")
+                return
+            slug = STORE.create(text, data.get("pattern"))
+            self.send_json({
+                "slug": slug,
+                "state": "planting",
+                "next": "Show me what yes looks like.",
+            })
+            print(f"POST /plant/question -> {slug}: {text[:50]}")
+        except ValueError as e:
+            self.send_error(400, str(e))
+        except Exception as e:
+            print(f"POST /plant/question -> ERROR: {e}")
+            self.send_error(500, str(e))
+
+    def handle_plant_ref(self):
+        """Save a reference look: POST multipart image, ?slug=...&kind=yes|no."""
+        try:
+            query = parse_qs(urlparse(self.path).query)
+            slug = query.get("slug", [""])[0]
+            kind = query.get("kind", [""])[0]
+            if not slug or kind not in ("yes", "no"):
+                self.send_error(400, "Need slug and kind=yes or kind=no")
+                return
+            content_type = self.headers.get("Content-Type", "")
+            if not content_type.startswith("multipart/form-data"):
+                self.send_error(400, "Expected multipart/form-data")
+                return
+            boundary = content_type.split("boundary=")[-1].encode()
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            image_data = self.extract_multipart_field(body, boundary, b"image")
+            if not image_data:
+                self.send_error(400, "No image field found")
+                return
+            state = STORE.save_ref(slug, kind, image_data)
+            entry = STORE.get(slug)
+            if state == "standing":
+                next_step = f"Standing question planted: {entry['question']}"
+            elif kind == "yes":
+                next_step = "Now show me what no looks like."
+            else:
+                next_step = "Now show me what yes looks like."
+            self.send_json({"slug": slug, "state": state, "next": next_step})
+            print(f"POST /plant/ref -> {slug} {kind} ({len(image_data)} bytes), state {state}")
+        except KeyError as e:
+            self.send_error(404, str(e))
+        except Exception as e:
+            print(f"POST /plant/ref -> ERROR: {e}")
+            self.send_error(500, str(e))
     
     def handle_capture(self):
         """Handle photo upload."""
@@ -271,7 +368,7 @@ def main():
     host = get_wifi_address()
     port = 8792
     
-    server = HTTPServer((host, port), MannieHandler)
+    server = HTTPServer((host, port), TrussHandler)
     print(f"\nTruss server starting on {host}:{port}")
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")
     print(f"Press Ctrl+C to stop\n")

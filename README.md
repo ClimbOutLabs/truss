@@ -14,7 +14,7 @@ owner's home network. Three screens, three gates. It is a test harness, not a pr
   glasses, showing the request to audio-start time. If the phone mic or speaker is used
   instead of the glasses, the screen says so in red and that is a fail.
 
-The only network destination the app can call is `http://LAPTOP_IP:8791`
+The only network destination the app can call is `http://LAPTOP_IP:8792`
 (`GET /`, `POST /capture`, `POST /stt`, `POST /tts`). No cloud SDKs, no analytics, no
 crash reporters; the toolkit's own analytics and crash reporting are opted out in the
 manifest, per the toolkit README.

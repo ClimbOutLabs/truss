@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""
+Tests for the standing-question store and the planting endpoints.
+
+Run from the truss-server folder:  python3 test_questions.py
+Stdlib only. Exits non-zero on the first failure.
+"""
+
+import json
+import sys
+import tempfile
+import threading
+import urllib.request
+from datetime import datetime, timedelta
+from http.server import HTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from questions import QuestionStore  # noqa: E402
+
+JPEG = b"\xff\xd8\xff\xe0" + b"dummy-jpeg-bytes" + b"\xff\xd9"
+
+
+def check(name, cond):
+    if not cond:
+        print(f"FAIL: {name}")
+        sys.exit(1)
+    print(f"ok: {name}")
+
+
+def test_store():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create("Is the stove off?")
+        check("slug from question text", slug == "is-the-stove-off")
+        entry = store.get(slug)
+        check("new question is planting", entry["state"] == "planting")
+        check("no refs yet", not entry["has_ref_yes"] and not entry["has_ref_no"])
+
+        state = store.save_ref(slug, "yes", JPEG)
+        check("one ref still planting", state == "planting")
+        state = store.save_ref(slug, "no", JPEG)
+        check("both refs make it standing", state == "standing")
+        check(
+            "ref files on disk",
+            (Path(tmp) / slug / "ref-yes.jpg").read_bytes() == JPEG
+            and (Path(tmp) / slug / "ref-no.jpg").read_bytes() == JPEG,
+        )
+
+        slug2 = store.create("Is the stove off?")
+        check("duplicate text gets a fresh slug", slug2 == "is-the-stove-off-2")
+
+        # Interval due logic, driven by explicit times.
+        planted = datetime.now()
+        check(
+            "fresh interval question not due",
+            store.due(now=planted + timedelta(minutes=5)) == [],
+        )
+        due = store.due(now=planted + timedelta(minutes=16))
+        check(
+            "interval question due after its minutes",
+            [e["slug"] for e in due] == ["is-the-stove-off"],
+        )
+
+        store.mark_answered(slug)
+        check("interval question retires on answer", store.get(slug)["state"] == "answered")
+
+        slug3 = store.create(
+            "Is the front door locked?", {"kind": "nightly", "after": "20:00"}
+        )
+        store.save_ref(slug3, "yes", JPEG)
+        store.save_ref(slug3, "no", JPEG)
+        evening = datetime.now().replace(hour=21, minute=0, second=0, microsecond=0)
+        morning = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+        check(
+            "nightly question due in the evening",
+            any(e["slug"] == slug3 for e in store.due(now=evening)),
+        )
+        check(
+            "nightly question not due in the morning",
+            not any(e["slug"] == slug3 for e in store.due(now=morning)),
+        )
+        store.mark_answered(slug3, when=evening)
+        check(
+            "nightly question re-arms after answering",
+            store.get(slug3)["state"] == "standing",
+        )
+
+
+def multipart(image_bytes):
+    boundary = "----truss-test-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="image"; filename="frame.jpg"\r\n'
+        "Content-Type: image/jpeg\r\n\r\n"
+    ).encode() + image_bytes + f"\r\n--{boundary}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def post(url, body, content_type):
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", content_type)
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, None
+
+
+def get_json(url):
+    with urllib.request.urlopen(url) as resp:
+        return json.loads(resp.read())
+
+
+def test_http():
+    import server as server_module
+
+    with tempfile.TemporaryDirectory() as tmp:
+        server_module.STORE = QuestionStore(tmp)
+        httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{port}"
+        try:
+            status, body = post(
+                base + "/plant/question",
+                json.dumps({"text": "Is the stove off?"}).encode(),
+                "application/json",
+            )
+            check("plant question returns 200", status == 200)
+            check("plant question starts planting", body["state"] == "planting")
+            check("first prompt asks for the yes look", "yes" in body["next"])
+            slug = body["slug"]
+
+            img, ctype = multipart(JPEG)
+            status, body = post(
+                f"{base}/plant/ref?slug={slug}&kind=yes", img, ctype
+            )
+            check("yes ref accepted", status == 200 and body["state"] == "planting")
+            check("second prompt asks for the no look", "no" in body["next"])
+
+            status, body = post(
+                f"{base}/plant/ref?slug={slug}&kind=no", img, ctype
+            )
+            check("no ref completes planting", status == 200 and body["state"] == "standing")
+            check(
+                "confirmation names the question",
+                body["next"] == "Standing question planted: Is the stove off?",
+            )
+
+            listing = get_json(base + "/questions")
+            check("list shows one question", len(listing["questions"]) == 1)
+            entry = listing["questions"][0]
+            check(
+                "listed question is standing with both refs",
+                entry["state"] == "standing"
+                and entry["has_ref_yes"]
+                and entry["has_ref_no"],
+            )
+
+            status, _ = post(
+                f"{base}/plant/ref?slug=nope&kind=yes", img, ctype
+            )
+            check("bogus slug refused with 404", status == 404)
+        finally:
+            httpd.shutdown()
+
+
+if __name__ == "__main__":
+    test_store()
+    test_http()
+    print("ALL PASS")
