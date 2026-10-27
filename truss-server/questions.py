@@ -146,10 +146,22 @@ class QuestionStore:
         folder = self._folder(slug)
         if not folder.exists():
             return None
-        watch = self._read_watch(slug)
+        try:
+            watch = self._read_watch(slug)
+            question = (folder / "question.txt").read_text().strip()
+        except Exception:
+            # A folder too broken to read (no watch file, a watch file
+            # that no longer parses, no question text) is not a
+            # readable question. Reads skip it, so one broken folder
+            # can never take down the store's lists, the round's
+            # planting, or the check loop's view. Writes to that slug
+            # still surface the real error.
+            return None
+        if watch is None:
+            return None
         return {
             "slug": slug,
-            "question": (folder / "question.txt").read_text().strip(),
+            "question": question,
             "pattern": watch["pattern"],
             "state": watch["state"],
             "planted_at": watch["planted_at"],

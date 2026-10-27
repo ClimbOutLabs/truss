@@ -156,6 +156,35 @@ def test_broken_folder_never_blocks_planting():
             "the new question carries a sequence number",
             store.get(slug)["seq"] >= 1,
         )
+        check(
+            "the broken folder reads as no question",
+            store.get("half-planted") is None,
+        )
+        check(
+            "lists skip the broken folder",
+            [e["slug"] for e in store.list()] == [slug],
+        )
+        planted = plant_round(store)
+        check(
+            "the round plants beside a broken folder",
+            len(planted["slugs"]) == 3,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        corrupt = Path(tmp) / "corrupt"
+        corrupt.mkdir()
+        (corrupt / "question.txt").write_text("Is the porch light on?\n")
+        (corrupt / "watch.json").write_text("{not json")
+        check(
+            "a corrupt watch file reads as no question",
+            store.get("corrupt") is None,
+        )
+        planted = plant_round(store)
+        check(
+            "the round plants beside a corrupt folder",
+            len(planted["slugs"]) == 3 and len(store.list()) == 3,
+        )
 
 
 def test_the_round():
