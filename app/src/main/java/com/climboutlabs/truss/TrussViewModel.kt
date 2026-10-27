@@ -187,11 +187,19 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   fun captureAndUpload(requestPermission: suspend (Permission) -> PermissionStatus) {
     if (_uiState.value.photoBusy) return
+    val now = _uiState.value
+    if (now.recordBusy || now.speakBusy || now.plantBusy) {
+      // A camera session must never open while Bluetooth audio is open or
+      // about to open: the two are never held together (see the Voice screen).
+      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
+      return
+    }
     _uiState.update {
       it.copy(
           photoBusy = true,
           photoLog = emptyList(),
           serverBytes = null,
+          spokenLines = emptyList(),
           photoElapsedMs = null,
           wifiReturn = null,
           lastError = null,
@@ -352,9 +360,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         pendingRefKind = null
         val reply = withContext(Dispatchers.IO) { client.postPlantRef(jpegFile, refSlug, refKind) }
         val next = reply.getString("next")
-        if (reply.getString("state") == "standing") {
-          // This question is fully planted. If a round is being planted, move
-          // the Plant screen on to its next question.
+        if (reply.getString("state") == "standing" && plantQueue.firstOrNull() == refSlug) {
+          // The queue head is fully planted. If a round is being planted, move
+          // the Plant screen on to its next question; if that was the last one,
+          // clear the planting target so its looks cannot be overwritten by a
+          // stray tap. A completion for anything but the head (a planting that
+          // was replaced mid-capture) only updates the prompt.
           plantQueue = plantQueue.drop(1)
           val nextSlug = plantQueue.firstOrNull()
           if (nextSlug != null) {
@@ -363,7 +374,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             }
             plantLog("Next question in the round: show it what yes looks like.")
           } else {
-            _uiState.update { it.copy(plantPrompt = next) }
+            _uiState.update { it.copy(plantSlug = null, plantPrompt = next) }
           }
         } else {
           _uiState.update { it.copy(plantPrompt = next) }
@@ -480,6 +491,13 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   fun recordAndTranscribe(requestRecordAudio: suspend () -> Boolean) {
     if (_uiState.value.recordBusy) return
+    val now = _uiState.value
+    if (now.photoBusy || now.speakBusy || now.plantBusy) {
+      // Bluetooth audio must never open while a camera session is alive or
+      // other audio work is running: the two are never held together.
+      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
+      return
+    }
     _uiState.update { it.copy(recordBusy = true, transcript = null, sttMs = null, lastError = null) }
     viewModelScope.launch {
       val audio = GlassesAudio(getApplication())
@@ -516,6 +534,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   fun speakTestSentence() {
     if (_uiState.value.speakBusy) return
+    val now = _uiState.value
+    if (now.photoBusy || now.recordBusy || now.plantBusy) {
+      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
+      return
+    }
     _uiState.update { it.copy(speakBusy = true, ttsMs = null, lastError = null) }
     viewModelScope.launch {
       val audio = GlassesAudio(getApplication())
@@ -570,6 +593,13 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** Record the question through the glasses and put its words in the text field. */
   fun recordPlantQuestion(requestRecordAudio: suspend () -> Boolean) {
     if (_uiState.value.plantBusy) return
+    val now = _uiState.value
+    if (now.photoBusy || now.recordBusy || now.speakBusy) {
+      // Same rule as the Voice screen: Bluetooth audio never opens while a
+      // camera session is alive or other audio work is running.
+      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
+      return
+    }
     _uiState.update { it.copy(plantBusy = true, lastError = null) }
     viewModelScope.launch {
       val audio = GlassesAudio(getApplication())
@@ -660,6 +690,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       kind: String,
       requestPermission: suspend (Permission) -> PermissionStatus,
   ) {
+    if (_uiState.value.photoBusy) return
     val slug = _uiState.value.plantSlug
     if (slug == null) {
       _uiState.update { it.copy(lastError = "Plant a question first, then show its looks.") }

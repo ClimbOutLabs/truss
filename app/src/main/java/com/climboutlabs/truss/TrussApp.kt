@@ -142,7 +142,10 @@ private fun PhotoScreen(state: TrussUiState, onCapture: () -> Unit) {
   Text("Screen 2: Photo (Gate 2)", style = MaterialTheme.typography.titleMedium)
   Text(stringResource(R.string.why_camera_permission))
   Text(stringResource(R.string.why_location_wifi))
-  Button(onClick = onCapture, enabled = !state.photoBusy) {
+  Button(
+      onClick = onCapture,
+      enabled = !state.photoBusy && !state.recordBusy && !state.speakBusy && !state.plantBusy,
+  ) {
     Text(if (state.photoBusy) "Working..." else "Capture and upload")
   }
   state.photo?.let { bitmap ->
@@ -182,7 +185,7 @@ private fun PlantScreen(
       singleLine = true,
       modifier = Modifier.fillMaxWidth(),
   )
-  Button(onClick = onRecordQuestion, enabled = !state.plantBusy) {
+  Button(onClick = onRecordQuestion, enabled = !state.plantBusy && !state.photoBusy) {
     Text(if (state.plantBusy) "Working..." else "Record the question")
   }
   Button(
@@ -233,7 +236,7 @@ private fun VoiceScreen(
   viewModel.getAvailableCommunicationDevices().forEach { device ->
     Text("  • $device", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
   }
-  Button(onClick = onRecord, enabled = !state.recordBusy) {
+  Button(onClick = onRecord, enabled = !state.recordBusy && !state.photoBusy) {
     Text(if (state.recordBusy) "Recording..." else "Record 5 s via glasses")
   }
   state.inputDevice?.let { device ->
@@ -248,7 +251,7 @@ private fun VoiceScreen(
   }
   state.transcript?.let { Text("Transcript: $it") }
   state.sttMs?.let { Text("Speech end to transcript: $it ms") }
-  Button(onClick = onSpeak, enabled = !state.speakBusy) {
+  Button(onClick = onSpeak, enabled = !state.speakBusy && !state.photoBusy) {
     Text(if (state.speakBusy) "Playing..." else "Speak test sentence via glasses")
   }
   Text("Test sentence: \"${TrussViewModel.TEST_SENTENCE}\"")
