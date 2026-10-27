@@ -146,8 +146,17 @@ class QuestionStore:
                     out.append(entry)
             elif kind == "nightly":
                 after = time.fromisoformat(pattern.get("after", "20:00"))
-                if now.time() >= after:
-                    out.append(entry)
+                if now.time() < after:
+                    continue
+                answered = entry["answered_at"]
+                if answered and datetime.fromisoformat(answered).date() == now.date():
+                    continue
+                last = entry["last_checked_at"]
+                if last:
+                    gap = pattern.get("minutes", 15) * 60
+                    if (now - datetime.fromisoformat(last)).total_seconds() < gap:
+                        continue
+                out.append(entry)
         return out
 
     def mark_checked(self, slug, when=None):

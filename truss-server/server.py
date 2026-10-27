@@ -7,6 +7,7 @@ Handles photo uploads, speech-to-text, and text-to-speech for the Truss app.
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime
@@ -14,7 +15,16 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from checkloop import CheckLoop
 from questions import QuestionStore
+
+# The canonical checker lives in eval/ (see eval/checker.py). Import it
+# if it can be imported; the loop falls back to cannot_tell without it.
+sys.path.insert(0, str(Path(__file__).parent.parent / "eval"))
+try:
+    import checker as eval_checker
+except Exception:
+    eval_checker = None
 
 # Get the Wi-Fi interface address
 def get_wifi_address():
@@ -64,6 +74,32 @@ CAPTURES_DIR.mkdir(exist_ok=True)
 
 # The standing-question store (see questions.py)
 STORE = QuestionStore(Path(__file__).parent / "questions")
+
+
+def production_check(frame_path, entry):
+    """The loop's check function. With a model key in the environment,
+    run the canonical checker in planted mode with the question's own
+    reference looks. Without a key, no real check can be made, so the
+    honest answer is cannot_tell: silent, and the frame is not kept."""
+    if os.environ.get("MODEL_API_KEY") and eval_checker is not None:
+        return eval_checker.check(
+            str(frame_path),
+            entry["question"],
+            "planted",
+            ref_yes=entry["ref_yes_path"],
+            ref_no=entry["ref_no_path"],
+        )
+    return {
+        "verdict": "cannot_tell",
+        "reason": "No model key is set, so no real check was made.",
+        "latency_ms": 0,
+        "usage": {"spark_input_tokens": 0, "spark_output_tokens": 0, "sam_images": 0},
+    }
+
+
+# The check loop (see checkloop.py). Spoken answers are returned to the
+# app in the /capture response; speaking them is the app's side.
+LOOP = CheckLoop(STORE, production_check, Path(__file__).parent / "log")
 
 class TrussHandler(BaseHTTPRequestHandler):
     
@@ -215,14 +251,28 @@ class TrussHandler(BaseHTTPRequestHandler):
                 f.write(image_data)
             
             file_size = len(image_data)
+
+            # Offer the frame to the check loop. When questions are
+            # standing, the loop may move the frame into the answer log
+            # as evidence or delete it; when none are standing, the
+            # frame stays exactly as day 1 left it.
+            loop_result = LOOP.process_frame(filepath)
             response = {"bytes": file_size}
-            
+            if loop_result["managed"]:
+                response["fired"] = loop_result["fired"]
+                response["speak"] = loop_result["speak"]
+
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(response).encode())
-            
+
             print(f"POST /capture -> saved {filename} ({file_size} bytes)")
+            if loop_result["managed"]:
+                print(
+                    f"POST /capture -> loop: fired={loop_result['fired']} "
+                    f"errors={loop_result['errors']}"
+                )
         
         except Exception as e:
             print(f"POST /capture -> ERROR: {e}")
