@@ -1,0 +1,17 @@
+# Local machine settings (Android Studio writes sdk.dir per machine)
+local.properties
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+
+# Truss server runtime data: captures, planted questions, the answer log
+truss-server/captures/
+truss-server/questions/
+truss-server/log/
+
+# Eval scratch output and staged photos stay on the owner's machine
+eval/dummy/
+eval/dataset/
