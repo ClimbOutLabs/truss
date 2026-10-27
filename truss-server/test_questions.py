@@ -168,7 +168,53 @@ def test_http():
             httpd.shutdown()
 
 
+def test_nightly_regressions():
+    """A nightly question must not re-fire all evening: after a check it
+    waits out its gap, and after an answer it is done until tomorrow."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create(
+            "Is the front door locked?", {"kind": "nightly", "after": "20:00"}
+        )
+        store.save_ref(slug, "yes", JPEG)
+        store.save_ref(slug, "no", JPEG)
+        evening = datetime.now().replace(hour=21, minute=0, second=0, microsecond=0)
+
+        store.mark_checked(slug, when=evening)
+        check(
+            "nightly question waits out its gap after a check",
+            not any(
+                e["slug"] == slug
+                for e in store.due(now=evening + timedelta(minutes=5))
+            ),
+        )
+        check(
+            "nightly question is due again after the gap",
+            any(
+                e["slug"] == slug
+                for e in store.due(now=evening + timedelta(minutes=20))
+            ),
+        )
+
+        store.mark_answered(slug, when=evening)
+        check(
+            "answered nightly question is not due again that evening",
+            not any(
+                e["slug"] == slug
+                for e in store.due(now=evening + timedelta(minutes=30))
+            ),
+        )
+        check(
+            "answered nightly question is due the next evening",
+            any(
+                e["slug"] == slug
+                for e in store.due(now=evening + timedelta(days=1))
+            ),
+        )
+
+
 if __name__ == "__main__":
     test_store()
+    test_nightly_regressions()
     test_http()
     print("ALL PASS")
