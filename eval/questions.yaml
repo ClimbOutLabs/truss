@@ -1,0 +1,204 @@
+# Mannie eval: the 20 staged questions, machine-readable.
+# Source of truth for wording: EVAL-QUESTIONS-DRAFT.md (2026-10-26).
+# label "yes" means the question, as worded, is answered yes.
+# split rule: frames 1-3 of each state are tuning; the rest are heldout
+# and frozen, touched only for reported numbers.
+# Terms (the scorer uses exactly these):
+#   false-fire     = verdict yes while label is no.
+#   miss           = verdict no while label is yes.
+#   cannot_tell    = reported as its own rate, neither right nor wrong
+#                    (except q20, where it is the correct verdict).
+# safety: true marks the questions where a false-fire is a false
+# all-clear ("the stove is off" while a burner is on): the expensive
+# error. The false-fire rate for safety questions is reported as its
+# own headline number, never averaged away.
+
+meta:
+  version: 1
+  frames_per_state: "4-6"
+  lightings: [day, evening]
+  splits: [tuning, heldout]
+
+questions:
+  - id: q01
+    slug: stove-off
+    group: bedtime
+    safety: true
+    question: "Is the stove off?"
+    yes_state: "All burners off, knobs at off."
+    no_state: "One burner on."
+    hard_negative: "Burner on a low simmer; a burner off but still glowing from recent use."
+    sam_prompts: ["stove burner", "stove knob"]
+  - id: q02
+    slug: front-door-locked
+    group: bedtime
+    safety: true
+    question: "Is the front door locked?"
+    yes_state: "Door closed, deadbolt engaged."
+    no_state: "Door closed, deadbolt open."
+    hard_negative: "Door pulled shut but not latched, deadbolt open."
+    sam_prompts: ["deadbolt lock", "door handle"]
+  - id: q03
+    slug: pills-tonight-empty
+    group: bedtime
+    safety: true
+    question: "Is tonight's pill compartment empty?"
+    yes_state: "Tonight's compartment empty."
+    no_state: "Tonight's pills present."
+    hard_negative: "The wrong day's compartment empty and tonight's full; one of two pills taken, one left."
+    sam_prompts: ["pill organizer compartment", "pill"]
+  - id: q04
+    slug: oven-off
+    group: kitchen
+    safety: true
+    question: "Is the oven off?"
+    yes_state: "Dial at off, no glow."
+    no_state: "Oven on at a low temperature."
+    hard_negative: "Oven light on, heat off."
+    sam_prompts: ["oven dial", "oven door"]
+  - id: q05
+    slug: kitchen-faucet-off
+    group: kitchen
+    safety: false
+    question: "Is the kitchen faucet off?"
+    yes_state: "No water running."
+    no_state: "Water running."
+    hard_negative: "A slow drip, one drop every few seconds."
+    sam_prompts: ["kitchen faucet"]
+  - id: q06
+    slug: fridge-door-closed
+    group: kitchen
+    safety: false
+    question: "Is the fridge door fully closed?"
+    yes_state: "Door shut and sealed."
+    no_state: "Door open."
+    hard_negative: "Door resting shut but ajar by an inch, seal broken."
+    sam_prompts: ["refrigerator door"]
+  - id: q07
+    slug: water-on-floor-by-sink
+    group: kitchen
+    safety: false
+    question: "Is there water on the floor by the sink?"
+    yes_state: "A spill or puddle present."
+    no_state: "Floor dry."
+    hard_negative: "A dark wet mat on a dry floor; reflections on tile."
+    sam_prompts: ["puddle of water on floor"]
+  - id: q08
+    slug: package-at-front-door
+    group: arrivals
+    safety: false
+    question: "Has a package been delivered to the front door?"
+    yes_state: "A parcel at the door."
+    no_state: "Nothing at the door."
+    hard_negative: "A flyer or menu left at the door, no parcel."
+    sam_prompts: ["cardboard package", "parcel"]
+  - id: q09
+    slug: garage-door-closed
+    group: arrivals
+    safety: false
+    question: "Is the garage door closed?"
+    yes_state: "Door fully down."
+    no_state: "Door open."
+    hard_negative: "Door down except for the last few inches."
+    sam_prompts: ["garage door"]
+  - id: q10
+    slug: keys-on-hook
+    group: arrivals
+    safety: false
+    question: "Are the car keys on their hook?"
+    yes_state: "The keys on the hook."
+    no_state: "Hook empty."
+    hard_negative: "A different set of keys on the hook."
+    sam_prompts: ["keys on a hook", "key hook"]
+  - id: q11
+    slug: dog-on-couch
+    group: living
+    safety: false
+    question: "Is the dog on the couch?"
+    yes_state: "Dog on the couch."
+    no_state: "Couch empty."
+    hard_negative: "Dog asleep on the floor against the couch; a rumpled blanket in a dog-like lump on the couch."
+    sam_prompts: ["dog", "couch"]
+  - id: q12
+    slug: living-room-lights-off
+    group: living
+    safety: false
+    question: "Are the living room lights off?"
+    yes_state: "All lights off."
+    no_state: "Main light on."
+    hard_negative: "One low lamp left on in an otherwise dark room."
+    sam_prompts: ["lamp", "ceiling light"]
+  - id: q13
+    slug: tv-off
+    group: living
+    safety: false
+    question: "Is the TV off?"
+    yes_state: "Screen dark, set off."
+    no_state: "Programme playing."
+    hard_negative: "TV on showing a black screen between scenes."
+    sam_prompts: ["television screen"]
+  - id: q14
+    slug: bedroom-window-closed
+    group: bedroom-bathroom
+    safety: false
+    question: "Is the bedroom window closed?"
+    yes_state: "Window shut."
+    no_state: "Window wide open."
+    hard_negative: "Window open two inches, hidden by the curtain."
+    sam_prompts: ["window", "curtain"]
+  - id: q15
+    slug: hair-straightener-unplugged
+    group: bedroom-bathroom
+    safety: true
+    question: "Is the hair straightener unplugged?"
+    yes_state: "Unplugged, cord coiled."
+    no_state: "Plugged in, light on."
+    hard_negative: "Plugged in but switched off, light dark."
+    sam_prompts: ["hair straightener", "power cord plug"]
+  - id: q16
+    slug: washing-machine-finished
+    group: laundry-outside
+    safety: false
+    question: "Has the washing machine finished?"
+    yes_state: "Cycle done indicator, drum still."
+    no_state: "Mid cycle."
+    hard_negative: "Machine paused mid cycle, drum still, not done."
+    sam_prompts: ["washing machine display", "washing machine drum"]
+  - id: q17
+    slug: back-gate-closed
+    group: laundry-outside
+    safety: false
+    question: "Is the back gate closed?"
+    yes_state: "Gate shut and latched."
+    no_state: "Gate open."
+    hard_negative: "Gate shut but resting unlatched."
+    sam_prompts: ["gate latch", "garden gate"]
+  - id: q18
+    slug: mail-come
+    group: laundry-outside
+    safety: false
+    question: "Has the mail come?"
+    yes_state: "Letters in the box or on the mat."
+    no_state: "Box empty."
+    hard_negative: "One advertising flyer only."
+    sam_prompts: ["letters", "mailbox"]
+  - id: q19
+    slug: curtains-drawn
+    group: laundry-outside
+    safety: false
+    question: "Are the curtains in the front room drawn for the night?"
+    yes_state: "Curtains fully drawn."
+    no_state: "Curtains open."
+    hard_negative: "Curtains drawn with a hand-width gap in the middle."
+    sam_prompts: ["curtains"]
+  - id: q20
+    slug: houseplant-watered
+    group: probe
+    safety: false
+    kind: cannot_tell_probe
+    question: "Has the houseplant been watered today?"
+    yes_state: "Soil dark and damp."
+    no_state: "Soil pale and dry."
+    hard_negative: "Top soil damp from a splash, dry underneath."
+    scoring: "A verdict of cannot_tell scores as correct on every frame of this question. A confident yes or no does not."
+    sam_prompts: ["houseplant soil", "plant pot"]
