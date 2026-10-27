@@ -231,7 +231,9 @@ class TrussHandler(BaseHTTPRequestHandler):
             )
             return
         slugs = planted["slugs"]
-        questions = [STORE.get(slug)["question"] for slug in slugs]
+        questions = [
+            (STORE.get(slug) or {"question": slug})["question"] for slug in slugs
+        ]
         self.send_json(
             {"slugs": slugs, "questions": questions, "notes": planted["notes"]}
         )
@@ -260,7 +262,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             state = STORE.save_ref(slug, kind, image_data)
             entry = STORE.get(slug)
             if state == "standing":
-                next_step = f"Standing question planted: {entry['question']}"
+                name = entry["question"] if entry else slug
+                next_step = f"Standing question planted: {name}"
             elif kind == "yes":
                 next_step = "Now show me what no looks like."
             else:

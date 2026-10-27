@@ -89,10 +89,15 @@ class QuestionStore:
         if kind not in ("yes", "no"):
             raise ValueError("A reference look is either yes or no.")
         folder = self._folder(slug)
-        if not folder.exists():
+        try:
+            watch = self._read_watch(slug)
+        except Exception:
+            watch = None
+        if not self._watch_ok(watch) or not (folder / "question.txt").exists():
+            # Refuse before writing anything: a look saved into a
+            # folder reads cannot see would plant a phantom.
             raise KeyError(f"No question named {slug}.")
         (folder / f"ref-{kind}.jpg").write_bytes(data)
-        watch = self._read_watch(slug)
         if (
             watch["state"] == "planting"
             and (folder / "ref-yes.jpg").exists()
@@ -121,8 +126,10 @@ class QuestionStore:
                         watch = self._read_watch(folder.name)
                     except Exception:
                         continue
-                    if watch:
-                        last = max(last, watch.get("seq", 0))
+                    if isinstance(watch, dict):
+                        seq = watch.get("seq", 0)
+                        if isinstance(seq, int) and not isinstance(seq, bool):
+                            last = max(last, seq)
         nxt = last + 1
         try:
             counter.write_text(str(nxt))
@@ -142,6 +149,37 @@ class QuestionStore:
 
     # -- reading ----------------------------------------------------------
 
+    @staticmethod
+    def _watch_ok(watch):
+        """Whether a watch record is complete enough to read as a
+        question: a mapping with a pattern, a state, and timestamps
+        that parse. Anything less is damage, and reads treat the
+        folder as no question rather than raising over it."""
+        if not isinstance(watch, dict):
+            return False
+        if not isinstance(watch.get("pattern"), dict):
+            return False
+        if not isinstance(watch.get("state"), str):
+            return False
+        for key in ("planted_at", "last_checked_at", "answered_at"):
+            value = watch.get(key)
+            if value is None:
+                if key == "planted_at":
+                    return False
+                continue
+            if not isinstance(value, str):
+                return False
+            try:
+                datetime.fromisoformat(value)
+            except ValueError:
+                return False
+        return True
+
+    @staticmethod
+    def _stamp(watch, key):
+        value = watch.get(key)
+        return value if isinstance(value, str) else None
+
     def get(self, slug):
         folder = self._folder(slug)
         if not folder.exists():
@@ -150,24 +188,25 @@ class QuestionStore:
             watch = self._read_watch(slug)
             question = (folder / "question.txt").read_text().strip()
         except Exception:
+            watch, question = None, None
+        if question is None or not self._watch_ok(watch):
             # A folder too broken to read (no watch file, a watch file
-            # that no longer parses, no question text) is not a
-            # readable question. Reads skip it, so one broken folder
-            # can never take down the store's lists, the round's
-            # planting, or the check loop's view. Writes to that slug
-            # still surface the real error.
+            # that no longer parses or is not a complete record, no
+            # question text) is not a readable question. Reads skip
+            # it, so one broken folder can never take down the store's
+            # lists, the round's planting, or the check loop's view.
+            # Writes to that slug still surface the real error.
             return None
-        if watch is None:
-            return None
+        seq = watch.get("seq", 0)
         return {
             "slug": slug,
             "question": question,
             "pattern": watch["pattern"],
             "state": watch["state"],
             "planted_at": watch["planted_at"],
-            "seq": watch.get("seq", 0),
-            "last_checked_at": watch["last_checked_at"],
-            "answered_at": watch["answered_at"],
+            "seq": seq if isinstance(seq, int) and not isinstance(seq, bool) else 0,
+            "last_checked_at": self._stamp(watch, "last_checked_at"),
+            "answered_at": self._stamp(watch, "answered_at"),
             "has_ref_yes": (folder / "ref-yes.jpg").exists(),
             "has_ref_no": (folder / "ref-no.jpg").exists(),
             "ref_yes_path": str(folder / "ref-yes.jpg"),

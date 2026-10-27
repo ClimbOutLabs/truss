@@ -186,6 +186,47 @@ def test_broken_folder_never_blocks_planting():
             len(planted["slugs"]) == 3 and len(store.list()) == 3,
         )
 
+    # Watch files that parse but are not complete records: an empty
+    # object, a bare number, a state with nothing else.
+    for i, content in enumerate(
+        ("{}", "5", '{"state": "standing"}')
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = QuestionStore(tmp)
+            broken = Path(tmp) / f"broken-{i}"
+            broken.mkdir()
+            (broken / "question.txt").write_text("Is the porch light on?\n")
+            (broken / "watch.json").write_text(content)
+            check(
+                f"incomplete watch {i} reads as no question",
+                store.get(f"broken-{i}") is None,
+            )
+            healthy = store.create("Is the gate closed?")
+            check(
+                f"lists stay healthy beside incomplete watch {i}",
+                [e["slug"] for e in store.list()] == [healthy],
+            )
+            planted = plant_round(store)
+            check(
+                f"the round plants beside incomplete watch {i}",
+                len(planted["slugs"]) == 3,
+            )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create("Is the porch light on?")
+        folder = Path(tmp) / slug
+        (folder / "question.txt").unlink()
+        try:
+            store.save_ref(slug, "yes", JPEG)
+            check("a look into a folder reads cannot see is refused", False)
+        except KeyError:
+            check("a look into a folder reads cannot see is refused", True)
+        check(
+            "the refused look wrote nothing",
+            not (folder / "ref-yes.jpg").exists(),
+        )
+
 
 def test_the_round():
     """The choreography: one walk down the hall, two passes. The first
