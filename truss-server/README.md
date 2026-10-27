@@ -42,6 +42,7 @@ The server will:
 - `POST /stt` - Upload WAV audio (multipart field "audio"), returns `{"text": "..."}`
 - `POST /tts` - Send JSON `{"text": "..."}`, returns audio/wav file
 - `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}`, returns the slug and the next prompt
+- `POST /plant/bedtime` - Plant the bedtime round (stove, front door, tonight's pills) in walk order, JSON with optional `"after"` and `"gap_minutes"`
 - `POST /plant/ref?slug=...&kind=yes|no` - Save a reference look (multipart field "image")
 - `GET /questions` - List the standing questions and their states
 
@@ -62,6 +63,15 @@ is standing, `/capture` behaves exactly as it did before the loop.
 Checks run through the canonical checker in `eval/checker.py`, in planted
 mode. Without `MODEL_API_KEY` in the environment no real check can be
 made, and every check honestly reports cannot-tell.
+
+## The bedtime round
+
+`bedtime.py` plants three nightly questions in the order the wearer
+meets them on one walk: the stove, the front door, and tonight's pill
+compartment, with a short one-minute check gap so a question a pass
+cannot settle is checked again on the next pass. Run
+`python3 bedtime_demo.py` to see the round with scripted checks and no
+hardware, or `python3 test_bedtime.py` for the tested choreography.
 
 ## Notes
 

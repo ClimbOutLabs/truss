@@ -20,6 +20,7 @@ Patterns:
 """
 
 import json
+import math
 import re
 from datetime import datetime, time
 from pathlib import Path
@@ -28,6 +29,57 @@ from pathlib import Path
 def slugify(text):
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return (slug[:48].strip("-") or "question")
+
+
+def _is_number(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _parse_after(value):
+    """Parse a nightly after time the one way every reader agrees on:
+    the parser due() itself uses, and only a plain clock time, with
+    no offset attached. Returns a time, or None when the value is not
+    one. Validating with any other parser lets values through that
+    due() then raises on."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = time.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return None
+    return parsed
+
+
+def _clean_pattern(pattern):
+    """Validate a watch pattern for create() and fill every field the
+    checker reads, so a stored pattern can always be evaluated.
+    Raises ValueError with a plain message for anything unusable."""
+    if pattern is None:
+        return {"kind": "interval", "minutes": 15}
+    if not isinstance(pattern, dict):
+        raise ValueError("A watch pattern must say how often to check.")
+    kind = pattern.get("kind", "interval")
+    if kind == "interval":
+        minutes = pattern.get("minutes", 15)
+        if not _is_number(minutes):
+            raise ValueError("How often to check must be a number of minutes.")
+        return {"kind": "interval", "minutes": minutes}
+    if kind == "nightly":
+        parsed_after = _parse_after(pattern.get("after", "20:00"))
+        if parsed_after is None:
+            raise ValueError("The nightly time must look like 21:30.")
+        after = parsed_after.strftime("%H:%M")
+        gap = pattern.get("minutes", 15)
+        if not _is_number(gap):
+            raise ValueError("The gap between checks must be a number of minutes.")
+        return {"kind": "nightly", "after": after, "minutes": gap}
+    raise ValueError("A watch pattern is either interval or nightly.")
 
 
 class QuestionStore:
@@ -57,18 +109,25 @@ class QuestionStore:
         text = text.strip()
         if not text:
             raise ValueError("The question text is empty.")
+        # Clean the pattern before anything is created, so a refused
+        # planting leaves no folder behind and burns no sequence.
+        pattern = _clean_pattern(pattern)
         base = slugify(text)
         slug = base
         n = 2
         while self._folder(slug).exists():
             slug = f"{base}-{n}"
             n += 1
+        # Planting order is a fact about the store, not the clock: two
+        # questions planted in the same second still have an order.
+        seq = self._next_seq()
         folder = self._folder(slug)
         folder.mkdir(parents=True)
         (folder / "question.txt").write_text(text + "\n")
         watch = {
-            "pattern": pattern or {"kind": "interval", "minutes": 15},
+            "pattern": pattern,
             "state": "planting",
+            "seq": seq,
             "planted_at": datetime.now().isoformat(timespec="seconds"),
             "last_checked_at": None,
             "answered_at": None,
@@ -85,10 +144,15 @@ class QuestionStore:
         if kind not in ("yes", "no"):
             raise ValueError("A reference look is either yes or no.")
         folder = self._folder(slug)
-        if not folder.exists():
+        try:
+            watch = self._read_watch(slug)
+        except Exception:
+            watch = None
+        if not self._watch_ok(watch) or not (folder / "question.txt").is_file():
+            # Refuse before writing anything: a look saved into a
+            # folder reads cannot see would plant a phantom.
             raise KeyError(f"No question named {slug}.")
         (folder / f"ref-{kind}.jpg").write_bytes(data)
-        watch = self._read_watch(slug)
         if (
             watch["state"] == "planting"
             and (folder / "ref-yes.jpg").exists()
@@ -98,21 +162,124 @@ class QuestionStore:
             self._write_watch(slug, watch)
         return watch["state"]
 
+    def _next_seq(self):
+        """The next planting sequence number. A counter file in the
+        store root is the source; when it is missing or unreadable the
+        number is derived by scanning the existing questions, skipping
+        any folder too broken to read, so one bad folder can never
+        block planting."""
+        counter = self.root / ".seq"
+        try:
+            last = int(counter.read_text().strip())
+        except (OSError, ValueError):
+            last = 0
+            if self.root.exists():
+                for folder in self.root.iterdir():
+                    if not folder.is_dir():
+                        continue
+                    try:
+                        watch = self._read_watch(folder.name)
+                    except Exception:
+                        continue
+                    if isinstance(watch, dict):
+                        seq = watch.get("seq", 0)
+                        if isinstance(seq, int) and not isinstance(seq, bool):
+                            last = max(last, seq)
+        nxt = last + 1
+        try:
+            counter.write_text(str(nxt))
+        except OSError:
+            pass
+        return nxt
+
+    def set_sequence(self, slug, seq):
+        """Rewrite a question's planting sequence number. Used when a
+        set of questions must be put into a known order, as the
+        bedtime round does."""
+        watch = self._read_watch(slug)
+        if watch is None:
+            raise KeyError(f"No question named {slug}.")
+        watch["seq"] = seq
+        self._write_watch(slug, watch)
+
     # -- reading ----------------------------------------------------------
+
+    @staticmethod
+    def _watch_ok(watch):
+        """Whether a watch record is complete enough to read as a
+        question: a mapping with a pattern, a state, and timestamps
+        that parse. Anything less is damage, and reads treat the
+        folder as no question rather than raising over it."""
+        if not isinstance(watch, dict):
+            return False
+        if not isinstance(watch.get("state"), str):
+            return False
+        pattern = watch.get("pattern")
+        if not isinstance(pattern, dict):
+            return False
+        kind = pattern.get("kind")
+        if kind == "interval":
+            if not _is_number(pattern.get("minutes")):
+                return False
+        elif kind == "nightly":
+            if _parse_after(pattern.get("after")) is None:
+                return False
+            if not _is_number(pattern.get("minutes", 15)):
+                return False
+        else:
+            # No kind, or a kind due() has no branch for: due() would
+            # silently never check it, so it is not a readable record.
+            return False
+        for key in ("planted_at", "last_checked_at", "answered_at"):
+            value = watch.get(key)
+            if value is None:
+                if key == "planted_at":
+                    return False
+                continue
+            if not isinstance(value, str):
+                return False
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                return False
+            if parsed.tzinfo is not None:
+                # The store writes plain local times; a stamp carrying
+                # an offset cannot be compared with them.
+                return False
+        return True
+
+    @staticmethod
+    def _stamp(watch, key):
+        value = watch.get(key)
+        return value if isinstance(value, str) else None
 
     def get(self, slug):
         folder = self._folder(slug)
         if not folder.exists():
             return None
-        watch = self._read_watch(slug)
+        try:
+            watch = self._read_watch(slug)
+            question = (folder / "question.txt").read_text().strip()
+        except Exception:
+            watch, question = None, None
+        if not question or not self._watch_ok(watch):
+            # A folder too broken to read (no watch file, a watch file
+            # that no longer parses or is not a complete record, no
+            # question text) is not a readable question. Reads skip
+            # it, so one broken folder can never take down the store's
+            # lists, the round's planting, or the check loop's view.
+            # Writes to that slug still surface the real error.
+            return None
+        seq = watch.get("seq", 0)
         return {
             "slug": slug,
-            "question": (folder / "question.txt").read_text().strip(),
+            "question": question,
             "pattern": watch["pattern"],
             "state": watch["state"],
             "planted_at": watch["planted_at"],
-            "last_checked_at": watch["last_checked_at"],
-            "answered_at": watch["answered_at"],
+            "seq": seq if isinstance(seq, int) and not isinstance(seq, bool) else 0,
+            "last_checked_at": self._stamp(watch, "last_checked_at"),
+            "answered_at": self._stamp(watch, "answered_at"),
             "has_ref_yes": (folder / "ref-yes.jpg").exists(),
             "has_ref_no": (folder / "ref-no.jpg").exists(),
             "ref_yes_path": str(folder / "ref-yes.jpg"),
@@ -126,6 +293,11 @@ class QuestionStore:
                 entry = self.get(folder.name)
                 if entry is not None:
                     out.append(entry)
+        # Planting order, not folder order: it is the order the wearer
+        # meets the questions in, and the order due() hands them to
+        # the check loop. Questions planted before seq existed all
+        # carry 0 and fall back to their timestamps.
+        out.sort(key=lambda e: (e["seq"], e["planted_at"] or "", e["slug"]))
         return out
 
     # -- the check loop's view ---------------------------------------------

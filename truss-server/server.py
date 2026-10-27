@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from bedtime import plant_round
 from checkloop import CheckLoop
 from questions import QuestionStore
 
@@ -140,6 +141,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_tts()
         elif path == "/plant/question":
             self.handle_plant_question()
+        elif path == "/plant/bedtime":
+            self.handle_plant_bedtime()
         elif path == "/plant/ref":
             self.handle_plant_ref()
         else:
@@ -185,7 +188,56 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(400, str(e))
         except Exception as e:
             print(f"POST /plant/question -> ERROR: {e}")
-            self.send_error(500, str(e))
+            self.send_error(
+                500,
+                "Something went wrong planting that question. "
+                "The error is in the server log.",
+            )
+
+    def handle_plant_bedtime(self):
+        """Plant the bedtime round: POST JSON, optional "after" (HH:MM)
+        and "gap_minutes". The three questions are planted in walk
+        order; their reference looks are then shown one question at a
+        time through /plant/ref, as for any planting."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        opts = {}
+        if length:
+            try:
+                opts = json.loads(self.rfile.read(length) or b"{}")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                self.send_error(400, "Body must be JSON")
+                return
+            if not isinstance(opts, dict):
+                self.send_error(400, "Body must be a JSON object")
+                return
+        try:
+            planted = plant_round(
+                STORE,
+                after=opts.get("after", "20:00"),
+                gap_minutes=opts.get("gap_minutes", 1),
+            )
+        except ValueError as e:
+            self.send_error(400, str(e))
+            return
+        except Exception as e:
+            print(f"POST /plant/bedtime -> ERROR: {e}")
+            self.send_error(
+                500,
+                "Something went wrong planting the round. "
+                "The error is in the server log.",
+            )
+            return
+        slugs = planted["slugs"]
+        questions = [
+            (STORE.get(slug) or {"question": slug})["question"] for slug in slugs
+        ]
+        self.send_json(
+            {"slugs": slugs, "questions": questions, "notes": planted["notes"]}
+        )
+        print(f"POST /plant/bedtime -> {slugs}")
 
     def handle_plant_ref(self):
         """Save a reference look: POST multipart image, ?slug=...&kind=yes|no."""
@@ -210,7 +262,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             state = STORE.save_ref(slug, kind, image_data)
             entry = STORE.get(slug)
             if state == "standing":
-                next_step = f"Standing question planted: {entry['question']}"
+                name = entry["question"] if entry else slug
+                next_step = f"Standing question planted: {name}"
             elif kind == "yes":
                 next_step = "Now show me what no looks like."
             else:
