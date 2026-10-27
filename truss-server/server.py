@@ -255,8 +255,13 @@ class TrussHandler(BaseHTTPRequestHandler):
             # Offer the frame to the check loop. When questions are
             # standing, the loop may move the frame into the answer log
             # as evidence or delete it; when none are standing, the
-            # frame stays exactly as day 1 left it.
-            loop_result = LOOP.process_frame(filepath)
+            # frame stays exactly as day 1 left it. A loop failure must
+            # never break the capture itself.
+            try:
+                loop_result = LOOP.process_frame(filepath)
+            except Exception as e:
+                print(f"POST /capture -> loop failed, frame kept: {e}")
+                loop_result = {"managed": False, "fired": [], "speak": []}
             response = {"bytes": file_size}
             if loop_result["managed"]:
                 response["fired"] = loop_result["fired"]

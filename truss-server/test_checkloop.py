@@ -8,6 +8,7 @@ Stdlib only. Exits non-zero on the first failure.
 
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -47,7 +48,7 @@ class ScriptedChecker:
         return verdict("cannot_tell", "Nothing decisive is visible.")
 
 
-def rig(scripts):
+def rig(scripts, now_fn=None):
     tmp = tempfile.mkdtemp()
     store = QuestionStore(Path(tmp) / "questions")
     spoken = []
@@ -56,6 +57,7 @@ def rig(scripts):
         ScriptedChecker(scripts),
         Path(tmp) / "log",
         speak_fn=lambda text, entry, evidence: spoken.append(text),
+        now_fn=now_fn,
     )
     captures = Path(tmp) / "captures"
     captures.mkdir()
@@ -202,6 +204,139 @@ def test_nightly_fires_once_per_evening():
     )
 
 
+def test_broken_store_never_breaks_capture():
+    tmp = tempfile.mkdtemp()
+    root = Path(tmp) / "questions"
+    bad = root / "broken-question"
+    bad.mkdir(parents=True)
+    (bad / "watch.json").write_text("{not json")
+    store = QuestionStore(root)
+    spoken = []
+    loop = CheckLoop(
+        store,
+        ScriptedChecker({}),
+        Path(tmp) / "log",
+        speak_fn=lambda text, entry, evidence: spoken.append(text),
+    )
+    captures = Path(tmp) / "captures"
+    captures.mkdir()
+    f = frame(captures, "a.jpg")
+    result = loop.process_frame(f)
+    check("broken store means unmanaged", result["managed"] is False)
+    check("broken store counts an error", result["errors"] == 1)
+    check("frame kept when the store is broken", f.exists())
+
+
+def test_evidence_failure_still_speaks_once():
+    tmp = tempfile.mkdtemp()
+    store = QuestionStore(Path(tmp) / "questions")
+    log_path = Path(tmp) / "log"
+    log_path.write_text("not a folder")
+    spoken = []
+    loop = CheckLoop(
+        store,
+        ScriptedChecker(
+            {"is-the-stove-off": [verdict("yes", "All four burners are dark.")]}
+        ),
+        log_path,
+        speak_fn=lambda text, entry, evidence: spoken.append(text),
+    )
+    slug = plant(store, "Is the stove off?", {"kind": "interval", "minutes": 0})
+    captures = Path(tmp) / "captures"
+    captures.mkdir()
+    f = frame(captures, "a.jpg")
+    result = loop.process_frame(f)
+    check("evidence failure does not stop the firing", result["fired"] == [slug])
+    check(
+        "spoken once despite the evidence failure",
+        spoken == ["Is the stove off? Yes. All four burners are dark."],
+    )
+    check("frame kept in captures as the record", f.exists())
+    check("question answered despite the failure", store.get(slug)["state"] == "answered")
+    check("failures counted", result["errors"] >= 1)
+
+
+def test_speak_failure_cannot_duplicate_the_answer():
+    tmp = tempfile.mkdtemp()
+    store = QuestionStore(Path(tmp) / "questions")
+    heard = []
+
+    def flaky_speaker(text, entry, evidence):
+        if "stove" in text:
+            raise RuntimeError("speaker down")
+        heard.append(text)
+
+    loop = CheckLoop(
+        store,
+        ScriptedChecker(
+            {
+                "is-the-stove-off": [verdict("yes", "All four burners are dark.")],
+                "is-the-front-door-locked": [verdict("yes", "The deadbolt is thrown.")],
+            }
+        ),
+        Path(tmp) / "log",
+        speak_fn=flaky_speaker,
+    )
+    stove = plant(store, "Is the stove off?", {"kind": "interval", "minutes": 0})
+    door = plant(store, "Is the front door locked?", {"kind": "interval", "minutes": 0})
+    captures = Path(tmp) / "captures"
+    captures.mkdir()
+    result = loop.process_frame(frame(captures, "a.jpg"))
+    check("both questions fire", result["fired"] == [stove, door] or result["fired"] == [door, stove])
+    check("speak failure counted once", result["errors"] == 1)
+    check(
+        "both questions marked answered before speaking",
+        store.get(stove)["state"] == "answered"
+        and store.get(door)["state"] == "answered",
+    )
+    check("the healthy speaker still heard its line", len(heard) == 1)
+
+
+def test_nondict_check_result_is_a_silent_error():
+    store, loop, spoken, captures = rig({"is-the-stove-off": [None]})
+    plant(store, "Is the stove off?", {"kind": "interval", "minutes": 0})
+    f = frame(captures, "a.jpg")
+    result = loop.process_frame(f)
+    check("non-dict result counted as an error", result["errors"] == 1)
+    check("non-dict result fires and speaks nothing", result["fired"] == [] and spoken == [])
+    check("non-dict frame deleted", not f.exists())
+
+
+def test_bookkeeping_failure_skips_one_question_only():
+    store, loop, spoken, captures = rig(
+        {
+            "is-the-stove-off": [verdict("yes", "All four burners are dark.")],
+            "is-the-front-door-locked": [verdict("yes", "The deadbolt is thrown.")],
+        }
+    )
+    stove = plant(store, "Is the stove off?", {"kind": "interval", "minutes": 0})
+    door = plant(store, "Is the front door locked?", {"kind": "interval", "minutes": 0})
+    original = store.mark_checked
+
+    def flaky(slug, when=None):
+        if slug == door:
+            raise OSError("disk gone")
+        return original(slug, when=when)
+
+    store.mark_checked = flaky
+    result = loop.process_frame(frame(captures, "a.jpg"))
+    check("the healthy question still fires", result["fired"] == [stove])
+    check("the healthy question is spoken", len(spoken) == 1)
+    check("the failed question is not answered", store.get(door)["state"] == "standing")
+    check("the failure is counted", result["errors"] >= 1)
+
+
+def test_evidence_names_never_overwrite():
+    fixed = datetime(2026, 10, 27, 21, 30, 0)
+    store, loop, spoken, captures = rig({}, now_fn=lambda: fixed)
+    slug = plant(store, "Is the stove off?", {"kind": "interval", "minutes": 0})
+    entry = store.get(slug)
+    first = loop._save_evidence(frame(captures, "1.jpg"), entry, fixed)
+    second = loop._save_evidence(frame(captures, "2.jpg"), entry, fixed)
+    check("same-second evidence gets distinct names", first != second)
+    check("both evidence photos kept", first.exists() and second.exists())
+
+
 if __name__ == "__main__":
     test_unmanaged_without_standing_questions()
     test_cannot_tell_is_silent_and_deletes()
@@ -210,4 +345,10 @@ if __name__ == "__main__":
     test_checker_failure_is_silent()
     test_not_due_question_is_not_checked()
     test_nightly_fires_once_per_evening()
+    test_broken_store_never_breaks_capture()
+    test_evidence_failure_still_speaks_once()
+    test_speak_failure_cannot_duplicate_the_answer()
+    test_nondict_check_result_is_a_silent_error()
+    test_bookkeeping_failure_skips_one_question_only()
+    test_evidence_names_never_overwrite()
     print("ALL PASS")

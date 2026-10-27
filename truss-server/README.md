@@ -67,7 +67,8 @@ made, and every check honestly reports cannot-tell.
 
 - No cloud services are called by the server itself; model checks go to
   the Meta Model API only when a key is set
-- All processing is local
+- Speech, photos, and the question store are handled on this machine;
+  the model check is the only outside call, and only with a key set
 - Photos are saved with timestamps in the captures/ directory
 - If whisper-cli is not installed, STT returns an error
 - The whisper model (ggml-small.en.bin) should be in truss-server/models/

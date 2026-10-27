@@ -48,38 +48,72 @@ class CheckLoop:
 
     def process_frame(self, frame_path):
         frame_path = Path(frame_path)
-        standing = [e for e in self.store.list() if e["state"] == "standing"]
+        try:
+            standing = [e for e in self.store.list() if e["state"] == "standing"]
+            due = self.store.due(now=self.now_fn()) if standing else []
+        except Exception:
+            # A broken question file must never break capturing. Fall
+            # back to day 1 behavior: keep the frame, manage nothing.
+            return {"managed": False, "fired": [], "speak": [], "errors": 1}
         if not standing:
             return {"managed": False, "fired": [], "speak": [], "errors": 0}
 
         now = self.now_fn()
         fired = []
         errors = 0
-        for entry in self.store.due(now=now):
+        for entry in due:
             try:
                 result = self.check_fn(frame_path, entry)
+                if not isinstance(result, dict):
+                    raise TypeError("check returned no verdict")
+                verdict = result.get("verdict")
             except Exception:
                 # A failed check is treated like a cannot_tell: silent,
                 # never spoken, and the question is still marked checked
                 # so a broken checker cannot hot-loop on every frame.
+                result, verdict = {}, None
                 errors += 1
+            try:
                 self.store.mark_checked(entry["slug"], when=now)
+            except Exception:
+                # One question's bookkeeping failure skips that
+                # question only; it must not discard another question's
+                # yes from the same frame.
+                errors += 1
                 continue
-            self.store.mark_checked(entry["slug"], when=now)
-            if result.get("verdict") == "yes":
+            if verdict == "yes":
                 fired.append((entry, result))
 
         speak = []
         evidence = None
         if fired:
-            evidence = self._save_evidence(frame_path, fired[0][0], now)
+            try:
+                evidence = self._save_evidence(frame_path, fired[0][0], now)
+            except Exception:
+                # The frame stays in captures/ as the record, and the
+                # answers are still spoken and logged against it.
+                errors += 1
+                evidence = frame_path
             for entry, result in fired:
-                self._append_log(entry, result, evidence, now)
+                try:
+                    self._append_log(entry, result, evidence, now)
+                except Exception:
+                    errors += 1
+                try:
+                    self.store.mark_answered(entry["slug"], when=now)
+                except Exception:
+                    # Unmarked means unspoken: the question stays
+                    # standing and can fire on a later frame, but this
+                    # answer is never spoken twice.
+                    errors += 1
+                    continue
                 text = speak_text(entry, result)
                 speak.append(text)
                 if self.speak_fn is not None:
-                    self.speak_fn(text, entry, evidence)
-                self.store.mark_answered(entry["slug"], when=now)
+                    try:
+                        self.speak_fn(text, entry, evidence)
+                    except Exception:
+                        errors += 1
         else:
             frame_path.unlink(missing_ok=True)
 
@@ -100,8 +134,12 @@ class CheckLoop:
 
     def _save_evidence(self, frame_path, first_entry, now):
         day = self._day_dir(now)
-        name = f"{now.strftime('%H%M%S')}_{first_entry['slug']}.jpg"
-        dest = day / name
+        stem = f"{now.strftime('%H%M%S')}_{first_entry['slug']}"
+        dest = day / f"{stem}.jpg"
+        n = 2
+        while dest.exists():
+            dest = day / f"{stem}_{n}.jpg"
+            n += 1
         shutil.move(str(frame_path), str(dest))
         return dest
 
