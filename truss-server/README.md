@@ -1,6 +1,6 @@
-# Mannie Bridge Server
+# Truss Server
 
-Local server for the Mannie Bridge Android app. Handles photo uploads, speech-to-text, and text-to-speech.
+Local server for the Truss Android app. Handles photo uploads, speech-to-text, and text-to-speech.
 
 ## Requirements
 
@@ -16,8 +16,8 @@ To enable speech-to-text, install whisper.cpp and download a model:
 
 ```bash
 brew install whisper-cpp
-mkdir -p mannie-server/models
-curl -L -o mannie-server/models/ggml-small.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
+mkdir -p truss-server/models
+curl -L -o truss-server/models/ggml-small.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
 ```
 
 The server uses `whisper-cli` from the Homebrew whisper.cpp package.
@@ -25,14 +25,14 @@ The server uses `whisper-cli` from the Homebrew whisper.cpp package.
 ## Running
 
 ```bash
-cd mannie-server
+cd truss-server
 python3 server.py
 ```
 
 The server will:
 - Bind to your Wi-Fi interface (en0) on port 8792
 - Print the address it's listening on
-- Save uploaded photos to `mannie-server/captures/`
+- Save uploaded photos to `truss-server/captures/`
 - Log all requests to the console
 
 ## API Endpoints
@@ -48,4 +48,4 @@ The server will:
 - All processing is local
 - Photos are saved with timestamps in the captures/ directory
 - If whisper-cli is not installed, STT returns an error
-- The whisper model (ggml-small.en.bin) should be in mannie-server/models/
+- The whisper model (ggml-small.en.bin) should be in truss-server/models/

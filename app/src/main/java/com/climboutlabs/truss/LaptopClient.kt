@@ -1,4 +1,4 @@
-package com.mannie.bridge
+package com.climboutlabs.truss
 
 import java.io.File
 import java.net.HttpURLConnection

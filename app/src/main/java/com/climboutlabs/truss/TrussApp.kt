@@ -1,4 +1,4 @@
-package com.mannie.bridge
+package com.climboutlabs.truss
 
 import android.os.Build
 import androidx.compose.foundation.Image
@@ -37,8 +37,8 @@ private const val TOOLKIT_VERSION = "1.0.1"
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun MannieApp(
-    viewModel: MannieViewModel,
+fun TrussApp(
+    viewModel: TrussViewModel,
     onConnectGlasses: () -> Unit,
     onRequestWearablesPermission: suspend (Permission) -> PermissionStatus,
     onRequestRecordAudioPermission: suspend () -> Boolean,
@@ -47,7 +47,7 @@ fun MannieApp(
   var tab by remember { mutableIntStateOf(0) }
   MaterialTheme {
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Mannie Bridge") }) },
+        topBar = { TopAppBar(title = { Text("Truss") }) },
     ) { padding ->
       Column(modifier = Modifier.fillMaxSize().padding(padding)) {
         TabRow(selectedTabIndex = tab) {
@@ -92,7 +92,7 @@ fun MannieApp(
 
 @Composable
 private fun ConnectScreen(
-    state: MannieUiState,
+    state: TrussUiState,
     onIpChange: (String) -> Unit,
     onConnectGlasses: () -> Unit,
     onPing: () -> Unit,
@@ -128,7 +128,7 @@ private fun ConnectScreen(
 }
 
 @Composable
-private fun PhotoScreen(state: MannieUiState, onCapture: () -> Unit) {
+private fun PhotoScreen(state: TrussUiState, onCapture: () -> Unit) {
   Text("Screen 2: Photo (Gate 2)", style = MaterialTheme.typography.titleMedium)
   Text(stringResource(R.string.why_camera_permission))
   Text(stringResource(R.string.why_location_wifi))
@@ -152,8 +152,8 @@ private fun PhotoScreen(state: MannieUiState, onCapture: () -> Unit) {
 
 @Composable
 private fun VoiceScreen(
-    state: MannieUiState,
-    viewModel: MannieViewModel,
+    state: TrussUiState,
+    viewModel: TrussViewModel,
     onRecord: () -> Unit,
     onSpeak: () -> Unit
 ) {
@@ -187,7 +187,7 @@ private fun VoiceScreen(
   Button(onClick = onSpeak, enabled = !state.speakBusy) {
     Text(if (state.speakBusy) "Playing..." else "Speak test sentence via glasses")
   }
-  Text("Test sentence: \"${MannieViewModel.TEST_SENTENCE}\"")
+  Text("Test sentence: \"${TrussViewModel.TEST_SENTENCE}\"")
   state.outputDevice?.let { device ->
     if (device.isBluetooth) {
       Text("Played through: ${device.describe()}")

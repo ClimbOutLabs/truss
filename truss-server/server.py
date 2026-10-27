@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Mannie Bridge local server.
-Handles photo uploads, speech-to-text, and text-to-speech for the Mannie Bridge app.
+Truss local server.
+Handles photo uploads, speech-to-text, and text-to-speech for the Truss app.
 """
 
 import json
@@ -73,7 +73,7 @@ class MannieHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
-            message = "Mannie Bridge server is running.\n"
+            message = "Truss server is running.\n"
             self.wfile.write(message.encode())
             print(f"GET / -> 200 OK")
         else:
@@ -272,7 +272,7 @@ def main():
     port = 8792
     
     server = HTTPServer((host, port), MannieHandler)
-    print(f"\nMannie Bridge server starting on {host}:{port}")
+    print(f"\nTruss server starting on {host}:{port}")
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")
     print(f"Press Ctrl+C to stop\n")
     

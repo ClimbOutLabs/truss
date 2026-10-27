@@ -1,4 +1,4 @@
-package com.mannie.bridge
+package com.climboutlabs.truss
 
 import android.app.Activity
 import android.app.Application
@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-data class MannieUiState(
+data class TrussUiState(
     val laptopIp: String = "",
     val sdkReady: Boolean = false,
     val registrationState: RegistrationState = RegistrationState.UNAVAILABLE,
@@ -74,10 +74,10 @@ data class MannieUiState(
         }
 }
 
-class MannieViewModel(application: Application) : AndroidViewModel(application) {
+class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
-  private val _uiState = MutableStateFlow(MannieUiState(laptopIp = loadLaptopIp(application)))
-  val uiState: StateFlow<MannieUiState> = _uiState.asStateFlow()
+  private val _uiState = MutableStateFlow(TrussUiState(laptopIp = loadLaptopIp(application)))
+  val uiState: StateFlow<TrussUiState> = _uiState.asStateFlow()
 
   // AutoDeviceSelector automatically selects the first available wearable device,
   // exactly as the CameraAccess sample does.
@@ -465,7 +465,7 @@ class MannieViewModel(application: Application) : AndroidViewModel(application) 
   }
 
   companion object {
-    const val TAG = "MannieBridge"
+    const val TAG = "Truss"
     const val TEST_SENTENCE = "Hello, this is Mannie. I can hear you."
     private const val PREFS = "mannie"
     private const val KEY_LAPTOP_IP = "laptop_ip"

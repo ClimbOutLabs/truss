@@ -1,4 +1,4 @@
-package com.mannie.bridge
+package com.climboutlabs.truss
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -301,7 +301,7 @@ class GlassesAudio(private val context: Context) {
     }
     val pcm = data
     require(pcm != null) { "The laptop's WAV file had no sound data in it." }
-    require(bitsPerSample == 16) { "The laptop's WAV file is not 16-bit PCM, which is what Mannie Bridge plays." }
+    require(bitsPerSample == 16) { "The laptop's WAV file is not 16-bit PCM, which is what Truss plays." }
     return Wav(sampleRate = sampleRate, channels = channels, pcm = pcm)
   }
 
