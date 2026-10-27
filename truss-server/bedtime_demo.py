@@ -51,7 +51,7 @@ def scripted_check(frame_path, entry):
 def main():
     tmp = tempfile.mkdtemp(prefix="truss-bedtime-demo-")
     store = QuestionStore(Path(tmp) / "questions")
-    slugs = plant_round(store)
+    slugs = plant_round(store)["slugs"]
     for slug in slugs:
         store.save_ref(slug, "yes", JPEG)
         store.save_ref(slug, "no", JPEG)

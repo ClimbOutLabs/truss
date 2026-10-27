@@ -65,9 +65,7 @@ class QuestionStore:
             n += 1
         # Planting order is a fact about the store, not the clock: two
         # questions planted in the same second still have an order.
-        # Counted before the new folder exists, so the half-planted
-        # folder is never read back.
-        seq = max((e["seq"] for e in self.list()), default=0) + 1
+        seq = self._next_seq()
         folder = self._folder(slug)
         folder.mkdir(parents=True)
         (folder / "question.txt").write_text(text + "\n")
@@ -103,6 +101,44 @@ class QuestionStore:
             watch["state"] = "standing"
             self._write_watch(slug, watch)
         return watch["state"]
+
+    def _next_seq(self):
+        """The next planting sequence number. A counter file in the
+        store root is the source; when it is missing or unreadable the
+        number is derived by scanning the existing questions, skipping
+        any folder too broken to read, so one bad folder can never
+        block planting."""
+        counter = self.root / ".seq"
+        try:
+            last = int(counter.read_text().strip())
+        except (OSError, ValueError):
+            last = 0
+            if self.root.exists():
+                for folder in self.root.iterdir():
+                    if not folder.is_dir():
+                        continue
+                    try:
+                        watch = self._read_watch(folder.name)
+                    except Exception:
+                        continue
+                    if watch:
+                        last = max(last, watch.get("seq", 0))
+        nxt = last + 1
+        try:
+            counter.write_text(str(nxt))
+        except OSError:
+            pass
+        return nxt
+
+    def set_sequence(self, slug, seq):
+        """Rewrite a question's planting sequence number. Used when a
+        set of questions must be put into a known order, as the
+        bedtime round does."""
+        watch = self._read_watch(slug)
+        if watch is None:
+            raise KeyError(f"No question named {slug}.")
+        watch["seq"] = seq
+        self._write_watch(slug, watch)
 
     # -- reading ----------------------------------------------------------
 

@@ -188,7 +188,11 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(400, str(e))
         except Exception as e:
             print(f"POST /plant/question -> ERROR: {e}")
-            self.send_error(500, str(e))
+            self.send_error(
+                500,
+                "Something went wrong planting that question. "
+                "The error is in the server log.",
+            )
 
     def handle_plant_bedtime(self):
         """Plant the bedtime round: POST JSON, optional "after" (HH:MM)
@@ -210,7 +214,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Body must be a JSON object")
                 return
         try:
-            slugs = plant_round(
+            planted = plant_round(
                 STORE,
                 after=opts.get("after", "20:00"),
                 gap_minutes=opts.get("gap_minutes", 1),
@@ -218,8 +222,19 @@ class TrussHandler(BaseHTTPRequestHandler):
         except ValueError as e:
             self.send_error(400, str(e))
             return
+        except Exception as e:
+            print(f"POST /plant/bedtime -> ERROR: {e}")
+            self.send_error(
+                500,
+                "Something went wrong planting the round. "
+                "The error is in the server log.",
+            )
+            return
+        slugs = planted["slugs"]
         questions = [STORE.get(slug)["question"] for slug in slugs]
-        self.send_json({"slugs": slugs, "questions": questions})
+        self.send_json(
+            {"slugs": slugs, "questions": questions, "notes": planted["notes"]}
+        )
         print(f"POST /plant/bedtime -> {slugs}")
 
     def handle_plant_ref(self):

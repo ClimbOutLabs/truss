@@ -47,12 +47,14 @@ class ScriptedChecker:
 def test_plant_round():
     with tempfile.TemporaryDirectory() as tmp:
         store = QuestionStore(tmp)
-        slugs = plant_round(store)
+        planted = plant_round(store)
+        slugs = planted["slugs"]
         check("round plants all three in walk order", slugs == [
             "is-the-stove-off",
             "is-the-front-door-locked",
             "is-tonight-s-pill-compartment-empty",
         ])
+        check("a fresh round has no notes", planted["notes"] == [])
         entries = store.list()
         check(
             "listed in planting order",
@@ -66,7 +68,7 @@ def test_plant_round():
             ),
         )
         again = plant_round(store)
-        check("planting again is a no-op", again == slugs and len(store.list()) == 3)
+        check("planting again is a no-op", again["slugs"] == slugs and len(store.list()) == 3)
         store.retire(slugs[1])
         try:
             plant_round(store)
@@ -78,22 +80,94 @@ def test_plant_round():
             check("bad time refused", False)
         except ValueError:
             check("bad time refused", True)
+        for bad_gap in ("soon", float("nan"), float("inf")):
+            try:
+                plant_round(store, gap_minutes=bad_gap)
+                check(f"bad gap refused ({bad_gap})", False)
+            except ValueError:
+                check(f"bad gap refused ({bad_gap})", True)
+
+
+def test_retired_member_on_a_fresh_store_plants_nothing():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create(ROUND[1], {"kind": "nightly", "after": "20:00"})
+        store.retire(slug)
         try:
-            plant_round(store, gap_minutes="soon")
-            check("bad gap refused", False)
+            plant_round(store)
+            check("retired member refuses the round", False)
         except ValueError:
-            check("bad gap refused", True)
+            check("retired member refuses the round", True)
+        check(
+            "nothing was created by the refused planting",
+            len(store.list()) == 1,
+        )
+
+
+def test_existing_member_on_different_terms_is_noted_not_rewritten():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        manual = store.create(ROUND[0])
+        store.save_ref(manual, "yes", JPEG)
+        store.save_ref(manual, "no", JPEG)
+        planted = plant_round(store)
+        check("manual member is the round's first slug", planted["slugs"][0] == manual)
+        check(
+            "one note names the kept terms",
+            len(planted["notes"]) == 1 and ROUND[0] in planted["notes"][0],
+        )
+        check(
+            "the member's own pattern is untouched",
+            store.get(manual)["pattern"] == {"kind": "interval", "minutes": 15},
+        )
+        check("no duplicate stove question", len(store.list()) == 3)
+
+
+def test_preplanted_member_joins_in_walk_order():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        pills = store.create(ROUND[2], {"kind": "nightly", "after": "20:00", "minutes": 1})
+        store.save_ref(pills, "yes", JPEG)
+        store.save_ref(pills, "no", JPEG)
+        planted = plant_round(store)
+        check("returned order is walk order", planted["slugs"][2] == pills)
+        members = [e["question"] for e in store.list() if e["question"] in ROUND]
+        check("store order is walk order too", members == ROUND)
+
+
+def test_loose_text_match_is_the_same_question():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        manual = store.create("Is the stove off")
+        planted = plant_round(store)
+        check("no duplicate from a missing question mark", len(store.list()) == 3)
+        check("the wearer's own copy is the member", planted["slugs"][0] == manual)
+
+
+def test_broken_folder_never_blocks_planting():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        half = Path(tmp) / "half-planted"
+        half.mkdir()
+        (half / "question.txt").write_text("Is the porch light on?\n")
+        slug = store.create("Is the gate closed?")
+        check("planting works beside a broken folder", slug == "is-the-gate-closed")
+        check(
+            "the new question carries a sequence number",
+            store.get(slug)["seq"] >= 1,
+        )
 
 
 def test_the_round():
     """The choreography: one walk down the hall, two passes. The first
     pass settles the stove, cannot read the door, and finds a pill
-    still in tonight's compartment. The second pass, a minute later,
-    settles the other two. Answers are spoken in the order the wearer
-    meets the questions."""
+    still in tonight's compartment. A frame inside the check gap is
+    not checked at all. The second pass, past the gap, settles the
+    other two. Answers are spoken in the order the wearer meets the
+    questions."""
     with tempfile.TemporaryDirectory() as tmp:
         store = QuestionStore(Path(tmp) / "questions")
-        slugs = plant_round(store)
+        slugs = plant_round(store)["slugs"]
         for slug in slugs:
             store.save_ref(slug, "yes", JPEG)
             store.save_ref(slug, "no", JPEG)
@@ -140,7 +214,15 @@ def test_the_round():
             spoken == ["Is the stove off? Yes. All four burners are dark."],
         )
 
-        clock[0] += timedelta(seconds=90)
+        calls_after_first = len(checker.calls)
+        clock[0] += timedelta(seconds=30)
+        early = loop.process_frame(frame("early.jpg"))
+        check(
+            "a frame inside the gap is not checked",
+            len(checker.calls) == calls_after_first and early["fired"] == [],
+        )
+
+        clock[0] += timedelta(seconds=60)
         second = loop.process_frame(frame("pass2.jpg"))
         check(
             "second pass settles the door and the pills",
@@ -179,5 +261,10 @@ def test_the_round():
 
 if __name__ == "__main__":
     test_plant_round()
+    test_retired_member_on_a_fresh_store_plants_nothing()
+    test_existing_member_on_different_terms_is_noted_not_rewritten()
+    test_preplanted_member_joins_in_walk_order()
+    test_loose_text_match_is_the_same_question()
+    test_broken_folder_never_blocks_planting()
     test_the_round()
     print("ALL PASS")
