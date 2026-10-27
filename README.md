@@ -13,11 +13,17 @@ owner's home network. Three screens, three gates. It is a test harness, not a pr
   transcript time; fetch the test sentence from the laptop and play it through the
   glasses, showing the request to audio-start time. If the phone mic or speaker is used
   instead of the glasses, the screen says so in red and that is a fail.
+- Screen 4, Plant (added with the standing-questions build): type a question or record
+  it through the glasses, plant it, then capture its yes and no reference looks with
+  the Screen 2 photo flow; plant the bedtime round in one tap and walk its questions
+  in order; read the standing list. When an ordinary Screen 2 capture fires a standing
+  question, the spoken answers play through the glasses and show on the Photo screen.
 
 The only network destination the app can call is `http://LAPTOP_IP:8792`
-(`GET /`, `POST /capture`, `POST /stt`, `POST /tts`). No cloud SDKs, no analytics, no
-crash reporters; the toolkit's own analytics and crash reporting are opted out in the
-manifest, per the toolkit README.
+(`GET /`, `POST /capture`, `POST /stt`, `POST /tts`, `POST /plant/question`,
+`POST /plant/bedtime`, `POST /plant/ref`, `GET /questions`). No cloud SDKs, no
+analytics, no crash reporters; the toolkit's own analytics and crash reporting are
+opted out in the manifest, per the toolkit README.
 
 ## Build and run
 

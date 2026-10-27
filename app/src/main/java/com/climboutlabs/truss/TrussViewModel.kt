@@ -63,6 +63,13 @@ data class TrussUiState(
     val speakBusy: Boolean = false,
     val outputDevice: RoutedDevice? = null,
     val ttsMs: Long? = null,
+    val spokenLines: List<String> = emptyList(),
+    val plantBusy: Boolean = false,
+    val plantText: String = "",
+    val plantSlug: String? = null,
+    val plantPrompt: String? = null,
+    val plantLog: List<String> = emptyList(),
+    val questionsList: List<QuestionInfo> = emptyList(),
 ) {
   /** The glasses link in the brief's three words, derived from toolkit state. */
   val linkState: String
@@ -85,6 +92,17 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   private var monitoringStarted = false
   private val deviceNames = mutableMapOf<DeviceIdentifier, String>()
+
+  // When set, the next captured photo is a reference look for this question
+  // instead of an ordinary capture. Set by the Plant screen, read and cleared
+  // by the capture flow.
+  private var pendingRefSlug: String? = null
+  private var pendingRefKind: String? = null
+
+  // The questions still waiting for their reference looks, in planting order.
+  // A single planting holds one; the bedtime round holds three, and the Plant
+  // screen walks them in order as each one completes.
+  private var plantQueue: List<String> = emptyList()
 
   fun setLaptopIp(value: String) {
     _uiState.update { it.copy(laptopIp = value) }
@@ -189,6 +207,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         photoLog("FAILED: ${e.message ?: e.toString()}")
         showError(e)
       } finally {
+        pendingRefSlug = null
+        pendingRefKind = null
         _uiState.update {
           it.copy(photoBusy = false, photoElapsedMs = SystemClock.elapsedRealtime() - startedAt, streamActive = false)
         }
@@ -322,10 +342,44 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       _uiState.update { it.copy(wifiReturn = how) }
       photoLog("Home Wi-Fi is back ($how).")
 
-      // Step 6: upload.
-      val bytes = withContext(Dispatchers.IO) { client.postCapture(jpegFile) }
-      _uiState.update { it.copy(serverBytes = bytes) }
-      photoLog("Uploaded. The laptop says it received $bytes bytes.")
+      // Step 6: upload. A photo taken for a planting goes to /plant/ref instead.
+      // An ordinary capture goes to /capture, and any answers it fired are spoken
+      // through the glasses now, with the camera session already over.
+      val refSlug = pendingRefSlug
+      val refKind = pendingRefKind
+      if (refSlug != null && refKind != null) {
+        pendingRefSlug = null
+        pendingRefKind = null
+        val reply = withContext(Dispatchers.IO) { client.postPlantRef(jpegFile, refSlug, refKind) }
+        val next = reply.getString("next")
+        if (reply.getString("state") == "standing") {
+          // This question is fully planted. If a round is being planted, move
+          // the Plant screen on to its next question.
+          plantQueue = plantQueue.drop(1)
+          val nextSlug = plantQueue.firstOrNull()
+          if (nextSlug != null) {
+            _uiState.update {
+              it.copy(plantSlug = nextSlug, plantPrompt = "Show me what yes looks like.")
+            }
+            plantLog("Next question in the round: show it what yes looks like.")
+          } else {
+            _uiState.update { it.copy(plantPrompt = next) }
+          }
+        } else {
+          _uiState.update { it.copy(plantPrompt = next) }
+        }
+        plantLog(next)
+        photoLog("Reference look saved. $next")
+      } else {
+        val result = withContext(Dispatchers.IO) { client.postCapture(jpegFile) }
+        _uiState.update { it.copy(serverBytes = result.bytes) }
+        photoLog("Uploaded. The laptop says it received ${result.bytes} bytes.")
+        if (result.speak.isNotEmpty()) {
+          _uiState.update { it.copy(spokenLines = result.speak) }
+          result.speak.forEach { line -> photoLog("Mannie says: $line") }
+          speakViaGlasses(result.speak)
+        }
+      }
       photoLog("Done in ${SystemClock.elapsedRealtime() - startedAt} ms.")
     } finally {
       runCatching { camera?.close() }
@@ -387,6 +441,34 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       Log.e(TAG, "Failed to read photo orientation", e)
     }
     return matrix
+  }
+
+  /**
+   * Speak lines through the glasses, in order. Only called once a capture's camera
+   * session has ended: opening Bluetooth audio can end a toolkit session, so the two
+   * are never held open together. A failure here never fails the capture itself; the
+   * lines stay on screen.
+   */
+  private suspend fun speakViaGlasses(lines: List<String>) {
+    val audio = GlassesAudio(getApplication())
+    try {
+      val glasses = audio.routeToGlasses()
+      if (glasses == null) {
+        photoLog("No glasses audio route, so the answers were not spoken. They are on screen.")
+        return
+      }
+      for (line in lines) {
+        val requestStart = SystemClock.elapsedRealtime()
+        val wavBytes = withContext(Dispatchers.IO) { laptopClient().postTts(line) }
+        audio.playWav(wavBytes, glasses, requestStart)
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      photoLog("Speaking the answers failed: ${e.message ?: e.toString()}")
+    } finally {
+      audio.clearRouting()
+    }
   }
 
   // MARK: - Screen 3, voice (Gate 3)
@@ -456,6 +538,136 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(speakBusy = false) }
       }
     }
+  }
+
+  // MARK: - Screen 4, plant
+
+  fun setPlantText(value: String) {
+    _uiState.update { it.copy(plantText = value) }
+  }
+
+  private fun plantLog(line: String) {
+    Log.i(TAG, line)
+    _uiState.update { it.copy(plantLog = it.plantLog + line) }
+  }
+
+  private suspend fun fetchQuestions(): List<QuestionInfo> =
+      withContext(Dispatchers.IO) { laptopClient().getQuestions() }
+
+  fun refreshQuestions() {
+    viewModelScope.launch {
+      try {
+        val questions = fetchQuestions()
+        _uiState.update { it.copy(questionsList = questions) }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      }
+    }
+  }
+
+  /** Record the question through the glasses and put its words in the text field. */
+  fun recordPlantQuestion(requestRecordAudio: suspend () -> Boolean) {
+    if (_uiState.value.plantBusy) return
+    _uiState.update { it.copy(plantBusy = true, lastError = null) }
+    viewModelScope.launch {
+      val audio = GlassesAudio(getApplication())
+      try {
+        check(requestRecordAudio()) {
+          "Microphone permission was not granted, so nothing was recorded."
+        }
+        val glasses = audio.routeToGlasses()
+        check(glasses != null) {
+          "No Bluetooth headset device is available. Are the glasses connected to this phone?"
+        }
+        val dir = File(getApplication<Application>().filesDir, "voice").apply { mkdirs() }
+        val wav = File(dir, "plant-${System.currentTimeMillis()}.wav")
+        audio.recordFiveSeconds(wav, glasses)
+        val text = withContext(Dispatchers.IO) { laptopClient().postStt(wav) }
+        _uiState.update { it.copy(plantText = text) }
+        plantLog("Heard: $text")
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      } finally {
+        audio.clearRouting()
+        _uiState.update { it.copy(plantBusy = false) }
+      }
+    }
+  }
+
+  fun plantQuestionFromText() {
+    val text = _uiState.value.plantText.trim()
+    if (text.isEmpty() || _uiState.value.plantBusy) return
+    _uiState.update { it.copy(plantBusy = true, lastError = null) }
+    viewModelScope.launch {
+      try {
+        val reply = withContext(Dispatchers.IO) { laptopClient().plantQuestion(text) }
+        val next = reply.getString("next")
+        plantQueue = listOf(reply.getString("slug"))
+        _uiState.update { it.copy(plantSlug = reply.getString("slug"), plantPrompt = next) }
+        plantLog("Planted: $text")
+        plantLog(next)
+        val questions = fetchQuestions()
+        _uiState.update { it.copy(questionsList = questions) }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      } finally {
+        _uiState.update { it.copy(plantBusy = false) }
+      }
+    }
+  }
+
+  fun plantBedtimeRound() {
+    if (_uiState.value.plantBusy) return
+    _uiState.update { it.copy(plantBusy = true, lastError = null) }
+    viewModelScope.launch {
+      try {
+        val reply = withContext(Dispatchers.IO) { laptopClient().plantBedtime() }
+        val slugs = reply.getJSONArray("slugs")
+        val questions = reply.getJSONArray("questions")
+        for (i in 0 until questions.length()) {
+          plantLog("Round: ${questions.getString(i)}")
+        }
+        plantQueue = List(slugs.length()) { i -> slugs.getString(i) }
+        if (slugs.length() > 0) {
+          _uiState.update {
+            it.copy(plantSlug = slugs.getString(0), plantPrompt = "Show me what yes looks like.")
+          }
+        }
+        plantLog("Show each question what yes looks like, then what no looks like, in order.")
+        val list = fetchQuestions()
+        _uiState.update { it.copy(questionsList = list) }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      } finally {
+        _uiState.update { it.copy(plantBusy = false) }
+      }
+    }
+  }
+
+  /**
+   * Take the next glasses photo as a reference look for the question being planted:
+   * the ordinary capture flow runs, and its upload goes to /plant/ref instead.
+   */
+  fun captureReference(
+      kind: String,
+      requestPermission: suspend (Permission) -> PermissionStatus,
+  ) {
+    val slug = _uiState.value.plantSlug
+    if (slug == null) {
+      _uiState.update { it.copy(lastError = "Plant a question first, then show its looks.") }
+      return
+    }
+    pendingRefSlug = slug
+    pendingRefKind = kind
+    captureAndUpload(requestPermission)
   }
 
   private fun showError(e: Exception) {

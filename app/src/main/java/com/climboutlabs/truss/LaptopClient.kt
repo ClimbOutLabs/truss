@@ -7,9 +7,23 @@ import org.json.JSONObject
 
 /**
  * The only network client in the app, and it can only talk to the laptop: the base URL is
- * built from the one LAPTOP_IP value the person typed on Screen 1, always on port 8791.
+ * built from the one LAPTOP_IP value the person typed on Screen 1, always on port 8792.
  * Plain HttpURLConnection, so the app carries no extra HTTP or cloud library at all.
  */
+
+/** What the laptop answers to a capture: its byte count, the standing questions the
+ * photo fired, and the lines Mannie should speak, in order. Empty lists when no
+ * question fired. */
+data class CaptureResult(val bytes: Long, val fired: List<String>, val speak: List<String>)
+
+/** One standing question as GET /questions reports it. */
+data class QuestionInfo(
+    val slug: String,
+    val question: String,
+    val state: String,
+    val hasRefYes: Boolean,
+    val hasRefNo: Boolean,
+)
 class LaptopClient(laptopIp: String) {
 
   private val base: String
@@ -48,10 +62,49 @@ class LaptopClient(laptopIp: String) {
         false
       }
 
-  /** POST /capture, multipart field "image" (JPEG). Returns the server's byte count. */
-  fun postCapture(jpeg: File): Long {
+  /** POST /capture, multipart field "image" (JPEG). Returns the byte count plus any
+   * standing questions the photo fired and the lines to speak for them. */
+  fun postCapture(jpeg: File): CaptureResult {
     val body = postMultipart("/capture", "image", jpeg.name, "image/jpeg", jpeg.readBytes())
-    return JSONObject(body).getLong("bytes")
+    val json = JSONObject(body)
+    fun lines(key: String): List<String> {
+      val array = json.optJSONArray(key) ?: return emptyList()
+      return List(array.length()) { i -> array.getString(i) }
+    }
+    return CaptureResult(json.getLong("bytes"), lines("fired"), lines("speak"))
+  }
+
+  /** POST /plant/question with the question text. Returns the laptop's reply: the slug,
+   * the state, and the next prompt to show the wearer. */
+  fun plantQuestion(text: String): JSONObject =
+      JSONObject(postJson("/plant/question", JSONObject().put("text", text)))
+
+  /** POST /plant/bedtime. Returns the reply: the round's slugs and questions, in
+   * walk order. */
+  fun plantBedtime(): JSONObject = JSONObject(postJson("/plant/bedtime", JSONObject()))
+
+  /** POST /plant/ref for one reference look. The slug comes from the laptop's own
+   * slug maker, so it is always plain letters, digits, and dashes and needs no
+   * escaping in the query. Returns the reply: slug, state, and the next prompt. */
+  fun postPlantRef(jpeg: File, slug: String, kind: String): JSONObject {
+    val body =
+        postMultipart("/plant/ref?slug=$slug&kind=$kind", "image", jpeg.name, "image/jpeg", jpeg.readBytes())
+    return JSONObject(body)
+  }
+
+  /** GET /questions: the standing questions and their states. */
+  fun getQuestions(): List<QuestionInfo> {
+    val array = JSONObject(getJson("/questions")).getJSONArray("questions")
+    return List(array.length()) { i ->
+      val item = array.getJSONObject(i)
+      QuestionInfo(
+          slug = item.getString("slug"),
+          question = item.getString("question"),
+          state = item.getString("state"),
+          hasRefYes = item.getBoolean("has_ref_yes"),
+          hasRefNo = item.getBoolean("has_ref_no"),
+      )
+    }
   }
 
   /** POST /stt, multipart field "audio" (WAV). Returns the transcript text. */
@@ -75,6 +128,44 @@ class LaptopClient(laptopIp: String) {
         throw IllegalStateException("Laptop answered HTTP $code for /tts: $errorBody")
       }
       return connection.inputStream.use { it.readBytes() }
+    } finally {
+      connection.disconnect()
+    }
+  }
+
+  /** POST a JSON body and return the reply body. Throws with the real message on a
+   * non-2xx answer, like the other calls here. */
+  private fun postJson(path: String, payload: JSONObject): String {
+    val connection = open(path)
+    try {
+      connection.requestMethod = "POST"
+      connection.doOutput = true
+      connection.setRequestProperty("Content-Type", "application/json")
+      connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+      val code = connection.responseCode
+      val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+      val body = stream?.readBytes()?.toString(Charsets.UTF_8) ?: ""
+      if (code !in 200..299) {
+        throw IllegalStateException("Laptop answered HTTP $code for $path: $body")
+      }
+      return body
+    } finally {
+      connection.disconnect()
+    }
+  }
+
+  /** GET and return the reply body, with the same error shape as postJson. */
+  private fun getJson(path: String): String {
+    val connection = open(path)
+    try {
+      connection.requestMethod = "GET"
+      val code = connection.responseCode
+      val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+      val body = stream?.readBytes()?.toString(Charsets.UTF_8) ?: ""
+      if (code !in 200..299) {
+        throw IllegalStateException("Laptop answered HTTP $code for $path: $body")
+      }
+      return body
     } finally {
       connection.disconnect()
     }

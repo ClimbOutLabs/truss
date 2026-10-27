@@ -54,6 +54,7 @@ fun TrussApp(
           Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Connect") })
           Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Photo") })
           Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Voice") })
+          Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Plant") })
         }
         Column(
             modifier =
@@ -73,12 +74,21 @@ fun TrussApp(
                     state = state,
                     onCapture = { viewModel.captureAndUpload(onRequestWearablesPermission) },
                 )
-            else ->
+            2 ->
                 VoiceScreen(
                     state = state,
                     viewModel = viewModel,
                     onRecord = { viewModel.recordAndTranscribe(onRequestRecordAudioPermission) },
                     onSpeak = viewModel::speakTestSentence,
+                )
+            else ->
+                PlantScreen(
+                    state = state,
+                    viewModel = viewModel,
+                    onRecordQuestion = { viewModel.recordPlantQuestion(onRequestRecordAudioPermission) },
+                    onCaptureRef = { kind ->
+                      viewModel.captureReference(kind, onRequestWearablesPermission)
+                    },
                 )
           }
           state.lastError?.let { error ->
@@ -143,9 +153,63 @@ private fun PhotoScreen(state: TrussUiState, onCapture: () -> Unit) {
     )
   }
   state.serverBytes?.let { Text("Laptop received: $it bytes") }
+  state.spokenLines.forEach { line -> Text("Mannie says: $line") }
   state.photoElapsedMs?.let { Text("Total elapsed: $it ms") }
   state.wifiReturn?.let { Text("Return to home Wi-Fi: $it") }
   state.photoLog.forEach { line ->
+    Text(line, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+  }
+}
+
+@Composable
+private fun PlantScreen(
+    state: TrussUiState,
+    viewModel: TrussViewModel,
+    onRecordQuestion: () -> Unit,
+    onCaptureRef: (String) -> Unit,
+) {
+  Text("Screen 4: Plant", style = MaterialTheme.typography.titleMedium)
+  Text(
+      "Plant a standing question, then show it what yes looks like and what no looks " +
+          "like. From then on Mannie checks it and speaks when the answer is yes.",
+      style = MaterialTheme.typography.bodySmall,
+  )
+  OutlinedTextField(
+      value = state.plantText,
+      onValueChange = viewModel::setPlantText,
+      label = { Text("Question to plant") },
+      placeholder = { Text("Is the stove off?") },
+      singleLine = true,
+      modifier = Modifier.fillMaxWidth(),
+  )
+  Button(onClick = onRecordQuestion, enabled = !state.plantBusy) {
+    Text(if (state.plantBusy) "Working..." else "Record the question")
+  }
+  Button(
+      onClick = viewModel::plantQuestionFromText,
+      enabled = !state.plantBusy && state.plantText.isNotBlank(),
+  ) {
+    Text("Plant this question")
+  }
+  Button(onClick = viewModel::plantBedtimeRound, enabled = !state.plantBusy) {
+    Text("Plant the bedtime round")
+  }
+  state.plantPrompt?.let { Text(it) }
+  if (state.plantSlug != null) {
+    Button(onClick = { onCaptureRef("yes") }, enabled = !state.photoBusy) {
+      Text("Capture the yes look")
+    }
+    Button(onClick = { onCaptureRef("no") }, enabled = !state.photoBusy) {
+      Text("Capture the no look")
+    }
+  }
+  Button(onClick = viewModel::refreshQuestions, enabled = !state.plantBusy) {
+    Text("Refresh standing questions")
+  }
+  state.questionsList.forEach { item ->
+    Text("• ${item.question} (${item.state})", style = MaterialTheme.typography.bodySmall)
+  }
+  state.plantLog.forEach { line ->
     Text(line, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
   }
 }
