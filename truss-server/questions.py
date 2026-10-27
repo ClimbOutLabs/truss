@@ -39,6 +39,23 @@ def _is_number(value):
     )
 
 
+def _parse_after(value):
+    """Parse a nightly after time the one way every reader agrees on:
+    the parser due() itself uses, and only a plain clock time, with
+    no offset attached. Returns a time, or None when the value is not
+    one. Validating with any other parser lets values through that
+    due() then raises on."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = time.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return None
+    return parsed
+
+
 def _clean_pattern(pattern):
     """Validate a watch pattern for create() and fill every field the
     checker reads, so a stored pattern can always be evaluated.
@@ -54,15 +71,10 @@ def _clean_pattern(pattern):
             raise ValueError("How often to check must be a number of minutes.")
         return {"kind": "interval", "minutes": minutes}
     if kind == "nightly":
-        after = pattern.get("after", "20:00")
-        valid = isinstance(after, str)
-        if valid:
-            try:
-                datetime.strptime(after, "%H:%M")
-            except ValueError:
-                valid = False
-        if not valid:
+        parsed_after = _parse_after(pattern.get("after", "20:00"))
+        if parsed_after is None:
             raise ValueError("The nightly time must look like 21:30.")
+        after = parsed_after.strftime("%H:%M")
         gap = pattern.get("minutes", 15)
         if not _is_number(gap):
             raise ValueError("The gap between checks must be a number of minutes.")
@@ -97,6 +109,9 @@ class QuestionStore:
         text = text.strip()
         if not text:
             raise ValueError("The question text is empty.")
+        # Clean the pattern before anything is created, so a refused
+        # planting leaves no folder behind and burns no sequence.
+        pattern = _clean_pattern(pattern)
         base = slugify(text)
         slug = base
         n = 2
@@ -110,7 +125,7 @@ class QuestionStore:
         folder.mkdir(parents=True)
         (folder / "question.txt").write_text(text + "\n")
         watch = {
-            "pattern": _clean_pattern(pattern),
+            "pattern": pattern,
             "state": "planting",
             "seq": seq,
             "planted_at": datetime.now().isoformat(timespec="seconds"),
@@ -202,21 +217,18 @@ class QuestionStore:
         pattern = watch.get("pattern")
         if not isinstance(pattern, dict):
             return False
-        kind = pattern.get("kind", "interval")
+        kind = pattern.get("kind")
         if kind == "interval":
             if not _is_number(pattern.get("minutes")):
                 return False
         elif kind == "nightly":
-            after = pattern.get("after")
-            if not isinstance(after, str):
-                return False
-            try:
-                datetime.strptime(after, "%H:%M")
-            except ValueError:
+            if _parse_after(pattern.get("after")) is None:
                 return False
             if not _is_number(pattern.get("minutes", 15)):
                 return False
         else:
+            # No kind, or a kind due() has no branch for: due() would
+            # silently never check it, so it is not a readable record.
             return False
         for key in ("planted_at", "last_checked_at", "answered_at"):
             value = watch.get(key)

@@ -182,6 +182,11 @@ def test_bad_patterns_never_stop_checking():
             ),
         ),
         ("an unknown kind", _watch({"kind": "weekly", "minutes": 15})),
+        (
+            "nightly after in single digits",
+            _watch({"kind": "nightly", "after": "7:05"}),
+        ),
+        ("a pattern with no kind", _watch({"minutes": 0})),
     ]
     for i, (label, watch) in enumerate(bad):
         with tempfile.TemporaryDirectory() as tmp:
@@ -229,6 +234,8 @@ def test_pattern_validation_at_planting():
             ("minutes as words", {"kind": "interval", "minutes": "15"}),
             ("an unknown kind", {"kind": "weekly"}),
             ("after as a word", {"kind": "nightly", "after": "banana"}),
+            ("after in single digits", {"kind": "nightly", "after": "7:05"}),
+            ("after with an offset", {"kind": "nightly", "after": "20:00+00:00"}),
             ("a pattern that is not a mapping", "every hour"),
         ):
             try:
@@ -236,6 +243,27 @@ def test_pattern_validation_at_planting():
                 check(f"create refuses {label}", False)
             except ValueError:
                 check(f"create refuses {label}", True)
+        slug3 = store.create(
+            "Is the hall dark?", {"kind": "nightly", "after": "20:00:00"}
+        )
+        check(
+            "an after with seconds is stored as a plain clock time",
+            store.get(slug3)["pattern"]["after"] == "20:00",
+        )
+        before = sorted(p.name for p in Path(tmp).iterdir())
+        try:
+            store.create("Is the gate closed?", {"kind": "interval", "minutes": "soon"})
+        except ValueError:
+            pass
+        check(
+            "a refused planting leaves no folder behind",
+            sorted(p.name for p in Path(tmp).iterdir()) == before,
+        )
+        retry = store.create("Is the gate closed?")
+        check(
+            "the retry of a refused text keeps the plain slug",
+            retry == "is-the-gate-closed-2",
+        )
 
 
 def test_broken_folder_never_blocks_planting():
