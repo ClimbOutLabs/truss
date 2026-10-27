@@ -20,6 +20,7 @@ Patterns:
 """
 
 import json
+import math
 import re
 from datetime import datetime, time
 from pathlib import Path
@@ -28,6 +29,45 @@ from pathlib import Path
 def slugify(text):
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return (slug[:48].strip("-") or "question")
+
+
+def _is_number(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _clean_pattern(pattern):
+    """Validate a watch pattern for create() and fill every field the
+    checker reads, so a stored pattern can always be evaluated.
+    Raises ValueError with a plain message for anything unusable."""
+    if pattern is None:
+        return {"kind": "interval", "minutes": 15}
+    if not isinstance(pattern, dict):
+        raise ValueError("A watch pattern must say how often to check.")
+    kind = pattern.get("kind", "interval")
+    if kind == "interval":
+        minutes = pattern.get("minutes", 15)
+        if not _is_number(minutes):
+            raise ValueError("How often to check must be a number of minutes.")
+        return {"kind": "interval", "minutes": minutes}
+    if kind == "nightly":
+        after = pattern.get("after", "20:00")
+        valid = isinstance(after, str)
+        if valid:
+            try:
+                datetime.strptime(after, "%H:%M")
+            except ValueError:
+                valid = False
+        if not valid:
+            raise ValueError("The nightly time must look like 21:30.")
+        gap = pattern.get("minutes", 15)
+        if not _is_number(gap):
+            raise ValueError("The gap between checks must be a number of minutes.")
+        return {"kind": "nightly", "after": after, "minutes": gap}
+    raise ValueError("A watch pattern is either interval or nightly.")
 
 
 class QuestionStore:
@@ -70,7 +110,7 @@ class QuestionStore:
         folder.mkdir(parents=True)
         (folder / "question.txt").write_text(text + "\n")
         watch = {
-            "pattern": pattern or {"kind": "interval", "minutes": 15},
+            "pattern": _clean_pattern(pattern),
             "state": "planting",
             "seq": seq,
             "planted_at": datetime.now().isoformat(timespec="seconds"),
@@ -93,7 +133,7 @@ class QuestionStore:
             watch = self._read_watch(slug)
         except Exception:
             watch = None
-        if not self._watch_ok(watch) or not (folder / "question.txt").exists():
+        if not self._watch_ok(watch) or not (folder / "question.txt").is_file():
             # Refuse before writing anything: a look saved into a
             # folder reads cannot see would plant a phantom.
             raise KeyError(f"No question named {slug}.")
@@ -157,9 +197,26 @@ class QuestionStore:
         folder as no question rather than raising over it."""
         if not isinstance(watch, dict):
             return False
-        if not isinstance(watch.get("pattern"), dict):
-            return False
         if not isinstance(watch.get("state"), str):
+            return False
+        pattern = watch.get("pattern")
+        if not isinstance(pattern, dict):
+            return False
+        kind = pattern.get("kind", "interval")
+        if kind == "interval":
+            if not _is_number(pattern.get("minutes")):
+                return False
+        elif kind == "nightly":
+            after = pattern.get("after")
+            if not isinstance(after, str):
+                return False
+            try:
+                datetime.strptime(after, "%H:%M")
+            except ValueError:
+                return False
+            if not _is_number(pattern.get("minutes", 15)):
+                return False
+        else:
             return False
         for key in ("planted_at", "last_checked_at", "answered_at"):
             value = watch.get(key)
@@ -170,8 +227,12 @@ class QuestionStore:
             if not isinstance(value, str):
                 return False
             try:
-                datetime.fromisoformat(value)
+                parsed = datetime.fromisoformat(value)
             except ValueError:
+                return False
+            if parsed.tzinfo is not None:
+                # The store writes plain local times; a stamp carrying
+                # an offset cannot be compared with them.
                 return False
         return True
 
@@ -189,7 +250,7 @@ class QuestionStore:
             question = (folder / "question.txt").read_text().strip()
         except Exception:
             watch, question = None, None
-        if question is None or not self._watch_ok(watch):
+        if not question or not self._watch_ok(watch):
             # A folder too broken to read (no watch file, a watch file
             # that no longer parses or is not a complete record, no
             # question text) is not a readable question. Reads skip

@@ -6,6 +6,7 @@ Run from the truss-server folder:  python3 test_bedtime.py
 Stdlib only. Exits non-zero on the first failure.
 """
 
+import json
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -144,6 +145,99 @@ def test_loose_text_match_is_the_same_question():
         check("the wearer's own copy is the member", planted["slugs"][0] == manual)
 
 
+def _raw_folder(root, slug, watch, question="Is the porch light on?"):
+    folder = Path(root) / slug
+    folder.mkdir()
+    if question is not None:
+        (folder / "question.txt").write_text(question + "\n")
+    (folder / "watch.json").write_text(json.dumps(watch))
+    return folder
+
+
+def _watch(pattern, **over):
+    watch = {
+        "pattern": pattern,
+        "state": "standing",
+        "seq": 1,
+        "planted_at": "2026-10-27T20:00:00",
+        "last_checked_at": None,
+        "answered_at": None,
+    }
+    watch.update(over)
+    return watch
+
+
+def test_bad_patterns_never_stop_checking():
+    bad = [
+        ("interval without minutes", _watch({"kind": "interval"})),
+        ("interval minutes as words", _watch({"kind": "interval", "minutes": "15"})),
+        ("interval minutes as a list", _watch({"kind": "interval", "minutes": [15]})),
+        ("nightly after as a word", _watch({"kind": "nightly", "after": "banana"})),
+        ("nightly after missing", _watch({"kind": "nightly", "after": None})),
+        (
+            "nightly gap as words",
+            _watch(
+                {"kind": "nightly", "after": "21:00", "minutes": "soon"},
+                last_checked_at="2026-10-27T21:00:00",
+            ),
+        ),
+        ("an unknown kind", _watch({"kind": "weekly", "minutes": 15})),
+    ]
+    for i, (label, watch) in enumerate(bad):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = QuestionStore(tmp)
+            healthy = store.create("Is the gate closed?")
+            store.save_ref(healthy, "yes", JPEG)
+            store.save_ref(healthy, "no", JPEG)
+            store.mark_checked(healthy, when=datetime.now() - timedelta(hours=1))
+            _raw_folder(tmp, f"bad-{i}", watch)
+            check(f"{label}: reads as no question", store.get(f"bad-{i}") is None)
+            check(
+                f"{label}: due still returns the healthy question",
+                [e["slug"] for e in store.due()] == [healthy],
+            )
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        _raw_folder(
+            tmp,
+            "offset-stamp",
+            _watch(
+                {"kind": "interval", "minutes": 15},
+                planted_at="2026-10-27T20:00:00+00:00",
+            ),
+        )
+        check(
+            "a stamp carrying an offset reads as no question",
+            store.get("offset-stamp") is None and store.due() == [],
+        )
+
+
+def test_pattern_validation_at_planting():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create("Is the gate closed?", {"kind": "interval"})
+        check(
+            "a bare interval kind gains its default minutes",
+            store.get(slug)["pattern"] == {"kind": "interval", "minutes": 15},
+        )
+        slug2 = store.create("Is the porch dark?", {"kind": "nightly", "after": "21:30"})
+        check(
+            "a nightly pattern gains the store default gap",
+            store.get(slug2)["pattern"]["minutes"] == 15,
+        )
+        for label, pattern in (
+            ("minutes as words", {"kind": "interval", "minutes": "15"}),
+            ("an unknown kind", {"kind": "weekly"}),
+            ("after as a word", {"kind": "nightly", "after": "banana"}),
+            ("a pattern that is not a mapping", "every hour"),
+        ):
+            try:
+                store.create("Is anything on?", pattern)
+                check(f"create refuses {label}", False)
+            except ValueError:
+                check(f"create refuses {label}", True)
+
+
 def test_broken_folder_never_blocks_planting():
     with tempfile.TemporaryDirectory() as tmp:
         store = QuestionStore(tmp)
@@ -225,6 +319,35 @@ def test_broken_folder_never_blocks_planting():
         check(
             "the refused look wrote nothing",
             not (folder / "ref-yes.jpg").exists(),
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create("Is the porch light on?")
+        folder = Path(tmp) / slug
+        (folder / "question.txt").unlink()
+        (folder / "question.txt").mkdir()
+        try:
+            store.save_ref(slug, "yes", JPEG)
+            check("a look is refused when the question text is a folder", False)
+        except KeyError:
+            check("a look is refused when the question text is a folder", True)
+        check(
+            "that refused look wrote nothing either",
+            not (folder / "ref-yes.jpg").exists(),
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        empty = Path(tmp) / "empty-words"
+        empty.mkdir()
+        (empty / "question.txt").write_text("")
+        (empty / "watch.json").write_text(
+            json.dumps(_watch({"kind": "interval", "minutes": 15}))
+        )
+        check(
+            "a question with no words reads as no question",
+            store.get("empty-words") is None,
         )
 
 
@@ -331,6 +454,8 @@ def test_the_round():
 
 if __name__ == "__main__":
     test_plant_round()
+    test_bad_patterns_never_stop_checking()
+    test_pattern_validation_at_planting()
     test_retired_member_on_a_fresh_store_plants_nothing()
     test_existing_member_on_different_terms_is_noted_not_rewritten()
     test_preplanted_member_joins_in_walk_order()
