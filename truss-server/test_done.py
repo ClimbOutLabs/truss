@@ -277,7 +277,7 @@ def test_redo_silence():
     loop.process_frame(f)
     check("a cannot-tell return check speaks no reminder", len(spoken) == 1)
     check("a cannot-tell return frame is deleted", not f.exists())
-    clock.now = datetime(2026, 10, 27, 21, 25)
+    clock.now = datetime(2026, 10, 27, 21, 35)
     f = frame(captures, "3.jpg")
     result = loop.process_frame(f)
     check("a failed return check stays silent", len(spoken) == 1)
@@ -328,6 +328,104 @@ def test_state_window_question_is_unchanged():
     loop.process_frame(frame(captures, "2.jpg"))
     check("a state question is never return-checked",
           loop.check_fn.redo_calls == [])
+
+
+def test_done_firing_write_failure_records_nothing():
+    store, loop, spoken, captures, clock = rig(
+        normal=[verdict("yes", "Tonight's compartment is empty.")]
+    )
+    slug = plant(store, PILLS, WINDOW, kind="done")
+    edit_watch(store.root, slug, planted_at="2026-10-27T08:00:00")
+    original_write = store._write_watch
+
+    def failing_write(target_slug, watch):
+        if watch.get("witness") is not None:
+            raise OSError("disk gone")
+        return original_write(target_slug, watch)
+
+    store._write_watch = failing_write
+    result = loop.process_frame(frame(captures, "1.jpg"))
+    check("a done firing whose witness write fails does not fire",
+          result["fired"] == [])
+    check("a failed done firing speaks nothing", spoken == [])
+    entry = store.get(slug)
+    check("a failed done firing leaves no answered mark and no witness",
+          entry["answered_at"] is None and entry["witness"] is None
+          and entry["state"] == "standing")
+    answers = Path(captures).parent / "log" / "2026-10-27" / "answers.txt"
+    check("a failed done firing writes no answer log line",
+          not answers.exists())
+    alerts = AlertStore(Path(captures).parent / "alerts")
+    created = sweep_missed(store, alerts, now=datetime(2026, 10, 27, 22, 30))
+    check("the miss alert after a failed firing is true: nothing was recorded",
+          len(created) == 1 and created[0]["slug"] == slug)
+
+
+def test_done_firing_retry_after_write_failure():
+    store, loop, spoken, captures, clock = rig(
+        normal=[verdict("yes", "Tonight's compartment is empty."),
+                verdict("yes", "Tonight's compartment is empty.")]
+    )
+    slug = plant(store, PILLS, WINDOW, kind="done")
+    edit_watch(store.root, slug, planted_at="2026-10-27T08:00:00")
+    original_write = store._write_watch
+
+    def failing_write(target_slug, watch):
+        if watch.get("witness") is not None:
+            raise OSError("disk gone")
+        return original_write(target_slug, watch)
+
+    store._write_watch = failing_write
+    loop.process_frame(frame(captures, "1.jpg"))
+    store._write_watch = original_write
+    clock.now = datetime(2026, 10, 27, 21, 20)
+    result = loop.process_frame(frame(captures, "2.jpg"))
+    check("a later frame witnesses the act after a failed firing",
+          result["fired"] == [slug]
+          and store.witness_today(slug, now=clock.now) is not None)
+    check("the retried firing is spoken once", len(spoken) == 1)
+    alerts = AlertStore(Path(captures).parent / "alerts")
+    check("no miss is raised after the retried witness",
+          sweep_missed(store, alerts,
+                       now=datetime(2026, 10, 27, 22, 30)) == [])
+
+
+def test_redo_checks_obey_the_check_gap():
+    store, loop, spoken, captures, clock = rig(
+        normal=[verdict("yes", "Tonight's compartment is empty.")],
+        redo=[verdict("cannot_tell", "The organizer, but no hand near it."),
+              verdict("yes", "She is at the organizer again.")],
+        start=datetime(2026, 10, 27, 20, 50),
+    )
+    plant(store, PILLS, WINDOW, kind="done")
+    loop.process_frame(frame(captures, "fire.jpg"))
+    clock.now = datetime(2026, 10, 27, 21, 5)
+    for n in range(10):
+        loop.process_frame(frame(captures, f"watch-{n}.jpg"))
+    check("ten quick frames cause at most one return check",
+          len(loop.check_fn.redo_calls) == 1)
+    clock.now = datetime(2026, 10, 27, 21, 20)
+    loop.process_frame(frame(captures, "watch-after-gap.jpg"))
+    check("a return check is allowed again after the gap",
+          len(loop.check_fn.redo_calls) == 2)
+    check("the allowed return check can speak the reminder",
+          spoken[-1] == "That is already done. You did it at 8:50 PM.")
+
+
+def test_retired_witnessed_question_never_reminds():
+    store, loop, spoken, captures, clock = rig(
+        normal=[verdict("yes", "Tonight's compartment is empty.")],
+        redo=[verdict("yes", "She is at the organizer again.")],
+    )
+    slug = plant(store, PILLS, WINDOW, kind="done")
+    loop.process_frame(frame(captures, "1.jpg"))
+    store.retire(slug)
+    clock.now = datetime(2026, 10, 27, 21, 20)
+    loop.process_frame(frame(captures, "2.jpg"))
+    check("a retired witnessed question is never return-checked",
+          loop.check_fn.redo_calls == [])
+    check("a retired witnessed question speaks no reminder",
+          len(spoken) == 1)
 
 
 # -- the sweep: missed windows, delivery until spoken ------------------------
@@ -412,6 +510,133 @@ def test_miss_alert_survives_reload_and_broken_records():
     (broken / "watch.json").write_text("{not json")
     check("a broken record never makes the sweep raise",
           sweep_missed(store, alerts, now=after_close) == [])
+
+
+def test_sweep_never_alerts_for_an_invalid_window():
+    tmp, store, alerts = sweep_rig()
+    slug = planted_done(store)
+    edit_watch(store.root, slug,
+               pattern={"kind": "window", "after": "22:00", "until": "21:00"})
+    check("an invalid window raises no miss on the first day",
+          sweep_missed(store, alerts,
+                       now=datetime(2026, 10, 27, 23, 0)) == [])
+    check("an invalid window raises no miss on a later day either",
+          sweep_missed(store, alerts,
+                       now=datetime(2026, 10, 28, 23, 0)) == []
+          and alerts.pending() == [])
+
+
+def test_ack_is_confined_to_real_alert_files():
+    tmp, store, alerts = sweep_rig()
+    root = Path(tmp)
+    alerts_root = Path(alerts.root)
+    today = "2026-10-27"
+
+    def alert_file(path, alert):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(alert, indent=2) + "\n")
+
+    outside = root / "elsewhere" / "thing.json"
+    alert_file(outside, {
+        "id": "../elsewhere/thing", "slug": "a-question", "date": today,
+        "line": "A line that must never be cleared from outside.",
+        "spoken": False,
+    })
+    nested = alerts_root / "a" / "b.json"
+    alert_file(nested, {
+        "id": "a/b", "slug": "a-question", "date": today,
+        "line": "A line in a subfolder, not an alert file.",
+        "spoken": False,
+    })
+    ghost = alerts_root / "ghost.json"
+    ghost.write_text(json.dumps(
+        {"id": "ghost", "spoken": False, "date": today}
+    ) + "\n")
+
+    def files_now():
+        return {
+            str(p.relative_to(root))
+            for p in root.rglob("*") if p.is_file()
+        }
+
+    before = files_now()
+    check("an ack with path separators is refused",
+          alerts.ack("../elsewhere/thing") is False)
+    check("an ack naming a subfolder path is refused",
+          alerts.ack("a/b") is False)
+    check("an ack of a shapeless file's id is refused",
+          alerts.ack("ghost") is False)
+    check("the outside file was not marked spoken",
+          json.loads(outside.read_text())["spoken"] is False)
+    check("the subfolder file was not marked spoken",
+          json.loads(nested.read_text())["spoken"] is False)
+    check("the refused acks created and removed no files",
+          files_now() == before)
+
+
+def test_alert_store_on_a_file_path_is_disabled_not_fatal():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "alerts-as-a-file"
+        path.write_text("not a folder")
+        alerts = AlertStore(path)
+        check("an alerts path that is a file does not raise", True)
+        check("a disabled alert store holds nothing pending",
+              alerts.pending() == [])
+        check("a disabled alert store refuses every ack",
+              alerts.ack("anything") is False)
+        store = QuestionStore(Path(tmp) / "questions")
+        check("the sweep is a no-op with a disabled alert store",
+              sweep_missed(store, alerts,
+                           now=datetime(2026, 10, 27, 23, 0)) == [])
+
+
+def test_shapeless_alert_files_are_skipped_everywhere():
+    import server as server_module
+
+    with tempfile.TemporaryDirectory() as tmp:
+        server_module.STORE = QuestionStore(Path(tmp) / "questions")
+        slug = server_module.STORE.create(PILLS, WINDOW, kind="done")
+        server_module.ALERTS = AlertStore(Path(tmp) / "alerts")
+        today = datetime.now().date().isoformat()
+        alerts_root = Path(tmp) / "alerts"
+        (alerts_root / "broken.json").write_text(json.dumps(
+            {"spoken": False, "date": today}
+        ) + "\n")
+        good = {
+            "id": f"{today}-good-alert",
+            "slug": slug,
+            "question": PILLS,
+            "date": today,
+            "until": "22:00",
+            "line": "It is past 10:00 PM. This has not been done today: "
+                    "Did I take my night pills?",
+            "spoken": False,
+            "created_at": f"{today}T22:30:00",
+        }
+        (alerts_root / "good.json").write_text(json.dumps(good, indent=2) + "\n")
+        httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{port}"
+        try:
+            got = get_json(base + "/alerts")
+            check("GET /alerts returns the good alert beside a shapeless one",
+                  len(got["alerts"]) == 1
+                  and got["alerts"][0]["id"] == good["id"])
+            listing = get_json(base + "/questions")
+            check("GET /questions works beside a shapeless alert file",
+                  len(listing["questions"]) == 1
+                  and listing["questions"][0]["miss_pending"] is True)
+            status, _ = post(
+                base + "/alerts/ack",
+                json.dumps({"id": good["id"]}).encode(),
+                "application/json",
+            )
+            check("acking the good alert still works",
+                  status == 200 and server_module.ALERTS.pending() == [])
+        finally:
+            httpd.shutdown()
 
 
 # -- HTTP: planting kinds, the alerts endpoints ------------------------------
@@ -553,8 +778,16 @@ if __name__ == "__main__":
     test_no_redo_without_a_witness()
     test_yesterdays_witness_stays_silent()
     test_state_window_question_is_unchanged()
+    test_done_firing_write_failure_records_nothing()
+    test_done_firing_retry_after_write_failure()
+    test_redo_checks_obey_the_check_gap()
+    test_retired_witnessed_question_never_reminds()
     test_miss_alert_lifecycle()
     test_miss_alert_not_raised()
     test_miss_alert_survives_reload_and_broken_records()
+    test_sweep_never_alerts_for_an_invalid_window()
+    test_ack_is_confined_to_real_alert_files()
+    test_alert_store_on_a_file_path_is_disabled_not_fatal()
+    test_shapeless_alert_files_are_skipped_everywhere()
     test_http()
     print("ALL PASS")

@@ -137,6 +137,15 @@ class CheckLoop:
                     raise TypeError("check returned no verdict")
                 verdict = result.get("verdict")
             except Exception:
+                result, verdict = {}, None
+                errors += 1
+            try:
+                # The return check is recorded like any other check,
+                # so the store's gap before the next one survives a
+                # restart and no watched question is return-checked
+                # on every frame.
+                self.store.mark_checked(entry["slug"], when=now)
+            except Exception:
                 errors += 1
                 continue
             if verdict == "yes":
@@ -151,6 +160,7 @@ class CheckLoop:
 
         speak = []
         evidence = None
+        completed_fired = []
         if fired or redo is not None:
             first = fired[0][0] if fired else redo[0]
             try:
@@ -162,25 +172,28 @@ class CheckLoop:
                 evidence = frame_path
             for entry, result in fired:
                 try:
-                    self._append_log(entry, result, evidence, now)
-                except Exception:
-                    errors += 1
-                try:
-                    self.store.mark_answered(entry["slug"], when=now)
                     if entry.get("kind") == "done":
-                        # The witness is part of the firing's
-                        # bookkeeping: a done answer that could not
-                        # be witnessed is not spoken, so it can still
-                        # be witnessed on a later frame.
-                        self.store.record_witness(
+                        # One store operation records the answered
+                        # mark and the witness together. If it fails,
+                        # this firing never happened: nothing is
+                        # logged or spoken for it, and the question
+                        # stays eligible for a later frame.
+                        self.store.mark_answered_with_witness(
                             entry["slug"], evidence.name, when=now
                         )
+                    else:
+                        self.store.mark_answered(entry["slug"], when=now)
                 except Exception:
                     # Unmarked means unspoken: the question stays
                     # standing and can fire on a later frame, but this
                     # answer is never spoken twice.
                     errors += 1
                     continue
+                try:
+                    self._append_log(entry, result, evidence, now)
+                except Exception:
+                    errors += 1
+                completed_fired.append(entry)
                 text = speak_text(entry, result)
                 speak.append(text)
                 if self.speak_fn is not None:
@@ -214,7 +227,7 @@ class CheckLoop:
 
         return {
             "managed": True,
-            "fired": [entry["slug"] for entry, _ in fired],
+            "fired": [entry["slug"] for entry in completed_fired],
             "speak": speak,
             "evidence": str(evidence) if evidence else None,
             "errors": errors,

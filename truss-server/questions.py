@@ -64,6 +64,20 @@ def _parse_time(value):
     return None
 
 
+def _window_times(pattern):
+    """A window pattern's start and end times, or None when the
+    pattern is not a readable window that ends after it starts.
+    This is the one window-validity rule: planting, due checks, and
+    the missed-window sweep all read a window through here."""
+    if not isinstance(pattern, dict) or pattern.get("kind") != "window":
+        return None
+    after = _parse_time(pattern.get("after"))
+    until = _parse_time(pattern.get("until"))
+    if after is None or until is None or until <= after:
+        return None
+    return after, until
+
+
 def _gap_seconds(pattern):
     """The minimum seconds between checks for a pattern. A stored gap
     that is not a usable number falls back to fifteen minutes rather
@@ -117,8 +131,13 @@ class QuestionStore:
         return json.loads(path.read_text())
 
     def _write_watch(self, slug, watch):
+        # Write to a side file and move it into place, so a watch
+        # record is never seen half-written and a failed write leaves
+        # the previous record whole.
         path = self._folder(slug) / "watch.json"
-        path.write_text(json.dumps(watch, indent=2) + "\n")
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(watch, indent=2) + "\n")
+        tmp.replace(path)
 
     # -- planting ---------------------------------------------------------
 
@@ -266,13 +285,13 @@ class QuestionStore:
                         continue
                 out.append(entry)
             elif kind == "window":
-                after = _parse_time(pattern.get("after"))
-                until = _parse_time(pattern.get("until"))
-                if after is None or until is None or until <= after:
+                times = _window_times(pattern)
+                if times is None:
                     # A window that cannot be read is never due. It
                     # was refused at planting time; a record damaged
                     # afterwards degrades to silence, not an error.
                     continue
+                after, until = times
                 if not after <= now.time() < until:
                     continue
                 answered = entry["answered_at"]
@@ -319,6 +338,32 @@ class QuestionStore:
 
     # -- the witness: what a done question saw, and when ------------------
 
+    def mark_answered_with_witness(self, slug, frame_name, when=None):
+        """Record a done question's firing and its witness together,
+        in one watch record write. The two facts are never separable:
+        either both land, or the write fails and neither does, so a
+        wearer can never be told later that a seen act was not done
+        only because half of its firing was saved."""
+        watch = self._read_watch(slug)
+        when = when or datetime.now()
+        watch["answered_at"] = when.isoformat(timespec="seconds")
+        pattern = watch.get("pattern")
+        if isinstance(pattern, dict) and pattern.get("kind") in (
+            "nightly",
+            "window",
+        ):
+            watch["state"] = "standing"
+            watch["last_checked_at"] = when.isoformat(timespec="seconds")
+        else:
+            watch["state"] = "answered"
+        watch["witness"] = {
+            "date": when.date().isoformat(),
+            "at": when.isoformat(timespec="seconds"),
+            "frame": frame_name,
+        }
+        watch["redo_spoken"] = False
+        self._write_watch(slug, watch)
+
     def record_witness(self, slug, frame_name, when=None):
         """Write the witness for a done question that just fired: the
         day, the time, and the evidence photo's name. A fresh witness
@@ -360,14 +405,32 @@ class QuestionStore:
         """Done questions holding a witness from today whose redo
         reminder has not been spoken yet. These are no longer checked
         as ordinary questions; the loop offers them frames under a
-        return prompt instead."""
+        return prompt instead. A return check obeys the same gap
+        between checks as an ordinary due question, counted from the
+        last recorded check of any kind, so a watched question costs
+        at most one return check per gap."""
         now = now or datetime.now()
         out = []
         for entry in self.list():
             if entry["kind"] != "done" or entry["redo_spoken"]:
                 continue
-            if self.witness_today(entry["slug"], now=now) is not None:
-                out.append(entry)
+            if entry["state"] != "standing":
+                continue
+            if self.witness_today(entry["slug"], now=now) is None:
+                continue
+            last = entry.get("last_checked_at")
+            if last:
+                try:
+                    last_dt = datetime.fromisoformat(last)
+                except (TypeError, ValueError):
+                    last_dt = None
+                if (
+                    last_dt is not None
+                    and (now - last_dt).total_seconds()
+                    < _gap_seconds(entry["pattern"])
+                ):
+                    continue
+            out.append(entry)
         return out
 
     def done_status(self, slug, now=None):

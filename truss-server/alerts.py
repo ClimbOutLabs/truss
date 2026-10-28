@@ -22,14 +22,40 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from questions import _parse_time
+from questions import _window_times
+
+
+def _valid_alert(alert):
+    """Whether a stored record is a whole alert: an id, a question
+    slug, a date, and the line to speak, all text. A valid-JSON file
+    in any other shape is not an alert and is skipped everywhere,
+    so it can never raise, block a listing, or stand in for one."""
+    if not isinstance(alert, dict):
+        return False
+    return all(
+        isinstance(alert.get(field), str) and alert.get(field)
+        for field in ("id", "slug", "date", "line")
+    )
 
 
 class AlertStore:
     def __init__(self, root):
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.disabled = False
         self._lock = threading.Lock()
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            if not self.root.is_dir():
+                raise OSError("the alerts path is not a folder")
+        except Exception:
+            # A server that cannot open its alerts folder still
+            # starts and does everything else; alerts degrade to a
+            # disabled store that holds nothing and clears nothing.
+            self.disabled = True
+            print(
+                "Warning: missed-window alerts are off because the "
+                "alerts folder could not be opened."
+            )
 
     def _path(self, alert_id):
         return self.root / f"{alert_id}.json"
@@ -41,54 +67,73 @@ class AlertStore:
             return None
         return data if isinstance(data, dict) else None
 
-    def _write(self, alert):
+    def _write_to(self, path, alert):
         # Write to a side file and move it into place, so a reader in
         # the server's other thread never sees a half-written alert.
-        tmp = self._path(alert["id"]).with_suffix(".tmp")
+        tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(alert, indent=2) + "\n")
-        tmp.replace(self._path(alert["id"]))
+        tmp.replace(path)
+
+    def _write(self, alert):
+        self._write_to(self._path(alert["id"]), alert)
 
     def pending(self):
         """Alerts still waiting to be spoken, oldest first. A file
-        that cannot be read is skipped, never fatal."""
+        that cannot be read, or that is not a whole alert, is
+        skipped, never fatal."""
+        if self.disabled:
+            return []
         out = []
         for path in sorted(self.root.glob("*.json")):
             alert = self._read(path)
-            if alert is not None and not alert.get("spoken"):
+            if _valid_alert(alert) and not alert.get("spoken"):
                 out.append(alert)
-        out.sort(key=lambda a: (a.get("date", ""), a.get("id", "")))
+        out.sort(key=lambda a: (a["date"], a["id"]))
         return out
 
     def exists_for(self, slug, date):
-        """Whether an alert for this question and day exists, spoken
-        or not. An acknowledged alert still counts: the sweep must
-        never raise the same miss twice."""
+        """Whether a whole alert for this question and day exists,
+        spoken or not. An acknowledged alert still counts: the sweep
+        must never raise the same miss twice."""
+        if self.disabled:
+            return False
         for path in self.root.glob("*.json"):
             alert = self._read(path)
-            if alert and alert.get("slug") == slug and alert.get("date") == date:
+            if _valid_alert(alert) and alert["slug"] == slug and alert["date"] == date:
                 return True
         return False
 
     def add(self, alert):
+        if self.disabled:
+            return
         with self._lock:
             self._write(alert)
 
     def ack(self, alert_id):
         """Mark one alert as spoken. Returns True when a pending alert
-        with that id was cleared, False for an unknown or already
-        spoken id. This is the only way an alert ever clears."""
+        was cleared, False for anything else. This is the only way
+        an alert ever clears.
+
+        The id is never used as a path. The store's own files are
+        searched for a whole alert whose stored id matches, and only
+        that file, inside the alerts folder, is written back."""
+        if self.disabled:
+            return False
         if not isinstance(alert_id, str) or not alert_id:
             return False
+        if "/" in alert_id or "\\" in alert_id:
+            return False
         with self._lock:
-            path = self._path(alert_id)
-            if not path.exists():
-                return False
-            alert = self._read(path)
-            if alert is None or alert.get("spoken"):
-                return False
-            alert["spoken"] = True
-            self._write(alert)
-            return True
+            for path in sorted(self.root.glob("*.json")):
+                alert = self._read(path)
+                if not _valid_alert(alert):
+                    continue
+                if alert["id"] != alert_id or alert.get("spoken"):
+                    continue
+                alert["spoken"] = True
+                self._write_to(path, alert)
+                return True
+        return False
 
 
 def miss_line(entry, until):
@@ -110,6 +155,8 @@ def sweep_missed(store, alerts, now=None):
     read is skipped with them. Never raises.
     """
     now = now or datetime.now()
+    if getattr(alerts, "disabled", False):
+        return []
     try:
         entries = store.list()
     except Exception:
@@ -133,11 +180,13 @@ def _sweep_one(store, alerts, entry, now):
     if entry.get("state") in ("planting", "retired"):
         return None
     pattern = entry.get("pattern")
-    if not isinstance(pattern, dict) or pattern.get("kind") != "window":
+    times = _window_times(pattern)
+    if times is None:
+        # The same window-validity rule as the store's due checks:
+        # a window that does not end after it starts never raises
+        # a miss, on any day.
         return None
-    until = _parse_time(pattern.get("until"))
-    if until is None:
-        return None
+    until = times[1]
     today = now.date().isoformat()
     planted = entry.get("planted_at")
     if isinstance(planted, str):
