@@ -31,6 +31,7 @@ so the sign-in header can only ever reach AMAN_BASE's origin.
 
 import base64
 import json
+import math
 import os
 import time
 import urllib.error
@@ -98,7 +99,7 @@ def _timeout_seconds():
         value = float(raw)
     except (TypeError, ValueError):
         return 120.0
-    return value if value > 0 else 120.0
+    return value if math.isfinite(value) and value > 0 else 120.0
 
 
 def _config():
@@ -138,7 +139,12 @@ def _file_part(path, what):
 
 
 def _turn_body(frame_path, question, ref_yes, ref_no):
-    planted = ref_yes is not None and ref_no is not None
+    if (ref_yes is None) != (ref_no is None):
+        raise _NoCheck(
+            "Only one of the question's two reference looks was given, "
+            "so no check was made."
+        )
+    planted = ref_yes is not None
     text = f"Question: {question}"
     if planted:
         text += PLANTED_INSTRUCTION

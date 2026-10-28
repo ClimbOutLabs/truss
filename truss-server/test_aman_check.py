@@ -179,6 +179,8 @@ def stub_env(stub, **overrides):
         "AMAN_CHECK_SESSION_ID": "check-chat-1",
         "AMAN_CHECK_TIMEOUT_S": None,
         "TRUSS_CHECKER": None,
+        "TRUSS_BASE_URL": None,
+        "TRUSS_CHECK_MODE": None,
         "MODEL_API_KEY": None,
     }
     values.update(overrides)
@@ -415,33 +417,38 @@ def test_wiring_aman_routes_to_the_stub():
     check("wiring aman: two turns were posted", len(stub.posts()) == 2)
 
 
-def test_wiring_default_keeps_the_no_key_result():
-    with stub_env(None):
-        wired = load_server("server_wired_meta")
+def test_wiring_default_is_not_aman():
+    with StubAman() as stub, stub_env(stub, TRUSS_BASE_URL="http://127.0.0.1:9/v1"):
+        wired = load_server("server_wired_default")
         result = wired.production_check(FRAME, ENTRY)
-        guide_result = wired.guide_check(FRAME, "Is the tv on?")
-    check(
-        "wiring default: production_check keeps the no-key result",
-        result == wired.no_key_result(),
-    )
-    check(
-        "wiring default: guide_check keeps the no-key result",
-        guide_result == wired.no_key_result(),
-    )
+    check("wiring default: the endpoint checker is used", wired.CHECKER == "endpoint")
+    check("wiring default: Aman is never asked", stub.requests == [])
+    check("wiring default: an unreachable endpoint reads cannot_tell",
+          result["verdict"] == "cannot_tell")
 
 
-def test_wiring_unknown_value_falls_back_to_meta():
-    with stub_env(None, TRUSS_CHECKER="banana"):
+def test_wiring_unknown_value_falls_back_to_endpoint():
+    with StubAman() as stub, stub_env(
+        stub, TRUSS_CHECKER="banana", TRUSS_BASE_URL="http://127.0.0.1:9/v1"
+    ):
         wired = load_server("server_wired_banana")
         result = wired.production_check(FRAME, ENTRY)
-    check(
-        "wiring unknown: the checker falls back to meta",
-        wired.CHECKER == "meta",
-    )
-    check(
-        "wiring unknown: the no-key result stands",
-        result == wired.no_key_result(),
-    )
+    check("wiring unknown: the checker falls back to the endpoint",
+          wired.CHECKER == "endpoint")
+    check("wiring unknown: Aman is never asked", stub.requests == [])
+    check("wiring unknown: the result is cannot_tell", result["verdict"] == "cannot_tell")
+
+
+def test_one_reference_gives_cannot_tell():
+    with StubAman(output='{"verdict": "yes", "reason": "On."}') as stub, stub_env(stub):
+        result = aman_check.check(FRAME, "Is the tv on?", ref_yes=REF_YES)
+    check_result("one reference", result, "cannot_tell")
+    check("one reference: nothing was sent", stub.requests == [])
+
+
+def test_infinite_timeout_is_refused():
+    with stub_env(None, AMAN_CHECK_TIMEOUT_S="inf"):
+        check("inf timeout: falls back to 120", aman_check._timeout_seconds() == 120.0)
 
 
 if __name__ == "__main__":
@@ -462,6 +469,8 @@ if __name__ == "__main__":
     test_missing_token()
     test_missing_session_id()
     test_wiring_aman_routes_to_the_stub()
-    test_wiring_default_keeps_the_no_key_result()
-    test_wiring_unknown_value_falls_back_to_meta()
+    test_wiring_default_is_not_aman()
+    test_wiring_unknown_value_falls_back_to_endpoint()
+    test_one_reference_gives_cannot_tell()
+    test_infinite_timeout_is_refused()
     print("ALL PASS")

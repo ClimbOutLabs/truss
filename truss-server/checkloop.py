@@ -156,7 +156,13 @@ class CheckLoop:
         reason = _reason_text(result)
         line = (
             f"{now.strftime('%H:%M:%S')} | {entry['question']} | yes | "
-            f"{reason} | evidence: {evidence.name}\n"
+            f"{reason} | evidence: {evidence.name}"
         )
+        # Every answer names the model that made the call, when the
+        # checker says which one it was.
+        model = result.get("model")
+        if isinstance(model, str) and model.strip():
+            line += f" | model: {model.strip()}"
+        line += "\n"
         with open(day / "answers.txt", "a") as f:
             f.write(line)
