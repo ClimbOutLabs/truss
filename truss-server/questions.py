@@ -573,9 +573,18 @@ class QuestionStore:
 
     # -- checks in flight ---------------------------------------------------
 
-    def begin_checks(self, slugs):
+    def claim_due(self, now=None):
+        """due(), with every due done question claimed in the same
+        locked step. Reading what is due and claiming it can then
+        never be split by a sweep: a sweep either runs first, when
+        the window is still open or the question is not due, or
+        finds the claim. Release with end_checks()."""
         with self._lock:
-            self._in_flight.update(slugs)
+            due = self.due(now=now)
+            self._in_flight.update(
+                e["slug"] for e in due if e.get("kind") == "done"
+            )
+            return due
 
     def end_checks(self, slugs):
         with self._lock:

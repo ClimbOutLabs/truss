@@ -694,24 +694,78 @@ def test_no_miss_while_a_check_is_in_flight():
               not store.check_in_flight(slug))
 
 
-def test_miss_waits_out_the_grace():
-    tmp, store, alerts = sweep_rig()
-    planted_done(store)
-    check("no miss at the moment the window closes",
-          sweep_missed(store, alerts, now=datetime(2026, 10, 27, 22, 0)) == [])
-    check("no miss inside the grace after the window",
-          sweep_missed(store, alerts, now=datetime(2026, 10, 27, 22, 0, 59)) == [])
-    check("the miss is raised once the grace has passed",
-          len(sweep_missed(store, alerts,
-                           now=datetime(2026, 10, 27, 22, 1))) == 1)
+def test_miss_for_a_window_ending_at_midnight():
+    late = {"kind": "window", "after": "21:00", "until": "23:59"}
+    night = datetime(2026, 10, 27, 23, 59, 10)
+    after_midnight = datetime(2026, 10, 28, 0, 0, 10)
 
     tmp, store, alerts = sweep_rig()
-    planted_done(store, pattern={"kind": "window", "after": "23:00",
-                                 "until": "23:59:30"})
-    check("a window closing just before midnight still raises that day",
-          len(sweep_missed(store, alerts,
-                           now=datetime(2026, 10, 27, 23, 59, 59))) == 1)
+    planted_done(store, pattern=late)
+    check("no miss while a 23:59 window is still open",
+          sweep_missed(store, alerts, now=datetime(2026, 10, 27, 23, 58, 50)) == [])
+    created = sweep_missed(store, alerts, now=night)
+    check("a 23:59 window raises its miss at 23:59:10",
+          len(created) == 1 and created[0]["date"] == "2026-10-27")
+    check("the miss is not raised again after midnight",
+          sweep_missed(store, alerts, now=after_midnight) == []
+          and len(alerts.pending()) == 1)
 
+    tmp, store, alerts = sweep_rig()
+    planted_done(store, pattern=late)
+    created = sweep_missed(store, alerts, now=after_midnight)
+    check("with no sweep before midnight, the miss is raised just after",
+          len(created) == 1 and created[0]["date"] == "2026-10-27"
+          and created[0]["id"] == "2026-10-27-did-i-take-my-night-pills")
+    check("the line after midnight speaks of yesterday",
+          created[0]["line"]
+          == "Yesterday's window closed at 11:59 PM. This was not done "
+             "yesterday: Did I take my night pills?")
+
+    tmp, store, alerts = sweep_rig()
+    slug = planted_done(store, pattern=late)
+    store.mark_answered_with_witness(slug, "pills.jpg",
+                                     when=datetime(2026, 10, 27, 23, 30))
+    # A frame just after midnight clears yesterday's witness lazily.
+    store.witness_today(slug, now=datetime(2026, 10, 28, 0, 0, 5))
+    check("yesterday's witness was cleared",
+          store.get(slug)["witness"] is None)
+    check("an act seen yesterday is never called missed after midnight",
+          sweep_missed(store, alerts, now=after_midnight) == [])
+
+    tmp, store, alerts = sweep_rig()
+    planted_done(store, pattern=late)
+    check("yesterday is left alone after 1 AM",
+          sweep_missed(store, alerts, now=datetime(2026, 10, 28, 1, 0)) == [])
+
+
+def test_no_miss_while_a_check_runs_past_midnight():
+    for answer, expect_alert in (("yes", False), ("no", True)):
+        store, loop, spoken, captures, clock = rig(
+            start=datetime(2026, 10, 27, 23, 58, 50)
+        )
+        alerts = AlertStore(Path(store.root).parent / "alerts")
+        slug = plant(store, PILLS, {"kind": "window", "after": "21:00",
+                                    "until": "23:59"}, kind="done")
+        edit_watch(store.root, slug, planted_at="2026-10-27T08:00:00")
+        during = []
+
+        def slow_check(frame_path, entry, answer=answer):
+            for moment in (datetime(2026, 10, 27, 23, 59, 30),
+                           datetime(2026, 10, 28, 0, 0, 30)):
+                during.append(sweep_missed(store, alerts, now=moment))
+            return verdict(answer, "Tonight's compartment is empty.")
+
+        loop.check_fn = slow_check
+        loop.process_frame(frame(captures, "late.jpg"))
+        check(f"{answer}: no sweep during a check across midnight raises",
+              during == [[], []] and alerts.pending() == [])
+        after = sweep_missed(store, alerts, now=datetime(2026, 10, 28, 0, 1))
+        if expect_alert:
+            check("no: the true miss is raised for yesterday once it is over",
+                  len(after) == 1 and after[0]["date"] == "2026-10-27")
+        else:
+            check("yes: the act seen at 11:58 PM is never called missed",
+                  after == [] and alerts.pending() == [])
 
 def test_sweep_never_alerts_for_an_invalid_window():
     tmp, store, alerts = sweep_rig()
@@ -991,7 +1045,8 @@ if __name__ == "__main__":
     test_miss_alert_not_raised()
     test_miss_alert_survives_reload_and_broken_records()
     test_no_miss_while_a_check_is_in_flight()
-    test_miss_waits_out_the_grace()
+    test_miss_for_a_window_ending_at_midnight()
+    test_no_miss_while_a_check_runs_past_midnight()
     test_sweep_never_alerts_for_an_invalid_window()
     test_ack_is_confined_to_real_alert_files()
     test_alert_store_on_a_file_path_is_disabled_not_fatal()
