@@ -209,7 +209,8 @@ def _load_endpoint():
 
 def compile_question(folder, endpoint=None):
     """Compile one question folder. Writes prompts.txt and looks.txt
-    and returns {"ok": True, "prompts": [...], "looks": "..."}; on any
+    and returns {"ok": True, "prompts": [...], "looks": "...", "model":
+    "..."}; on any
     failure writes nothing and returns {"ok": False, "reason": "..."}.
     Never raises.
 
@@ -246,7 +247,13 @@ def compile_question(folder, endpoint=None):
         # prompts.txt being from the same compile or an earlier one.
         _write_text(folder, "prompts.txt", "\n".join(prompts) + "\n")
         _write_text(folder, "looks.txt", looks)
-        return {"ok": True, "prompts": prompts, "looks": looks}
+        model = answer.get("_model")
+        return {
+            "ok": True,
+            "prompts": prompts,
+            "looks": looks,
+            "model": model if isinstance(model, str) else "",
+        }
     except CompileError as e:
         return {"ok": False, "reason": str(e)}
     except Exception:
@@ -305,7 +312,8 @@ class Compiler:
                 result = self._compile(folder)
                 if result.get("ok"):
                     self._report(
-                        f"Compiled {folder.name}: prompts {', '.join(result['prompts'])}"
+                        f"Compiled {folder.name} with {result.get('model') or 'the model'}: "
+                        f"prompts {', '.join(result['prompts'])}"
                     )
                 else:
                     self._report(f"Compile {folder.name} skipped: {result.get('reason')}")
@@ -333,7 +341,7 @@ def main(argv):
     for folder in folders:
         result = compile_question(folder)
         if result["ok"]:
-            print(f"{folder.name}: {json.dumps(result['prompts'])}")
+            print(f"{folder.name} ({result['model'] or 'model unnamed'}): {json.dumps(result['prompts'])}")
             print("  " + result["looks"].rstrip().replace("\n", "\n  "))
         else:
             failed += 1

@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 import urllib.request
-from http.server import HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -238,7 +238,7 @@ def test_compiler_worker():
         compiler.submit(folder)
         compiler.wait()
         check("each submit compiled in turn", len(fake.calls) == 2)
-        check("reported", lines and lines[0].startswith("Compiled is-the-stove-off"))
+        check("reported", lines and lines[0].startswith("Compiled is-the-stove-off with"))
 
         def boom(f):
             raise RuntimeError("worker crash")
@@ -305,6 +305,94 @@ def test_planting_compiles():
             httpd.shutdown()
 
 
+class StubChat:
+    """A stand-in OpenAI-compatible chat/completions server, as
+    llama-server would answer. Each request gets the next reply; the
+    last one repeats. Records every request body."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.requests = []
+
+    def __enter__(self):
+        stub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                stub.requests.append(body)
+                reply = stub.replies[min(len(stub.requests), len(stub.replies)) - 1]
+                data = json.dumps({
+                    "choices": [{"message": {"role": "assistant", "content": json.dumps(reply)}}],
+                    "usage": {"prompt_tokens": 900, "completion_tokens": 80},
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
+        return self
+
+    def __exit__(self, *exc):
+        self.httpd.shutdown()
+
+
+def test_through_the_real_endpoint():
+    """The whole path through endpoint.py against a stub llama-server.
+    Skipped until endpoint.py (the checker endpoint abstraction) is on
+    this branch."""
+    try:
+        import endpoint
+    except ImportError:
+        print("skip: endpoint.py is not here yet, end-to-end compile not run")
+        return
+    import os
+
+    with tempfile.TemporaryDirectory() as tmp, StubChat([STOVE_ANSWER]) as stub:
+        folder = planted_folder(tmp)
+        saved = {k: os.environ.get(k) for k in ("TRUSS_BASE_URL", "TRUSS_MODEL")}
+        os.environ["TRUSS_BASE_URL"] = stub.base
+        os.environ["TRUSS_MODEL"] = "muse-glimmer-30b"
+        try:
+            result = compile_question(folder)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        check("end to end: compile ok", result["ok"])
+        request = stub.requests[0]
+        check("end to end: the configured model", request.get("model") == "muse-glimmer-30b")
+        fmt = request.get("response_format") or {}
+        check(
+            "end to end: strict schema named plant_compile",
+            fmt.get("type") == "json_schema"
+            and fmt.get("json_schema", {}).get("name") == "plant_compile",
+        )
+        parts = [p for m in request["messages"] if isinstance(m.get("content"), list) for p in m["content"]]
+        images = [p for p in parts if p.get("type") == "image_url"]
+        check(
+            "end to end: both looks sent as images, yes first",
+            len(images) == 2
+            and images[0]["image_url"]["url"].endswith(
+                __import__("base64").b64encode(JPEG_YES).decode()
+            ),
+        )
+        check("end to end: prompts written", compiled_prompts(folder) == ["stove", "stove knob"])
+        looks = compiled_looks(folder)
+        check("end to end: looks written", looks.startswith("Yes looks like:"))
+        check("end to end: the compiling model is named", result["model"] == "muse-glimmer-30b")
+        check("end to end: no usage or model keys in the files", "_usage" not in looks and "_model" not in looks)
+
+
 if __name__ == "__main__":
     test_prompt_cleaning()
     test_compile_writes_both_files()
@@ -316,4 +404,5 @@ if __name__ == "__main__":
     test_missing_endpoint_module()
     test_compiler_worker()
     test_planting_compiles()
+    test_through_the_real_endpoint()
     print("ALL PASS")
