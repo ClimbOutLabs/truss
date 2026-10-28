@@ -49,6 +49,8 @@ The server will:
 - `GET /guide/status` - The guide's state, step, and current step
 - `POST /plant/ref?slug=...&kind=yes|no` - Save a reference look (multipart field "image")
 - `GET /questions` - List the standing questions and their states
+- `GET /alerts` - List the missed-window alerts still waiting to be spoken
+- `POST /alerts/ack` - Confirm one alert was spoken, JSON `{"id": "..."}`; the only way an alert clears
 
 ## Standing questions
 
@@ -120,6 +122,29 @@ Honest limits:
   is livable; the token cost is the price of the bridge.
 - A check never answers an approval card. If an Aman turn pauses for
   one, that check reads cannot-tell.
+
+## Done questions
+
+A state question asks how things are: is the stove off. A done
+question watches for a thing she has to do, inside a time window:
+take the night pills between 9 and 10, feed the dog between 8 and
+10 in the morning. It is planted like any question, with a "done"
+kind and a window pattern (see `questions.py`), and it is checked
+against her own reference looks like any question.
+
+If a check sees her do it, the loop remembers the time and keeps
+the photo as the witness. If she goes back to the same place later
+that day, about to do it again, one reminder is spoken: that is
+already done, and the time she did it. The reminder is spoken
+once, and its photo is kept as evidence like any firing.
+
+If the window closes and the loop never saw it done, that is not
+left as a note in a file. The server raises a missed-window alert
+(see `alerts.py`): the phone app polls for alerts about every 30
+seconds while it runs, speaks the line through the glasses, and
+only then tells the server it was spoken. An alert that could not
+be spoken stays pending and is offered again on the next poll. The
+only thing that ever clears an alert is that confirmation.
 
 ## The guide
 

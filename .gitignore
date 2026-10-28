@@ -11,6 +11,7 @@ __pycache__/
 truss-server/captures/
 truss-server/questions/
 truss-server/log/
+truss-server/alerts/
 
 # Eval scratch output and staged photos stay on the owner's machine
 eval/dummy/

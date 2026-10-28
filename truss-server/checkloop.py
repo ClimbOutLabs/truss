@@ -13,6 +13,13 @@ mode with the question's own reference looks.
   spoken, and nothing about the frame is kept for that question.
 - A frame no question fired on is deleted. Kept photos are only ones
   a question fired on; that deletion rule is a product feature.
+- A done question that fires leaves a witness on its record (the
+  time and the evidence photo). For the rest of that day it is not
+  checked as an ordinary question again; instead, later frames are
+  checked under a return prompt, and if she is back at the same
+  place about to do it again, one reminder is spoken: that is
+  already done, with the witnessed time. The reminder is spoken
+  once, and its frame is kept as evidence like any firing.
 - When no question is standing, frames are not managed at all and the
   capture path behaves exactly as it did on day 1.
 
@@ -46,6 +53,25 @@ def speak_text(entry, result):
     return f"{question} Yes."
 
 
+def return_prompt(entry):
+    """The check prompt for the redo watch: is she at the same place
+    as this question again, about to do the thing again. Built only
+    from the question's own words, so it is the same for every frame
+    and every checker."""
+    return (
+        "Is the wearer at the same place as this question again, "
+        f"about to do it again: {entry['question']}"
+    )
+
+
+def redo_text(witness):
+    """The spoken redo reminder: plain words, and the witnessed time
+    in a 12-hour clock, like 8:05 PM."""
+    moment = datetime.fromisoformat(witness["at"])
+    spoken = moment.strftime("%I:%M %p").lstrip("0")
+    return f"That is already done. You did it at {spoken}."
+
+
 class CheckLoop:
     def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None):
         self.store = store
@@ -59,11 +85,12 @@ class CheckLoop:
         try:
             standing = [e for e in self.store.list() if e["state"] == "standing"]
             due = self.store.due(now=self.now_fn()) if standing else []
+            watch = self.store.redo_watch(now=self.now_fn())
         except Exception:
             # A broken question file must never break capturing. Fall
             # back to day 1 behavior: keep the frame, manage nothing.
             return {"managed": False, "fired": [], "speak": [], "errors": 1}
-        if not standing:
+        if not standing and not watch:
             return {"managed": False, "fired": [], "speak": [], "errors": 0}
 
         now = self.now_fn()
@@ -92,11 +119,42 @@ class CheckLoop:
             if verdict == "yes":
                 fired.append((entry, result))
 
+        # The redo watch: done questions holding today's witness are
+        # offered the frame under a return prompt, with their own
+        # reference looks. One reminder per frame at most. A no, a
+        # cannot_tell, or a failed return check stays silent, exactly
+        # like an ordinary check that does not fire.
+        redo = None
+        fired_slugs = {entry["slug"] for entry, _ in fired}
+        for entry in watch:
+            if entry["slug"] in fired_slugs:
+                continue
+            prompt_entry = dict(entry)
+            prompt_entry["question"] = return_prompt(entry)
+            try:
+                result = self.check_fn(frame_path, prompt_entry)
+                if not isinstance(result, dict):
+                    raise TypeError("check returned no verdict")
+                verdict = result.get("verdict")
+            except Exception:
+                errors += 1
+                continue
+            if verdict == "yes":
+                try:
+                    witness = self.store.witness_today(entry["slug"], now=now)
+                except Exception:
+                    errors += 1
+                    witness = None
+                if witness is not None:
+                    redo = (entry, witness)
+                    break
+
         speak = []
         evidence = None
-        if fired:
+        if fired or redo is not None:
+            first = fired[0][0] if fired else redo[0]
             try:
-                evidence = self._save_evidence(frame_path, fired[0][0], now)
+                evidence = self._save_evidence(frame_path, first, now)
             except Exception:
                 # The frame stays in captures/ as the record, and the
                 # answers are still spoken and logged against it.
@@ -109,6 +167,14 @@ class CheckLoop:
                     errors += 1
                 try:
                     self.store.mark_answered(entry["slug"], when=now)
+                    if entry.get("kind") == "done":
+                        # The witness is part of the firing's
+                        # bookkeeping: a done answer that could not
+                        # be witnessed is not spoken, so it can still
+                        # be witnessed on a later frame.
+                        self.store.record_witness(
+                            entry["slug"], evidence.name, when=now
+                        )
                 except Exception:
                     # Unmarked means unspoken: the question stays
                     # standing and can fire on a later frame, but this
@@ -122,6 +188,27 @@ class CheckLoop:
                         self.speak_fn(text, entry, evidence)
                     except Exception:
                         errors += 1
+            if redo is not None:
+                entry, witness = redo
+                try:
+                    self._append_redo_log(entry, witness, evidence, now)
+                except Exception:
+                    errors += 1
+                try:
+                    self.store.mark_redo_spoken(entry["slug"])
+                except Exception:
+                    # Unmarked means unspoken, as with a firing: the
+                    # reminder waits for a later frame rather than
+                    # risk being spoken twice.
+                    errors += 1
+                else:
+                    text = redo_text(witness)
+                    speak.append(text)
+                    if self.speak_fn is not None:
+                        try:
+                            self.speak_fn(text, entry, evidence)
+                        except Exception:
+                            errors += 1
         else:
             frame_path.unlink(missing_ok=True)
 
@@ -157,6 +244,16 @@ class CheckLoop:
         line = (
             f"{now.strftime('%H:%M:%S')} | {entry['question']} | yes | "
             f"{reason} | evidence: {evidence.name}\n"
+        )
+        with open(day / "answers.txt", "a") as f:
+            f.write(line)
+
+    def _append_redo_log(self, entry, witness, evidence, now):
+        day = self._day_dir(now)
+        line = (
+            f"{now.strftime('%H:%M:%S')} | {entry['question']} | "
+            f"redo reminder | {redo_text(witness)} | "
+            f"evidence: {evidence.name}\n"
         )
         with open(day / "answers.txt", "a") as f:
             f.write(line)

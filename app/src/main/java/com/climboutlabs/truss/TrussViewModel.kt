@@ -130,6 +130,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   fun onSdkReady() {
     if (monitoringStarted) return
     monitoringStarted = true
+    startAlertPolling()
     _uiState.update { it.copy(sdkReady = true) }
     viewModelScope.launch {
       Wearables.registrationState.collect { value ->
@@ -187,23 +188,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   fun captureAndUpload(requestPermission: suspend (Permission) -> PermissionStatus) {
     if (_uiState.value.photoBusy) return
-    val now = _uiState.value
-    if (now.recordBusy || now.speakBusy || now.plantBusy) {
-      // A camera session must never open while Bluetooth audio is open or
-      // about to open: the two are never held together (see the Voice screen).
-      // A refused capture also disarms any reference routing a caller set
-      // up for it, so no later photo can be misrouted by this refusal.
-      pendingRefSlug = null
-      pendingRefKind = null
-      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
-      return
-    }
     _uiState.update {
       it.copy(
           photoBusy = true,
           photoLog = emptyList(),
           serverBytes = null,
-          spokenLines = emptyList(),
           photoElapsedMs = null,
           wifiReturn = null,
           lastError = null,
@@ -364,12 +353,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         pendingRefKind = null
         val reply = withContext(Dispatchers.IO) { client.postPlantRef(jpegFile, refSlug, refKind) }
         val next = reply.getString("next")
-        val completed = reply.getString("state") == "standing"
-        if (completed && plantQueue.firstOrNull() == refSlug) {
-          // The queue head is fully planted. If a round is being planted, move
-          // the Plant screen on to its next question; if that was the last one,
-          // clear the planting target so its looks cannot be overwritten by a
-          // stray tap.
+        if (reply.getString("state") == "standing") {
+          // This question is fully planted. If a round is being planted, move
+          // the Plant screen on to its next question.
           plantQueue = plantQueue.drop(1)
           val nextSlug = plantQueue.firstOrNull()
           if (nextSlug != null) {
@@ -378,14 +364,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             }
             plantLog("Next question in the round: show it what yes looks like.")
           } else {
-            _uiState.update { it.copy(plantSlug = null, plantPrompt = next) }
+            _uiState.update { it.copy(plantPrompt = next) }
           }
-        } else if (!completed) {
+        } else {
           _uiState.update { it.copy(plantPrompt = next) }
         }
-        // A standing completion for a question that is not the queue head
-        // (a planting replaced mid-capture) is only logged below: the
-        // current question keeps its prompt and its place.
         plantLog(next)
         photoLog("Reference look saved. $next")
       } else {
@@ -462,30 +445,86 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   /**
-   * Speak lines through the glasses, in order. Only called once a capture's camera
-   * session has ended: opening Bluetooth audio can end a toolkit session, so the two
-   * are never held open together. A failure here never fails the capture itself; the
-   * lines stay on screen.
+   * Speak lines through the glasses, in order, returning true only when every
+   * line was played. Only called once a capture's camera session has ended:
+   * opening Bluetooth audio can end a toolkit session, so the two are never
+   * held open together. A failure here never fails the capture itself; the
+   * lines stay on screen. The missed-alert polling below relies on the true:
+   * an alert is confirmed to the laptop only when this returns it.
    */
-  private suspend fun speakViaGlasses(lines: List<String>) {
+  private suspend fun speakViaGlasses(lines: List<String>): Boolean {
     val audio = GlassesAudio(getApplication())
     try {
       val glasses = audio.routeToGlasses()
       if (glasses == null) {
         photoLog("No glasses audio route, so the answers were not spoken. They are on screen.")
-        return
+        return false
       }
       for (line in lines) {
         val requestStart = SystemClock.elapsedRealtime()
         val wavBytes = withContext(Dispatchers.IO) { laptopClient().postTts(line) }
         audio.playWav(wavBytes, glasses, requestStart)
       }
+      return true
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
       photoLog("Speaking the answers failed: ${e.message ?: e.toString()}")
+      return false
     } finally {
       audio.clearRouting()
+    }
+  }
+
+  // MARK: - Missed alerts
+
+  private var alertPollingStarted = false
+
+  /**
+   * Poll the laptop for missed-window alerts while the app runs. An alert's
+   * line is spoken through the same glasses path as capture answers, and the
+   * laptop is told only after it was spoken, so an alert that could not be
+   * spoken is offered again on the next poll instead of being lost.
+   */
+  private fun startAlertPolling() {
+    if (alertPollingStarted) return
+    alertPollingStarted = true
+    viewModelScope.launch {
+      while (true) {
+        delay(ALERT_POLL_MS)
+        pollAlertsOnce()
+      }
+    }
+  }
+
+  private suspend fun pollAlertsOnce() {
+    val state = _uiState.value
+    if (state.laptopIp.isBlank()) return
+    // Never together: while a capture may be holding a toolkit camera
+    // session, or the glasses audio is busy recording or speaking, this
+    // cycle is skipped rather than opening audio alongside it.
+    if (state.photoBusy || state.streamActive || state.recordBusy || state.speakBusy) return
+    try {
+      val alerts = withContext(Dispatchers.IO) { laptopClient().getAlerts() }
+      for (alert in alerts) {
+        if (!speakViaGlasses(listOf(alert.line))) {
+          Log.i(TAG, "Missed alert ${alert.id} could not be spoken; it stays pending.")
+          continue
+        }
+        try {
+          withContext(Dispatchers.IO) { laptopClient().ackAlert(alert.id) }
+        } catch (e: Exception) {
+          // Spoken but not confirmed: the laptop will offer it again, and
+          // hearing it twice beats it never being heard at all.
+          Log.i(TAG, "Missed alert ${alert.id} confirmation failed: ${e.message ?: e.toString()}")
+        }
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      // The laptop being unreachable between polls is ordinary. Nothing
+      // here is a user-facing error, and no other flow waits on this.
+      Log.i(TAG, "Missed alert poll failed: ${e.message ?: e.toString()}")
     }
   }
 
@@ -498,13 +537,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   fun recordAndTranscribe(requestRecordAudio: suspend () -> Boolean) {
     if (_uiState.value.recordBusy) return
-    val now = _uiState.value
-    if (now.photoBusy || now.speakBusy || now.plantBusy) {
-      // Bluetooth audio must never open while a camera session is alive or
-      // other audio work is running: the two are never held together.
-      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
-      return
-    }
     _uiState.update { it.copy(recordBusy = true, transcript = null, sttMs = null, lastError = null) }
     viewModelScope.launch {
       val audio = GlassesAudio(getApplication())
@@ -541,11 +573,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   fun speakTestSentence() {
     if (_uiState.value.speakBusy) return
-    val now = _uiState.value
-    if (now.photoBusy || now.recordBusy || now.plantBusy) {
-      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
-      return
-    }
     _uiState.update { it.copy(speakBusy = true, ttsMs = null, lastError = null) }
     viewModelScope.launch {
       val audio = GlassesAudio(getApplication())
@@ -600,13 +627,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** Record the question through the glasses and put its words in the text field. */
   fun recordPlantQuestion(requestRecordAudio: suspend () -> Boolean) {
     if (_uiState.value.plantBusy) return
-    val now = _uiState.value
-    if (now.photoBusy || now.recordBusy || now.speakBusy) {
-      // Same rule as the Voice screen: Bluetooth audio never opens while a
-      // camera session is alive or other audio work is running.
-      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
-      return
-    }
     _uiState.update { it.copy(plantBusy = true, lastError = null) }
     viewModelScope.launch {
       val audio = GlassesAudio(getApplication())
@@ -697,14 +717,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       kind: String,
       requestPermission: suspend (Permission) -> PermissionStatus,
   ) {
-    if (_uiState.value.photoBusy) return
-    val now = _uiState.value
-    if (now.recordBusy || now.speakBusy || now.plantBusy) {
-      // Refuse before arming the reference routing, so a refused capture
-      // can never leave the routing set for a later photo.
-      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
-      return
-    }
     val slug = _uiState.value.plantSlug
     if (slug == null) {
       _uiState.update { it.copy(lastError = "Plant a question first, then show its looks.") }
@@ -729,5 +741,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val STEP_TIMEOUT_MS = 15_000L
     private const val RETURN_TIMEOUT_MS = 15_000L
     private const val POLL_MS = 500L
+    private const val ALERT_POLL_MS = 30_000L
   }
 }
