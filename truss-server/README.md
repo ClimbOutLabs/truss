@@ -123,6 +123,38 @@ Honest limits:
 - A check never answers an approval card. If an Aman turn pauses for
   one, that check reads cannot-tell.
 
+## Plant-time compile
+
+When a question has both reference looks, the server makes one call
+to the verdict model with the question's words and the two photos
+(see `plant_compile.py`), and writes two plain files into the
+question's folder:
+
+- `prompts.txt`: two or three short noun phrases, one per line, for
+  SAM to find the object by: `stove`, `pill organizer`, `deadbolt`.
+  One or two words, no adjectives; leftover modifiers like colors,
+  materials, and states are stripped on the way in.
+- `looks.txt`: what the yes-look and the no-look show in this home,
+  and the one visible detail that decides it, such as the knob
+  positions on the front of the stove. The single check mode reads
+  it in place of the two photos, and a check that cannot see the
+  deciding detail can name it as what is missing.
+
+The compile runs in the background, so planting answers at once. A
+look re-shot on a standing question compiles again. The call goes
+through the checker endpoint (`endpoint.py`), so it uses the same
+`TRUSS_BASE_URL` and `TRUSS_MODEL` as the checks: llama-server on the
+DGX by default, or the Meta Model API with no code change. A compile
+that fails writes nothing and leaves any earlier files in place; the
+question stands either way, and the server log says why.
+
+To compile questions planted before this existed, or to retry:
+
+```bash
+python3 plant_compile.py              # every question with both looks
+python3 plant_compile.py is-the-stove-off
+```
+
 ## Done questions
 
 A state question asks how things are: is the stove off. A done

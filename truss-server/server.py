@@ -21,6 +21,7 @@ from alerts import AlertStore, sweep_missed
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
+from plant_compile import Compiler
 from questions import QuestionStore
 
 # The canonical checker lives in eval/ (see eval/checker.py). Import it
@@ -162,6 +163,11 @@ def guide_check(frame_path, question_text):
 # The check loop (see checkloop.py). Spoken answers are returned to the
 # app in the /capture response; speaking them is the app's side.
 LOOP = CheckLoop(STORE, production_check, Path(__file__).parent / "log")
+
+# Plant-time compile (see plant_compile.py). Once a question has both
+# reference looks, one model call writes prompts.txt and looks.txt into
+# its folder, off the request thread so planting answers at once.
+COMPILER = Compiler()
 
 # The over-the-shoulder guide (see guide.py). One session at a time, in
 # memory; while a guide is active, captures go to it instead of the loop.
@@ -466,6 +472,10 @@ class TrussHandler(BaseHTTPRequestHandler):
                 return
             state = STORE.save_ref(slug, kind, image_data)
             entry = STORE.get(slug)
+            if state == "standing":
+                # Both looks exist: compile them, and again whenever a
+                # look is re-shot on a standing question.
+                COMPILER.submit(STORE.root / slug)
             if state == "standing":
                 next_step = f"Standing question planted: {entry['question']}"
             elif kind == "yes":

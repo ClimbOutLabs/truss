@@ -8,6 +8,8 @@ Plain files, one folder per question under the store root:
     <slug>/ref-yes.jpg     the reference look for yes, taken at plant time
     <slug>/ref-no.jpg      the reference look for no, taken at plant time
     <slug>/watch.json      the time pattern, the state, and the check history
+    <slug>/prompts.txt     SAM noun phrases, written by plant_compile.py
+    <slug>/looks.txt       the looks in words, written by plant_compile.py
 
 States: planting (still collecting reference looks), standing (live),
 answered (fired; may re-arm if the pattern says so), retired.
