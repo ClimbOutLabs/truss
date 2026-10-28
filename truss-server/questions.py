@@ -26,7 +26,8 @@ the miss the next frame that shows the thing gets a state check whose
 result is spoken (see alerts.py and checkloop.py). An optional "look
 at" phrase names the thing to look at in her own words, like "the
 {weekday} PM compartment"; {weekday} is spoken as the alert's day.
-Records planted before the flag existed read as not safety.
+A done question is a safety question unless planted with an explicit
+opt-out, and a record with no usable flag reads the same way.
 
 Patterns:
     {"kind": "interval", "minutes": 15}   check every 15 minutes
@@ -46,6 +47,8 @@ import threading
 import uuid
 from datetime import datetime, time
 from pathlib import Path
+
+from wording import action_verbs_in
 
 
 def slugify(text):
@@ -209,6 +212,16 @@ def _clean_look_at(value):
     return value
 
 
+def _clean_safety(value, kind):
+    """A stored safety flag. A record with no usable flag (planted
+    before the flag existed, or damaged) reads as the default for its
+    kind: a done question is a safety question. Failing toward the
+    careful wording is the safe way to fail. Never raises."""
+    if isinstance(value, bool):
+        return value
+    return _clean_kind(kind) == "done"
+
+
 def _clean_miss_check(value):
     """A stored post-miss state check, or None when it is missing or
     not in the shape the sweep writes: a date and a state, "owed" or
@@ -291,12 +304,21 @@ class QuestionStore:
 
     # -- planting ---------------------------------------------------------
 
-    def create(self, text, pattern=None, kind="state", safety=False, look_at=None):
+    def create(self, text, pattern=None, kind="state", safety=None, look_at=None):
         """Start a new question in the planting state. Returns its slug.
 
         The kind is "state" unless a done question is asked for. The
-        safety flag is a plain true or false, and the look-at phrase,
-        when given, is one short line of text.
+        safety flag is a plain true or false; left out, a done question
+        is a safety question and a state question is not, so the
+        careful wording is what a planter gets without asking for it.
+        The look-at phrase, when given, is one short line of text with
+        no action verb in it, since it is spoken inside the direction
+        to look (see wording.py).
+
+        A done question's window with no gap given is checked on every
+        frame inside it: an act takes seconds, and a question resting
+        between checks would neither see it nor be able to say it
+        watched.
         """
         with self._lock:
             text = text.strip()
@@ -304,6 +326,8 @@ class QuestionStore:
                 raise ValueError("The question text is empty.")
             if kind not in QUESTION_KINDS:
                 raise ValueError("A question is either a state question or a done question.")
+            if safety is None:
+                safety = kind == "done"
             if not isinstance(safety, bool):
                 raise ValueError("The safety flag is either true or false.")
             if isinstance(look_at, str) and not look_at.strip():
@@ -314,6 +338,19 @@ class QuestionStore:
                         f"What to look at is one short line, up to {LOOK_AT_MAX} characters."
                     )
                 look_at = look_at.strip()
+                verbs = action_verbs_in(look_at)
+                if verbs:
+                    raise ValueError(
+                        "What to look at names the thing, never the act. "
+                        f"Leave out: {', '.join(verbs)}."
+                    )
+            if (
+                kind == "done"
+                and isinstance(pattern, dict)
+                and pattern.get("kind") == "window"
+                and "minutes" not in pattern
+            ):
+                pattern = dict(pattern, minutes=0)
             # Clean the pattern before anything is created, so a refused
             # planting leaves no folder behind and burns no sequence.
             pattern = _clean_pattern(pattern)
@@ -495,7 +532,7 @@ class QuestionStore:
                 "state": watch["state"],
                 "witness": _clean_witness(watch.get("witness")),
                 "redo_spoken": bool(watch.get("redo_spoken")),
-                "safety": watch.get("safety") is True,
+                "safety": _clean_safety(watch.get("safety"), watch.get("kind")),
                 "look_at": _clean_look_at(watch.get("look_at")),
                 "miss_check": _clean_miss_check(watch.get("miss_check")),
                 "planted_at": watch["planted_at"],
@@ -751,14 +788,19 @@ class QuestionStore:
             watch = self._read_watch(slug)
             if watch is None:
                 raise KeyError(f"No question named {slug}.")
+            current = _clean_miss_check(watch.get("miss_check"))
+            if current is not None and current["date"] == date:
+                return
             watch["miss_check"] = {"date": date, "state": "owed"}
             self._write_watch(slug, watch)
 
     def miss_check_watch(self, now=None):
         """Safety done questions owed a state check today, with no
         witness today. An owed check from an earlier day is never
-        offered: that day's compartment is not today's. A state check
-        obeys the same gap between checks as any other check."""
+        offered: that day's compartment is not today's. There is no
+        gap between state checks: the alert promised to say what is
+        there when she looks, and a hallway frame a minute earlier
+        must not make the loop miss her look at the thing itself."""
         with self._lock:
             now = now or datetime.now()
             today = now.date().isoformat()
@@ -773,18 +815,6 @@ class QuestionStore:
                     continue
                 if self.witness_today(entry["slug"], now=now) is not None:
                     continue
-                last = entry.get("last_checked_at")
-                if last:
-                    try:
-                        last_dt = datetime.fromisoformat(last)
-                    except (TypeError, ValueError):
-                        last_dt = None
-                    if (
-                        last_dt is not None
-                        and (now - last_dt).total_seconds()
-                        < _gap_seconds(entry["pattern"])
-                    ):
-                        continue
                 out.append(entry)
             return out
 

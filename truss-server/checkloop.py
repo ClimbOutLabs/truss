@@ -23,10 +23,13 @@ mode with the question's own reference looks.
 - A safety done question whose window closed unwitnessed is owed a
   state check (see alerts.py). Later that day, frames are checked
   under a state prompt: how the thing is right now, not what anyone
-  did. The first yes or no is spoken once, as a description of what
-  is there, and its frame is kept as evidence. A cannot_tell means
-  the thing is not in view yet, and the check waits for a later
-  frame.
+  did. The first yes or no that comes with the checker's description
+  is spoken once, as that description, and its frame is kept as
+  evidence. A cannot_tell, or a verdict with no description behind
+  it, is silent, and the check waits for a later frame.
+- Every check of a done question that comes back with a verdict is
+  written to the check log (see coverage.py), so a missed-window
+  alert can say how much of the window was really watched.
 - When no question is standing, frames are not managed at all and the
   capture path behaves exactly as it did on day 1.
 
@@ -86,32 +89,39 @@ def state_prompt(entry):
     own words."""
     return (
         "Judge only how things are in this frame right now, not what "
-        f"anyone did earlier. Does it match the yes look for: {entry['question']}"
+        "anyone did earlier. Describe only what is visible, and never "
+        "say what anyone should do. "
+        f"Does it match the yes look for: {entry['question']}"
     )
 
 
 # Every sentence the post-miss state check can speak. The checker's
-# reason is spoken as it is: a description of the frame.
+# reason is spoken as it is: a description of the frame. There is no
+# line for a bare yes or no: a verdict with nothing seen behind it is
+# not spoken at all.
 MISS_CHECK_TEMPLATES = {
     "reason": "About your question, {question} Here is what I see now: {reason}",
-    "yes": "About your question, {question} What I see now looks like your yes look.",
-    "no": "About your question, {question} What I see now looks like your no look.",
 }
 
 
-def miss_check_text(entry, result, verdict):
+def miss_check_text(entry, result):
+    """The spoken state-check result, or None when the checker gave
+    no description to speak."""
+    reason = _reason_text(result)
+    if not reason:
+        return None
     question = entry["question"].strip()
     if not question.endswith("?"):
         question += "?"
-    reason = _reason_text(result)
-    if reason:
-        return MISS_CHECK_TEMPLATES["reason"].format(question=question, reason=reason)
-    return MISS_CHECK_TEMPLATES[verdict].format(question=question)
+    return MISS_CHECK_TEMPLATES["reason"].format(question=question, reason=reason)
 
 
 class CheckLoop:
-    def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None):
+    def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None, checks=None):
         self.store = store
+        # The check log (a coverage.CheckLog). Without one, no check
+        # is counted as watching, and alerts claim nothing was watched.
+        self.checks = checks
         self.check_fn = check_fn
         self.log_dir = Path(log_dir)
         self.speak_fn = speak_fn
@@ -146,6 +156,17 @@ class CheckLoop:
                 # so a broken checker cannot hot-loop on every frame.
                 result, verdict = {}, None
                 errors += 1
+            if (
+                entry.get("kind") == "done"
+                and verdict in ("yes", "no", "cannot_tell")
+                and self.checks is not None
+            ):
+                # This question was really watched on this frame. A
+                # failed check was not, and is never counted.
+                try:
+                    self.checks.record(entry["slug"], when=now)
+                except Exception:
+                    errors += 1
             try:
                 self.store.mark_checked(entry["slug"], when=now)
             except Exception:
@@ -220,7 +241,11 @@ class CheckLoop:
                 errors += 1
                 continue
             if verdict in ("yes", "no"):
-                seen.append((entry, result, verdict))
+                # A yes or no with no description behind it is treated
+                # as cannot_tell: silent, and the check stays owed.
+                text = miss_check_text(entry, result)
+                if text is not None:
+                    seen.append((entry, verdict, text))
 
         speak = []
         evidence = None
@@ -291,8 +316,7 @@ class CheckLoop:
                             self.speak_fn(text, entry, evidence)
                         except Exception:
                             errors += 1
-            for entry, result, verdict in seen:
-                text = miss_check_text(entry, result, verdict)
+            for entry, verdict, text in seen:
                 try:
                     self._append_miss_check_log(entry, verdict, text, evidence, now)
                 except Exception:

@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
 """
-Watch coverage: whether the glasses were with her during a window.
+Watch coverage: how much of a window a done question actually saw.
 
 A missed-window alert must never say more than the loop knows. "I
-didn't see it" means one thing when frames were arriving all window
-long, and quite another when the glasses were on the table. Coverage
-is read from frame arrivals alone: every captured photo, fired or
-not, leaves one line in that day's frame log,
+didn't see it" means one thing when the question was checked against
+frames all window long, and quite another when the glasses were on
+the table, a guide had the frames, or the question was resting
+between checks. So coverage is read from the frames that were
+actually checked for this question, never from frames merely
+arriving. Every check of a done question that comes back with a
+verdict leaves one line in that day's check log,
 
-    log/<date>/frames.txt   one arrival time per line, nothing else
+    log/<date>/checks-<slug>.txt   one check time per line, nothing else
 
 The photo itself is still deleted when no question fires on it; only
-its arrival time is kept, so the next alert can say how much of the
-window was watched.
+the time of the check is kept, so the next alert can say how much of
+the window was watched.
 
-Two frames no more than the gap apart (ten minutes unless told
+Times are written with their UTC offset and compared as absolute
+times, so the night the clocks go back, a repeated hour with no
+checks in it is a hole, not an hour that never happened.
+
+Two checks no more than the gap apart (ten minutes unless told
 otherwise) count as watched in between. A gap longer than that is
-time the loop was not with her. Each frame also counts for half a
-gap on either side, so frames arriving every few minutes from just
-after the window opens to just before it closes cover the whole
-window, and a frame never has to land on the opening minute exactly.
+time the question was not watched. Each check also counts for half a
+gap on either side, so checks every few minutes from just after the
+window opens to just before it closes cover the whole window.
 
 Three cases come out, and every alert is worded for its case:
 
@@ -29,36 +35,48 @@ Three cases come out, and every alert is worded for its case:
 """
 
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_GAP_MINUTES = 10
 
 
-class FrameLog:
+def _absolute(moment):
+    """A moment as UTC. A naive time is read as local time, keeping
+    its fold, so the second pass through a repeated hour stays the
+    second pass."""
+    return moment.astimezone(timezone.utc)
+
+
+def _local(moment):
+    """An absolute moment back as a naive local time, for speaking."""
+    return moment.astimezone().replace(tzinfo=None)
+
+
+class CheckLog:
     def __init__(self, root):
         self.root = Path(root)
         self._lock = threading.Lock()
 
-    def _path(self, day):
-        return self.root / day.isoformat() / "frames.txt"
+    def _path(self, day, slug):
+        return self.root / day.isoformat() / f"checks-{slug}.txt"
 
-    def record(self, when=None):
-        """Add one frame arrival. Raises on a write failure; the
-        capture path catches it, since a lost arrival line only
-        makes a later alert more modest, never wrong the other way."""
+    def record(self, slug, when=None):
+        """Add one check of a question. Raises on a write failure; the
+        check loop catches it, since a lost line only makes a later
+        alert more modest, never bolder."""
         when = when or datetime.now()
-        path = self._path(when.date())
+        path = self._path(when.date(), slug)
         with self._lock:
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "a", encoding="utf-8") as handle:
-                handle.write(when.isoformat(timespec="seconds") + "\n")
+                handle.write(when.astimezone().isoformat(timespec="seconds") + "\n")
 
-    def times(self, day):
-        """That day's frame arrivals, sorted. A missing log is no
-        frames; a line that cannot be read is skipped. Never raises."""
+    def times(self, day, slug):
+        """That day's checks of a question, sorted. A missing log is no
+        checks; a line that cannot be read is skipped. Never raises."""
         try:
-            text = self._path(day).read_text(encoding="utf-8")
+            text = self._path(day, slug).read_text(encoding="utf-8")
         except Exception:
             return []
         out = []
@@ -67,21 +85,25 @@ class FrameLog:
                 out.append(datetime.fromisoformat(line.strip()))
             except ValueError:
                 continue
-        out.sort()
+        out.sort(key=_absolute)
         return out
 
 
-def coverage(frames, start, end, gap_minutes=DEFAULT_GAP_MINUTES):
+def coverage(checks, start, end, gap_minutes=DEFAULT_GAP_MINUTES):
     """How much of the window from start to end was watched.
 
     Returns {"kind": "complete" | "partial" | "none", "spans": [...]},
-    each span a (first, last) pair of frame times clipped to the
-    window. The spans are what an alert may say out loud: real frame
-    times, never the half-gap allowance around them.
+    each span a (first, last) pair of check times clipped to the
+    window, as naive local times. The spans are what an alert may say
+    out loud: real check times, never the half-gap allowance around
+    them.
     """
     gap = timedelta(minutes=gap_minutes)
     half = gap / 2
-    near = sorted(t for t in frames if start - half <= t <= end + half)
+    start, end = _absolute(start), _absolute(end)
+    near = sorted(
+        t for t in (_absolute(c) for c in checks) if start - half <= t <= end + half
+    )
 
     runs = []
     for t in near:
@@ -95,10 +117,10 @@ def coverage(frames, start, end, gap_minutes=DEFAULT_GAP_MINUTES):
     for run in runs:
         first, last = run[0], run[-1]
         if last < start or first > end:
-            # No frame of this run arrived inside the window; only
-            # its allowance reaches in, and that is not a sighting.
+            # No check of this run fell inside the window; only its
+            # allowance reaches in, and that is not a sighting.
             continue
-        spans.append((max(start, first), min(end, last)))
+        spans.append((_local(max(start, first)), _local(min(end, last))))
         if first - half <= start and last + half >= end:
             covered_whole = True
 

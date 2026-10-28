@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from alerts import AlertStore, sweep_missed  # noqa: E402
 from checkloop import CheckLoop  # noqa: E402
-from coverage import FrameLog  # noqa: E402
+from coverage import CheckLog  # noqa: E402
 from questions import QuestionStore  # noqa: E402
 
 JPEG = b"\xff\xd8\xff\xe0" + b"frame-bytes" + b"\xff\xd9"
@@ -93,9 +93,12 @@ def test_window_validation():
 def test_window_due():
     with tempfile.TemporaryDirectory() as tmp:
         store = QuestionStore(tmp)
-        slug = store.create(PILLS, WINDOW, kind="done")
+        slug = store.create(PILLS, dict(WINDOW, minutes=15), kind="done")
         store.save_ref(slug, "yes", JPEG)
         store.save_ref(slug, "no", JPEG)
+        every = store.create("Did I lock the back door?", WINDOW, kind="done")
+        store.save_ref(every, "yes", JPEG)
+        store.save_ref(every, "no", JPEG)
         day = datetime(2026, 10, 27)
 
         def at(hour, minute=0, days=0):
@@ -108,6 +111,10 @@ def test_window_due():
         check("window question not due after the window",
               not any(e["slug"] == slug for e in store.due(now=at(22, 30))))
         store.mark_checked(slug, when=at(21, 0))
+        store.mark_checked(every, when=at(21, 0))
+        check("a done window with no gap given is checked on every frame",
+              store.get(every)["pattern"]["minutes"] == 0
+              and any(e["slug"] == every for e in store.due(now=at(21, 0))))
         check("window question waits out its gap after a check",
               not any(e["slug"] == slug for e in store.due(now=at(21, 5))))
         check("window question due again after the gap",
@@ -541,7 +548,7 @@ def test_redo_checks_obey_the_check_gap():
               verdict("yes", "She is at the organizer again.")],
         start=datetime(2026, 10, 27, 20, 50),
     )
-    plant(store, PILLS, WINDOW, kind="done")
+    plant(store, PILLS, dict(WINDOW, minutes=15), kind="done")
     loop.process_frame(frame(captures, "fire.jpg"))
     clock.now = datetime(2026, 10, 27, 21, 5)
     for n in range(10):
@@ -602,7 +609,9 @@ def test_miss_alert_lifecycle():
           created[0]["line"]
           == "It is past 10:00 PM. About your question: "
              "Did I take my night pills? I wasn't with you during that "
-             "window, from 8:00 PM to 10:00 PM, so I can't say either way.")
+             "window, from 8:00 PM to 10:00 PM, so I can't say either way. "
+             "Check with your own eyes first, before you act on this. "
+             "When I see it, I'll tell you what's there.")
     check("the sweep is idempotent",
           sweep_missed(store, alerts, now=after_close) == []
           and len(alerts.pending()) == 1)
@@ -818,7 +827,7 @@ def test_http():
     with tempfile.TemporaryDirectory() as tmp:
         server_module.STORE = QuestionStore(Path(tmp) / "questions")
         server_module.ALERTS = AlertStore(Path(tmp) / "alerts")
-        server_module.FRAMES = FrameLog(Path(tmp) / "log")
+        server_module.CHECKS = CheckLog(Path(tmp) / "log")
         server_module.CAPTURES_DIR = Path(tmp) / "captures"
         server_module.CAPTURES_DIR.mkdir()
         httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
