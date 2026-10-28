@@ -107,11 +107,14 @@ def main():
         env=env, capture_output=True, text=True, timeout=120,
     )
     print(run.stdout)
+    if run.returncode:
+        print(run.stderr[-3000:])
     check("the bench exits cleanly", run.returncode == 0)
     rows = [json.loads(l) for l in (tmp / "out" / "rows.jsonl").read_text().splitlines()]
     check("4 photos x 2 questions x 2 modes = 16 rows", len(rows) == 16)
     check("rows name the model", all(r["model"] == "muse-glimmer-30b" for r in rows))
-    check("max_tokens override reaches the request", all(b.get("max_tokens") == 500 for b in Stub.seen))
+    firsts = [b for b in Stub.seen if b.get("max_tokens") == 500]
+    check("max_tokens override reaches the first request of every check", len(firsts) == 16)
     multi = [b for b in Stub.seen if sum(p["type"] == "image_url" for p in b["messages"][1]["content"]) == 3]
     check("multi checks send three images (one retried)", len(multi) == 9)
     single_stove = [b for b in Stub.seen if len(b["messages"][1]["content"]) == 2 and "stove" in b["messages"][1]["content"][0]["text"]]

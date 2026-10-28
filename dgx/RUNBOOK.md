@@ -18,7 +18,8 @@ the card says, and the script assumes:
 - Glimmer always thinks before it answers (`--reasoning off` does
   nothing). Strength is low, medium, high (default) or xhigh. The
   script serves it at low, because the checker's reply cap
-  (300 tokens in `verdict.py`) includes the thinking.
+  (`TRUSS_MAX_TOKENS`, default 2048, grown once on a cut-off retry)
+  includes the thinking.
 - Up to 4,096 visual tokens per image, so a three-image multi check
   needs ~12k tokens of context before the prompt.
 
@@ -44,14 +45,23 @@ Glimmer thought (should be short at strength low), the timings of that
 one request, and the `LLAMA_TAG` to pin so the Q4 and Q8 runs use the
 same build.
 
-The server listens on all interfaces (`HOST=0.0.0.0`) so the laptop can
-reach it, with no key by default; it warns about that. On any network
-you do not trust, serve with a key and give the laptop the same one:
+The server listens on all interfaces (`HOST=0.0.0.0`) with no key, so
+the laptop can reach it over the home LAN as `http://<dgx-ip>:8080/v1`.
+It prints a warning about that; on your own home network it is the
+intended setup.
 
-    API_KEY=some-long-secret ./dgx/bringup.sh serve
-    export TRUSS_API_KEY=some-long-secret     # on the laptop
+Do not serve with `API_KEY` for laptop use: the Truss checker never
+sends a key over plain http to another machine (so it cannot leak on
+the LAN), so a keyed server refuses every check from the laptop. If you
+are on a network you do not trust, keep the server on the DGX only and
+reach it through an SSH tunnel instead, which needs no key:
 
-The key goes to llama-server in a file, never on a command line.
+    HOST=127.0.0.1 ./dgx/bringup.sh serve                # on the DGX
+    ssh -N -L 8080:127.0.0.1:8080 <you>@<dgx-ip>          # on the laptop
+    export TRUSS_BASE_URL=http://127.0.0.1:8080/v1        # on the laptop
+
+`API_KEY` is only for clients that send a key over loopback or https
+(for example the bench run on the DGX itself).
 
 ## 3. Check the flags by eye (2 min)
 
@@ -113,10 +123,11 @@ Then the drafter comparison, same set, single mode only:
 
 - **total p50**: the brief expects 6 to 10 s per verdict before the
   drafter. Decode speed is the tok/s line.
-- **failed checks** should be 0. If "replies cut off by max_tokens" is
-  above 0, the thinking ate the reply cap: rerun with
-  `--max-tokens 600`; if that fixes it, `verdict.MAX_TOKENS` needs
-  raising in the server (tell Iggy the number).
+- **failed checks** should be 0. "replies cut off by max_tokens" counts
+  checks whose first reply was cut off (the checker then retries with a
+  larger cap); a failed check among them means even the retry ran out.
+  Rerun with `--max-tokens 4096`; if that fixes it, set
+  `TRUSS_MAX_TOKENS` to that number for the server too.
 - **cannot_tell on uninformative frames**: the safety number. It should
   be near 100%. Every line under "yes where the label was no or
   cannot_tell" is a false all-clear candidate; read each reason.
@@ -137,7 +148,10 @@ Paste `summary.md` into the thread; that is the D result.
 - Load fails or runs out of memory: Aman's model may still be resident
   on the DGX. Stop it first (`nvidia-smi` shows what holds memory).
 - Every check fails with "did not answer": wrong `TRUSS_BASE_URL`, or
-  the server is on 127.0.0.1 only (default HOST is 0.0.0.0).
+  the server is on 127.0.0.1 only (default HOST is 0.0.0.0; with
+  127.0.0.1 use the SSH tunnel in section 2).
+- Every check from the laptop is refused (401): the server was started
+  with `API_KEY`. Restart it without one (section 2).
 - "answered with an error (status 400)" on every check: the server is
   refusing the JSON-schema request; the checker retries without it
   once. If both fail, open `dgx/results/<time>/rows.jsonl` and look at

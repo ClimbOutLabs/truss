@@ -21,7 +21,8 @@ Reported, per mode:
     cannot_tell rate on the frames labelled cannot_tell (deliberately
               uninformative), and on the rest
     failed checks: no verdict came back at all (timeout, bad JSON,
-              reply cut off by max_tokens). These read cannot_tell in
+              reply cut off by max_tokens even after the checker's
+              larger retry). These read cannot_tell in
               the server, but they are counted apart here, because a
               failure is not the model saying it cannot see
     multi vs single agreement, photo by photo, with the disagreements
@@ -42,6 +43,7 @@ folder, and prints the summary. Standard library only.
 
 import argparse
 import json
+import os
 import statistics
 import sys
 import time
@@ -286,8 +288,9 @@ def main():
     parser.add_argument("--modes", default="single,multi", help="comma-separated: single, multi")
     parser.add_argument("--out", help="output folder (default dgx/results/<time>)")
     parser.add_argument(
-        "--max-tokens", type=int, default=verdict.MAX_TOKENS,
-        help=f"reply cap per check, thinking included (the checker's is {verdict.MAX_TOKENS})",
+        "--max-tokens", type=int, default=None,
+        help="first reply cap per check, thinking included; sets TRUSS_MAX_TOKENS "
+        f"(the checker's is {verdict.max_tokens()} now, and grows on a cut-off retry)",
     )
     args = parser.parse_args()
 
@@ -295,7 +298,8 @@ def main():
     for m in modes:
         if m not in verdict.MODES:
             raise SystemExit(f"Unknown mode {m}.")
-    verdict.MAX_TOKENS = args.max_tokens
+    if args.max_tokens:
+        os.environ["TRUSS_MAX_TOKENS"] = str(args.max_tokens)
     questions, photos = load_set(args.set)
     cfg = endpoint.config_from_env()
     out_dir = Path(args.out) if args.out else Path(__file__).resolve().parent / "results" / datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -321,7 +325,7 @@ def main():
                         f"(prefill {row['prefill_ms'] / 1000:.1f}, decode {row['decode_ms'] / 1000:.1f}){flag}",
                         file=sys.stderr,
                     )
-    summary = summarize(rows, cfg, args.max_tokens)
+    summary = summarize(rows, cfg, verdict.max_tokens())
     summary += f"\nWall time for the run: {(time.monotonic() - started) / 60:.1f} min.\n"
     (out_dir / "summary.md").write_text(summary)
     print(summary)

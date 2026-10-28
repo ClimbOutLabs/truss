@@ -30,8 +30,11 @@
 #   HOST         default 0.0.0.0, so the laptop can reach it on the LAN;
 #                use 127.0.0.1 to keep it on the DGX only
 #   PORT         default 8080
-#   API_KEY      optional; when set, llama-server requires it and the
-#                laptop sets TRUSS_API_KEY to the same value
+#   API_KEY      optional; when set, llama-server requires it. Leave it
+#                unset for the laptop: the Truss checker never sends a
+#                key over plain http to another machine, so a keyed
+#                server refuses it. On an untrusted network use
+#                HOST=127.0.0.1 and an SSH tunnel (RUNBOOK section 2).
 #   CTX          default 32768 tokens for the one slot (see serve)
 #   DRAFT        1 (default) loads the dflash drafter; 0 serves without
 #                it, for the with/without speed comparison
@@ -278,7 +281,7 @@ do_serve() {
 
   if [ "$HOST" != 127.0.0.1 ] && [ "$HOST" != localhost ] && [ -z "$API_KEY" ]; then
     echo "WARNING: serving on $HOST with no API_KEY: anyone on this network can use the model and send it images."
-    echo "         Set API_KEY (and TRUSS_API_KEY on the laptop) on any network you do not trust."
+    echo "         Fine on your home LAN. On a network you do not trust, use HOST=127.0.0.1 and an SSH tunnel (RUNBOOK section 2)."
   fi
 
   # Context: one slot (-np 1), since one checker asks one question at a
@@ -314,7 +317,7 @@ do_serve() {
 
   # Glimmer's template always opens a thinking channel; --reasoning off
   # does nothing. Keep thinking short so a verdict stays inside the
-  # checker's max_tokens (300 in verdict.py, thinking included). The
+  # checker's max_tokens (TRUSS_MAX_TOKENS, thinking included). The
   # flag existing does not prove the template reads reasoning_strength:
   # the warm-up below prints how much it thought, so check that it is
   # short.
