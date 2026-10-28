@@ -15,7 +15,11 @@ Meta Model API; only the configuration differs:
                     contributor tier)
     TRUSS_API_KEY   optional; MODEL_API_KEY is read when it is unset.
                     llama-server needs none.
-    TRUSS_TIMEOUT_S default 60, per request
+    TRUSS_TIMEOUT_S default 120, for the whole call including its retry
+
+A model name naming the contributor tier is refused outright. A key is
+only sent over https or to this machine, never over plain http to the
+DGX.
 
 The reply is held to the schema twice over. The request asks for it
 with response_format json_schema, strict, and the system prompt spells
@@ -23,7 +27,10 @@ the schema out too, for servers that ignore response_format. Whatever
 comes back is then validated here against the same schema. A reply
 that does not validate, or a server that refuses response_format with
 a 400, gets exactly one retry (the retry leaves response_format off).
-A second failure raises EndpointError.
+A second failure raises EndpointError. A reply cut off by the token
+limit is never parsed at all (see ask_json), and thinking blocks are
+removed before the reply is read, which must then be one JSON object
+and nothing else.
 
 Standard library only. The key rides in the Authorization header only;
 requests use a no-redirect opener so that header can only reach the
@@ -41,10 +48,15 @@ import urllib.error
 import urllib.request
 from collections import namedtuple
 from pathlib import Path
+from urllib.parse import urlparse
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
 DEFAULT_MODEL = "muse-glimmer-30b"
-DEFAULT_TIMEOUT_S = 60.0
+DEFAULT_TIMEOUT_S = 120.0
+
+# A thinking model that runs out of room is retried once with this
+# much more room.
+TRUNCATION_GROWTH = 2
 
 EndpointConfig = namedtuple(
     "EndpointConfig", ["base_url", "model", "api_key", "timeout_s"]
@@ -54,7 +66,36 @@ EndpointConfig = namedtuple(
 class EndpointError(Exception):
     """A model call that did not produce a valid reply. The message is
     a plain reason, safe to speak or log: it never carries the key or
-    the reply body."""
+    the reply body. kind names the failure for counting: "config",
+    "unreachable", "refused", "http", "timeout", "truncated" or
+    "invalid"."""
+
+    def __init__(self, message, kind="invalid"):
+        super().__init__(message)
+        self.kind = kind
+
+
+def refuse_contributor(model):
+    """Frames never go to a trained-on tier. The Muse Spark contributor
+    tier trains on what it is sent, so any model name naming it is
+    refused before anything is sent."""
+    if isinstance(model, str) and "contributor" in model.lower():
+        raise EndpointError(
+            "The configured model is a contributor tier, which trains on "
+            "what it is sent, so nothing was sent to it.",
+            kind="config",
+        )
+
+
+def _key_allowed(base_url):
+    """A key is only ever sent over https, or to this machine. Over
+    plain http to another machine (the DGX on the LAN) it is left off:
+    llama-server needs none, and the Meta key must never cross the
+    network in the clear."""
+    parsed = urlparse(base_url)
+    if parsed.scheme == "https":
+        return True
+    return parsed.hostname in ("127.0.0.1", "localhost", "::1")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -85,6 +126,7 @@ def config_from_env():
     model = os.environ.get("TRUSS_MODEL") or DEFAULT_MODEL
     api_key = os.environ.get("TRUSS_API_KEY") or os.environ.get("MODEL_API_KEY") or None
     timeout_s = _timeout_seconds(os.environ.get("TRUSS_TIMEOUT_S"))
+    refuse_contributor(model)
     return EndpointConfig(base_url.rstrip("/"), model, api_key, timeout_s)
 
 
@@ -110,7 +152,7 @@ def image_part(path):
     try:
         raw = Path(path).read_bytes()
     except OSError:
-        raise EndpointError(f"The photo {Path(path).name} could not be read.")
+        raise EndpointError(f"The photo {Path(path).name} could not be read.", kind="config")
     data = base64.b64encode(raw).decode("ascii")
     return {"type": "image_url", "image_url": {"url": f"data:{_mime(path)};base64,{data}"}}
 
@@ -168,24 +210,63 @@ def validate(value, schema, where="reply"):
     return problems
 
 
+class _Truncated(Exception):
+    pass
+
+
+def _no_duplicates(pairs):
+    seen = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError("duplicate key")
+        seen[key] = value
+    return seen
+
+
+def _strip_thinking(text):
+    """The reply with every closed <think>...</think> block removed.
+    An unclosed <think> means the answer never came: _Truncated."""
+    while True:
+        start = text.find("<think>")
+        if start == -1:
+            break
+        end = text.find("</think>", start)
+        if end == -1:
+            raise _Truncated()
+        text = text[:start] + text[end + len("</think>"):]
+    if "</think>" in text:
+        # Some servers strip the opening tag but keep the closing one:
+        # everything before it is thinking.
+        text = text[text.rfind("</think>") + len("</think>"):]
+    return text
+
+
+def _strip_fence(text):
+    """The inside of one ```json ... ``` fence wrapping the whole reply."""
+    if text.startswith("```") and text.endswith("```") and len(text) >= 6:
+        inner = text[3:-3]
+        newline = inner.find("\n")
+        first_line = inner[:newline] if newline != -1 else inner
+        if newline != -1 and first_line.strip().isalpha():
+            inner = inner[newline + 1:]
+        return inner.strip()
+    return text
+
+
 def _parse_json(text):
-    """The reply as JSON: the whole text first, then the outermost
-    {...} span, for servers that wrap the object in prose or fences.
-    None when neither parses."""
-    text = (text or "").strip()
+    """The reply as JSON, strictly: thinking blocks removed, one fence
+    around the whole reply allowed, and then the whole remaining text
+    must be one JSON value with no duplicate keys. Prose around the
+    object, or a draft object inside thinking, is never read as the
+    answer. None when it does not parse; _Truncated when thinking never
+    closed."""
+    text = _strip_fence(_strip_thinking(text or "").strip())
     if not text:
         return None
     try:
-        return json.loads(text)
+        return json.loads(text, object_pairs_hook=_no_duplicates)
     except ValueError:
-        pass
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            return json.loads(text[start:end + 1])
-        except ValueError:
-            return None
-    return None
+        return None
 
 
 # -- the call -----------------------------------------------------------------
@@ -209,8 +290,12 @@ def _post(url, body, api_key, timeout):
         except Exception:
             text = ""
         return e.code, text
-    except Exception:
-        raise EndpointError("The model endpoint did not answer.")
+    except TimeoutError:
+        raise EndpointError("The model endpoint did not finish in time.", kind="timeout")
+    except Exception as e:
+        if isinstance(getattr(e, "reason", None), TimeoutError):
+            raise EndpointError("The model endpoint did not finish in time.", kind="timeout")
+        raise EndpointError("The model endpoint did not answer.", kind="unreachable")
 
 
 def _status_reason(status):
@@ -229,12 +314,15 @@ def _schema_instruction(schema):
 
 
 def _reply_content(text):
-    """(content, usage) from a chat/completions response body."""
+    """(content, usage, finish_reason) from a chat/completions response
+    body. Thinking a server puts in reasoning_content is never read."""
     try:
         data = json.loads(text)
-        message = data["choices"][0]["message"]
+        choice = data["choices"][0]
+        message = choice["message"]
     except Exception:
         raise EndpointError("The model endpoint's reply could not be read.")
+    finish = choice.get("finish_reason") if isinstance(choice, dict) else None
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, list):
         content = "".join(
@@ -251,6 +339,7 @@ def _reply_content(text):
     return (
         content if isinstance(content, str) else "",
         {"input_tokens": count("prompt_tokens"), "output_tokens": count("completion_tokens")},
+        finish,
     )
 
 
@@ -265,8 +354,15 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
     over attempts) and "_model" (the configured model), which are not
     part of the schema. Raises EndpointError when no valid reply comes
     back within one retry.
+
+    A reply cut off by the token limit (finish_reason "length", or
+    thinking that never closed) is never parsed, whatever it holds: it
+    is retried once with TRUNCATION_GROWTH times the room, and a second
+    cut-off raises EndpointError with kind "truncated".
     """
     cfg = config or config_from_env()
+    refuse_contributor(cfg.model)
+    api_key = cfg.api_key if _key_allowed(cfg.base_url) else None
     url = f"{cfg.base_url}/chat/completions"
     messages = [
         {"role": "system", "content": system + _schema_instruction(schema)},
@@ -279,37 +375,53 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
     deadline = time.monotonic() + cfg.timeout_s
     usage = {"input_tokens": 0, "output_tokens": 0}
     use_format = True
-    failure = None
+    failure, failure_kind = None, "invalid"
     for attempt in range(2):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise EndpointError("The model endpoint did not finish in time.")
+            raise EndpointError("The model endpoint did not finish in time.", kind="timeout")
         body = {"model": cfg.model, "messages": messages, "temperature": 0}
         if max_tokens:
             body["max_tokens"] = max_tokens
         if use_format:
             body["response_format"] = response_format
-        status, text = _post(url, body, cfg.api_key, remaining)
+        status, text = _post(url, body, api_key, remaining)
         if status in (400, 422) and use_format and attempt == 0:
             # Most likely a server without JSON-schema mode: ask again
             # without response_format, with the schema in the prompt.
             use_format = False
-            failure = _status_reason(status)
+            failure, failure_kind = _status_reason(status), "http"
             continue
         if status != 200:
-            raise EndpointError(_status_reason(status))
-        reply, used = _reply_content(text)
+            kind = "refused" if status in (401, 403) else "http"
+            raise EndpointError(_status_reason(status), kind=kind)
+        reply, used, finish = _reply_content(text)
         usage["input_tokens"] += used["input_tokens"]
         usage["output_tokens"] += used["output_tokens"]
-        parsed = _parse_json(reply)
+        try:
+            if finish == "length":
+                raise _Truncated()
+            parsed = _parse_json(reply)
+        except _Truncated:
+            # Whatever a cut-off reply holds is never read: a draft
+            # inside unfinished thinking must not become the answer.
+            failure, failure_kind = (
+                "The model's reply was cut off before it finished.",
+                "truncated",
+            )
+            max_tokens = (max_tokens or 1024) * TRUNCATION_GROWTH
+            continue
         if parsed is None:
-            failure = "The model's reply was not JSON."
+            failure, failure_kind = "The model's reply was not JSON.", "invalid"
             continue
         problems = validate(parsed, schema)
         if problems:
-            failure = f"The model's reply did not match the schema ({problems[0]})."
+            failure, failure_kind = (
+                f"The model's reply did not match the schema ({problems[0]}).",
+                "invalid",
+            )
             continue
         parsed["_usage"] = usage
         parsed["_model"] = cfg.model
         return parsed
-    raise EndpointError(f"{failure} No valid reply after one retry.")
+    raise EndpointError(f"{failure} No valid reply after one retry.", kind=failure_kind)

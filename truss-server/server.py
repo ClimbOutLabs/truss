@@ -97,8 +97,12 @@ if CHECK_MODE not in verdict.MODES:
 if CHECKER == "aman":
     print("Checks will be made by Aman (TRUSS_CHECKER=aman).")
 else:
-    _cfg = endpoint.config_from_env()
-    print(f"Checks will be made by {_cfg.model} at {_cfg.base_url}, {CHECK_MODE} mode.")
+    try:
+        _cfg = endpoint.config_from_env()
+        print(f"Checks will be made by {_cfg.model} at {_cfg.base_url}, {CHECK_MODE} mode.")
+    except endpoint.EndpointError as e:
+        # Every check will read cannot_tell with the same reason.
+        print(f"No checks will be made: {e}")
 
 
 def production_check(frame_path, entry):

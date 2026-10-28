@@ -181,6 +181,7 @@ def stub_env(stub, **overrides):
         "TRUSS_CHECKER": None,
         "TRUSS_BASE_URL": None,
         "TRUSS_CHECK_MODE": None,
+        "AMAN_MODEL_NAME": None,
         "MODEL_API_KEY": None,
     }
     values.update(overrides)
@@ -446,6 +447,19 @@ def test_one_reference_gives_cannot_tell():
     check("one reference: nothing was sent", stub.requests == [])
 
 
+def test_result_names_aman_as_the_model():
+    out = '{"verdict": "yes", "reason": "On."}'
+    with StubAman(output=out) as stub, stub_env(stub):
+        plain = aman_check.check(FRAME, "Is the tv on?")
+    with StubAman(output=out) as stub, stub_env(stub, AMAN_MODEL_NAME="deepseek-v4-flash"):
+        named = aman_check.check(FRAME, "Is the tv on?")
+    with StubAman() as stub, stub_env(stub, AMAN_TOKEN=None):
+        failed = aman_check.check(FRAME, "Is the tv on?")
+    check("model: aman by default", plain["model"] == "aman")
+    check("model: aman:<name> when named", named["model"] == "aman:deepseek-v4-flash")
+    check("model: named on a failure too", failed["model"] == "aman")
+
+
 def test_infinite_timeout_is_refused():
     with stub_env(None, AMAN_CHECK_TIMEOUT_S="inf"):
         check("inf timeout: falls back to 120", aman_check._timeout_seconds() == 120.0)
@@ -473,4 +487,5 @@ if __name__ == "__main__":
     test_wiring_unknown_value_falls_back_to_endpoint()
     test_one_reference_gives_cannot_tell()
     test_infinite_timeout_is_refused()
+    test_result_names_aman_as_the_model()
     print("ALL PASS")

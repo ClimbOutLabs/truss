@@ -16,8 +16,9 @@ Aman's own meter counts the tokens on its side.
 
 Setup comes from the environment only: AMAN_BASE (default
 http://127.0.0.1:8791), AMAN_TOKEN (the browser sign-in token),
-AMAN_CHECK_SESSION_ID (the check chat), and AMAN_CHECK_TIMEOUT_S
-(default 120).
+AMAN_CHECK_SESSION_ID (the check chat), AMAN_CHECK_TIMEOUT_S
+(default 120), and AMAN_MODEL_NAME (optional, the check chat's model,
+for the answer log).
 
 A failed check must never read as a verdict. Missing setup, an
 unreachable Aman, an HTTP error, a turn that ends without an answer,
@@ -331,6 +332,16 @@ def check(frame_path, question, ref_yes=None, ref_no=None):
     return {
         "verdict": verdict,
         "reason": reason,
+        "model": model_label(),
         "latency_ms": int((time.monotonic() - started) * 1000),
         "usage": dict(ZERO_USAGE),
     }
+
+
+def model_label():
+    """What the answer log names as the model: "aman", or
+    "aman:<name>" when AMAN_MODEL_NAME says which model the check chat
+    runs. Aman's chats run a non-Meta model, so its answers are always
+    marked as Aman's."""
+    name = (os.environ.get("AMAN_MODEL_NAME") or "").strip()
+    return f"aman:{name}" if name else "aman"
