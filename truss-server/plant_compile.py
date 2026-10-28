@@ -109,6 +109,9 @@ MODIFIER_WORDS = {
     "weekly", "daily", "morning", "evening", "night", "nightly",
 }
 
+# Room for Glimmer to think before it answers; a reply cut off at the
+# limit is retried by endpoint.py with twice this, never parsed.
+MAX_TOKENS = 2048
 MIN_PROMPTS = 2
 MAX_PROMPTS = 3
 MAX_LOOK_CHARS = 400
@@ -247,7 +250,8 @@ def _refuse_contributor(endpoint):
     """The compile sends both photos of her home. The contributor tier
     trains on what it is sent, so a compile never runs on it, whatever
     the endpoint is set to. Returns the config to call with, or None
-    when the endpoint has no config of its own."""
+    when the endpoint has no config of its own (ask_json then uses
+    its default)."""
     config_from_env = getattr(endpoint, "config_from_env", None)
     if config_from_env is None:
         return None
@@ -291,12 +295,10 @@ def compile_question(folder, endpoint=None, lock=None):
                 raise CompileError("Both reference looks are needed before a compile.")
             system, content = build_request(question, ref_yes, ref_no, endpoint)
         try:
-            if config is None:
-                answer = endpoint.ask_json(system, content, COMPILE_SCHEMA, SCHEMA_NAME)
-            else:
-                answer = endpoint.ask_json(
-                    system, content, COMPILE_SCHEMA, SCHEMA_NAME, config=config
-                )
+            answer = endpoint.ask_json(
+                system, content, COMPILE_SCHEMA, SCHEMA_NAME,
+                config=config, max_tokens=MAX_TOKENS,
+            )
         except Exception as e:
             reason = str(e).strip() or "The model call failed"
             raise CompileError(f"{reason.rstrip('.')}, so nothing was compiled.")

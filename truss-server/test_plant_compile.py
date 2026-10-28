@@ -65,9 +65,10 @@ class FakeEndpoint:
     def image_part(path):
         return {"type": "image_url", "image_url": {"url": "file:" + Path(path).name}}
 
-    def ask_json(self, system, content, schema, schema_name, config=None):
+    def ask_json(self, system, content, schema, schema_name, config=None, max_tokens=None):
         self.calls.append(
-            {"system": system, "content": content, "schema": schema, "name": schema_name, "config": config}
+            {"system": system, "content": content, "schema": schema, "name": schema_name, "config": config,
+             "max_tokens": max_tokens}
         )
         if self.error is not None:
             raise self.error
@@ -141,6 +142,7 @@ def test_request_shape():
         call = fake.calls[0]
         check("strict schema passed", call["schema"] is COMPILE_SCHEMA)
         check("schema name", call["name"] == "plant_compile")
+        check("room for the model to think", call["max_tokens"] == 2048)
         check(
             "schema closed and all fields required",
             COMPILE_SCHEMA["additionalProperties"] is False
@@ -507,6 +509,10 @@ def test_through_the_real_endpoint():
         check("end to end: compile ok", result["ok"])
         request = stub.requests[0]
         check("end to end: the configured model", request.get("model") == "muse-glimmer-30b")
+        check(
+            "end to end: max tokens sent",
+            request.get("max_tokens") == 2048 or request.get("max_completion_tokens") == 2048,
+        )
         fmt = request.get("response_format") or {}
         check(
             "end to end: strict schema named plant_compile",
