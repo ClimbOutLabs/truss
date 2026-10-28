@@ -241,8 +241,8 @@ def summarize(rows, cfg, max_tokens):
         out.append(f"- verdicts: yes {counts['yes']}, no {counts['no']}, cannot_tell {counts['cannot_tell']}")
         blind = [r for r in ok if r["label"] == "cannot_tell"]
         seen = [r for r in ok if r["label"] in ("yes", "no")]
-        if blind:
-            blind_failed = sum(1 for r in mine if r["failed"] and r["label"] == "cannot_tell")
+        blind_failed = sum(1 for r in mine if r["failed"] and r["label"] == "cannot_tell")
+        if blind or blind_failed:
             out.append(
                 "- **cannot_tell on uninformative frames: "
                 f"{_pct(sum(1 for r in blind if r['verdict'] == 'cannot_tell'), len(blind))}**"

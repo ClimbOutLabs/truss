@@ -131,6 +131,20 @@ def main():
           "photos/02.jpg / stove (no): single no, multi yes" in summary)
     check("failed checks stay out of agreement", "agreement: 71% (5/7)" in summary)
     server.shutdown()
+
+    # Every uninformative check failed: the safety line must still show.
+    sys.path.insert(0, str(HERE))
+    import bench_glimmer
+    cfg = bench_glimmer.endpoint.config_from_env()
+    failed_rows = [
+        {"mode": "single", "photo": f"p{i}", "question": "stove", "label": "cannot_tell",
+         "verdict": "cannot_tell", "reason": "x So no check was made.", "failed": True,
+         "finish_reasons": ["length"], "requests": 2, "has_timings": False, "total_ms": 1}
+        for i in range(3)
+    ]
+    text = bench_glimmer.summarize(failed_rows, cfg, 300)
+    check("an all-failed uninformative set still shows the safety line",
+          "cannot_tell on uninformative frames: n/a (0)** (plus 3 failed checks" in text)
     print("all bench tests passed")
 
 

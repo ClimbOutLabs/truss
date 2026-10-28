@@ -115,7 +115,12 @@ hf_get() {
     # pipefail (set at the top) makes rc the CLI's status, not tee's.
     "$HF_BIN" download "$repo" --include "$pattern" --local-dir "$dest" 2>&1 | tee "$out" || rc=$?
     if [ "$rc" != 0 ]; then
-      if grep -qiE '401|403|gated|restricted|RepositoryNotFound|Repository Not Found|access to model' "$out"; then
+      # Access refusals, in the old huggingface-cli wording and the
+      # current hf wording ("Access denied. Model '...' requires
+      # approval.", and "Model '...' not found." for a 401). A bare
+      # "not found" or a bare 401/403 is not matched: network errors and
+      # traceback line numbers say those too.
+      if grep -qiE "40[13] Client Error|Unauthorized|Forbidden|gated|restricted|RepositoryNotFound|Repository Not Found|access to model|Access denied|requires approval|Model '[^']*' not found" "$out"; then
         return 3
       fi
       die "Downloading $pattern from $repo failed (not an access refusal; see above). Fix that and rerun; finished files are kept."
@@ -144,6 +149,8 @@ do_download() {
     [ "$QUANT" = "Q4_K_M" ] && echo "Unsloth publishes no Q4_K_M; its closest file is UD-Q4_K_XL (~16 GB)."
     local want="$QUANT"
     [ "$want" = "Q4_K_M" ] && want="UD-Q4_K_XL"
+    # *mmproj* may pull every precision Unsloth publishes (1-2 GB each);
+    # resolve_files uses the first.
     hf_get "$UNSLOTH_REPO" "$unsloth" "*${want}*.gguf" "*mmproj*" "*dflash*" "*DFlash*" \
       || die "Neither $META_REPO nor $UNSLOTH_REPO gave access. Check 'hf auth login' and the license on huggingface.co."
   elif [ "$QUANT" != "Q4_K_M" ]; then
@@ -223,13 +230,25 @@ do_flags() {
   "$SERVER_BIN" --help 2>&1 | grep -E -- '-md,|--model-draft|-ngld|gpu-layers-draft|spec-draft|reasoning|chat-template-kwargs|--mmproj|image-(min|max)-tokens|--parallel' || true
 }
 
-server_running() { [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; }
+# True only when the pid file names a live llama-server on this port, so
+# a stale pid reused by some other process is never treated as ours.
+server_running() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid; pid=$(cat "$PID_FILE")
+  kill -0 "$pid" 2>/dev/null || return 1
+  local cmd; cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
+  case "$cmd" in
+    *llama-server*"--port $PORT"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # Where this script reaches the server: loopback when it listens on all
 # interfaces, else the address it was told to bind.
 local_host() {
   case "$HOST" in
     0.0.0.0|::|127.0.0.1|localhost) echo 127.0.0.1 ;;
+    *:*) echo "[$HOST]" ;;
     *) echo "$HOST" ;;
   esac
 }
@@ -309,20 +328,19 @@ do_serve() {
     args+=(--reasoning-budget "$REASONING_BUDGET")
   fi
 
-  local key_env=()
   if [ -n "$API_KEY" ]; then
     write_key_files
     if help_has '--api-key-file'; then
       args+=(--api-key-file "$RUN_DIR/api-key")
     else
-      key_env=(env "LLAMA_API_KEY=$API_KEY")
+      export LLAMA_API_KEY="$API_KEY"   # environment, not argv
     fi
   fi
 
   say "Starting llama-server on $HOST:$PORT (log: $LOG_FILE)"
   printf '%q ' "$SERVER_BIN" "${args[@]}" > "$RUN_DIR/command.txt"
   cat "$RUN_DIR/command.txt"; echo
-  nohup "${key_env[@]}" "$SERVER_BIN" "${args[@]}" >"$LOG_FILE" 2>&1 &
+  nohup "$SERVER_BIN" "${args[@]}" >"$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
 
   # Loading ~20 GB from disk takes a minute or two the first time.
@@ -334,6 +352,17 @@ do_serve() {
   done
   server_running || { tail -n 40 "$LOG_FILE"; die "The server that answered is not the one just started (log above)."; }
   echo "Healthy after ${waited}s."
+
+  # A key the build silently ignored would leave the server open: an
+  # unauthenticated request must be refused.
+  if [ -n "$API_KEY" ]; then
+    local code
+    # /health and /v1/models are public in llama-server; chat is not.
+    code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -H 'Content-Type: application/json' \
+      -d '{"messages":[{"role":"user","content":"hi"}],"max_tokens":1}' \
+      "http://$(local_host):$PORT/v1/chat/completions" || true)
+    [ "$code" = 401 ] || die "With API_KEY set, a request without the key got status $code, not 401: the server is not enforcing the key. Stop it (./bringup.sh stop)."
+  fi
 
   say "Warm-up request"
   curl_auth -m 300 "http://$(local_host):$PORT/v1/chat/completions" \
