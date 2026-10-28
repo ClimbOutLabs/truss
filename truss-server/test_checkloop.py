@@ -223,10 +223,7 @@ def test_broken_store_never_breaks_capture():
     f = frame(captures, "a.jpg")
     result = loop.process_frame(f)
     check("broken store means unmanaged", result["managed"] is False)
-    check(
-        "the broken folder is skipped, not an error",
-        result["errors"] == 0,
-    )
+    check("a skipped broken record counts no error", result["errors"] == 0)
     check("frame kept when the store is broken", f.exists())
 
 

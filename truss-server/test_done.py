@@ -151,6 +151,149 @@ def test_witness_store():
               store.get(slug)["witness"] is None)
 
 
+def test_concurrent_watch_writes():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create(PILLS, WINDOW, kind="done")
+        store.save_ref(slug, "yes", JPEG)
+        store.save_ref(slug, "no", JPEG)
+        when = datetime(2026, 10, 27, 21, 5)
+        errors = []
+        barrier = threading.Barrier(2)
+
+        def run_checked():
+            try:
+                barrier.wait()
+                for _ in range(300):
+                    store.mark_checked(slug, when=when)
+            except Exception as exc:
+                errors.append(exc)
+
+        def run_witness():
+            try:
+                barrier.wait()
+                for _ in range(300):
+                    store.mark_answered_with_witness(
+                        slug, "evidence.jpg", when=when
+                    )
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=run_checked),
+            threading.Thread(target=run_witness),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        check("concurrent mark_checked and witness writes raise nothing",
+              errors == [])
+        raw = (Path(tmp) / slug / "watch.json").read_text()
+        try:
+            parses = isinstance(json.loads(raw), dict)
+        except Exception:
+            parses = False
+        check("concurrent writes leave watch.json as one JSON record",
+              parses)
+        entry = store.get(slug)
+        check("concurrent writes keep the answered mark and the witness",
+              entry is not None
+              and entry["answered_at"] is not None
+              and entry["witness"] is not None
+              and entry["witness"]["frame"] == "evidence.jpg")
+
+
+def test_concurrent_watch_writes_many_threads():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create(PILLS, WINDOW, kind="done")
+        store.save_ref(slug, "yes", JPEG)
+        store.save_ref(slug, "no", JPEG)
+        when = datetime(2026, 10, 27, 21, 5)
+        errors = []
+        barrier = threading.Barrier(8)
+
+        def run(index):
+            try:
+                barrier.wait()
+                for n in range(100):
+                    if (index + n) % 2 == 0:
+                        store.mark_checked(slug, when=when)
+                    else:
+                        store.mark_answered_with_witness(
+                            slug, "evidence.jpg", when=when
+                        )
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        check("eight threads writing one watch record raise nothing",
+              errors == [])
+        raw = (Path(tmp) / slug / "watch.json").read_text()
+        try:
+            parses = isinstance(json.loads(raw), dict)
+        except Exception:
+            parses = False
+        check("eight threads leave watch.json as one JSON record",
+              parses)
+        entry = store.get(slug)
+        check("eight threads keep the answered mark and the witness",
+              entry is not None
+              and entry["answered_at"] is not None
+              and entry["witness"] is not None
+              and entry["witness"]["frame"] == "evidence.jpg")
+
+
+def test_crash_residue_without_watch_is_skipped():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        broken = Path(tmp) / "half-planted"
+        broken.mkdir()
+        (broken / "question.txt").write_text("Is the stove off?\n")
+        (broken / "watch.json.tmp").write_text('{"kind": "done", "pat')
+        check("a folder with only a partial side file is not listed",
+              store.list() == [])
+        check("getting a folder with no readable watch returns nothing",
+              store.get("half-planted") is None)
+        slug = store.create("Is the front door locked?")
+        check("planting a new question still works beside crash residue",
+              slug == "is-the-front-door-locked")
+        check("the new question is listed and the broken one is skipped",
+              [e["slug"] for e in store.list()] == [slug])
+
+
+def test_torn_watch_is_skipped():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        good = store.create("Is the stove off?")
+        torn = Path(tmp) / "torn-question"
+        torn.mkdir()
+        (torn / "question.txt").write_text("Is the tap running?\n")
+        whole = {
+            "kind": "state",
+            "pattern": {"kind": "interval", "minutes": 15},
+            "state": "standing",
+            "seq": 99,
+            "planted_at": "2026-10-27T08:00:00",
+            "last_checked_at": None,
+            "answered_at": None,
+            "witness": None,
+            "redo_spoken": False,
+        }
+        (torn / "watch.json").write_text(json.dumps(whole) + json.dumps(whole))
+        check("a torn watch record is skipped in the listing",
+              [e["slug"] for e in store.list()] == [good])
+        check("getting a torn watch record returns nothing",
+              store.get("torn-question") is None)
+        check("a good question still reads beside a torn one",
+              store.get(good)["question"] == "Is the stove off?")
+
+
 # -- the loop: witness, redo reminder, silence ------------------------------
 
 
@@ -772,6 +915,10 @@ if __name__ == "__main__":
     test_window_validation()
     test_window_due()
     test_witness_store()
+    test_concurrent_watch_writes()
+    test_concurrent_watch_writes_many_threads()
+    test_crash_residue_without_watch_is_skipped()
+    test_torn_watch_is_skipped()
     test_done_fire_records_witness()
     test_redo_reminder_speaks_once()
     test_redo_silence()

@@ -32,6 +32,8 @@ Patterns:
 
 import json
 import re
+import threading
+import uuid
 from datetime import datetime, time
 from pathlib import Path
 
@@ -118,6 +120,16 @@ class QuestionStore:
     def __init__(self, root):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        # One lock for the whole store. Every read-modify-write of
+        # a watch record runs under it, so the check loop, the
+        # missed-window sweep thread, and planting can never
+        # interleave a read and a write on the same record and lose
+        # or tear an update. It is re-entrant because public methods
+        # call each other (list calls get, redo_watch calls
+        # witness_today, and so on) while already holding it.
+        # Contention is tiny: a handful of questions, a check every
+        # so often, and a sweep every half minute.
+        self._lock = threading.RLock()
 
     # -- internal helpers -------------------------------------------------
 
@@ -125,19 +137,45 @@ class QuestionStore:
         return self.root / slug
 
     def _read_watch(self, slug):
+        """The stored watch record as a dict, or None when there is
+        no readable watch record: the file is missing, unreadable,
+        not valid JSON, two texts torn together, or valid JSON that
+        is not a record at all. Never raises. Callers treat None as
+        a broken or half-planted record, never as a reason to fail
+        the whole store. Call with the store lock held."""
         path = self._folder(slug) / "watch.json"
-        if not path.exists():
+        try:
+            text = path.read_text()
+        except Exception:
             return None
-        return json.loads(path.read_text())
+        try:
+            data = json.loads(text)
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
 
     def _write_watch(self, slug, watch):
         # Write to a side file and move it into place, so a watch
         # record is never seen half-written and a failed write leaves
-        # the previous record whole.
-        path = self._folder(slug) / "watch.json"
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(watch, indent=2) + "\n")
-        tmp.replace(path)
+        # the previous record whole. The side file name is unique to
+        # this write, so no two writers, and no leftover from a
+        # crash, can ever collide on it. Call with the store lock
+        # held; the lock is what makes the wider read-modify-write
+        # that ends here atomic, not the rename alone.
+        folder = self._folder(slug)
+        path = folder / "watch.json"
+        tmp = folder / f"watch.json.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(watch, indent=2) + "\n")
+                handle.flush()
+            tmp.replace(path)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
 
     # -- planting ---------------------------------------------------------
 
@@ -149,50 +187,51 @@ class QuestionStore:
         window is refused to the wearer's face instead of failing
         quietly every evening afterwards.
         """
-        text = text.strip()
-        if not text:
-            raise ValueError("The question text is empty.")
-        if kind not in QUESTION_KINDS:
-            raise ValueError("A question is either a state question or a done question.")
-        if isinstance(pattern, dict) and pattern.get("kind") == "window":
-            after = _parse_time(pattern.get("after"))
-            until = _parse_time(pattern.get("until"))
-            if after is None or until is None:
-                raise ValueError(
-                    "A window needs a start time and an end time, like 21:00 and 22:00."
-                )
-            if until <= after:
-                raise ValueError(
-                    "A window must end after it starts. Windows that run "
-                    "past midnight are not supported."
-                )
-        base = slugify(text)
-        slug = base
-        n = 2
-        while self._folder(slug).exists():
-            slug = f"{base}-{n}"
-            n += 1
-        # Planting order is a fact about the store, not the clock: two
-        # questions planted in the same second still have an order.
-        # Counted before the new folder exists, so the half-planted
-        # folder is never read back.
-        seq = max((e["seq"] for e in self.list()), default=0) + 1
-        folder = self._folder(slug)
-        folder.mkdir(parents=True)
-        (folder / "question.txt").write_text(text + "\n")
-        watch = {
-            "kind": kind,
-            "pattern": pattern or {"kind": "interval", "minutes": 15},
-            "state": "planting",
-            "seq": seq,
-            "planted_at": datetime.now().isoformat(timespec="seconds"),
-            "last_checked_at": None,
-            "answered_at": None,
-            "witness": None,
-            "redo_spoken": False,
-        }
-        self._write_watch(slug, watch)
-        return slug
+        with self._lock:
+            text = text.strip()
+            if not text:
+                raise ValueError("The question text is empty.")
+            if kind not in QUESTION_KINDS:
+                raise ValueError("A question is either a state question or a done question.")
+            if isinstance(pattern, dict) and pattern.get("kind") == "window":
+                after = _parse_time(pattern.get("after"))
+                until = _parse_time(pattern.get("until"))
+                if after is None or until is None:
+                    raise ValueError(
+                        "A window needs a start time and an end time, like 21:00 and 22:00."
+                    )
+                if until <= after:
+                    raise ValueError(
+                        "A window must end after it starts. Windows that run "
+                        "past midnight are not supported."
+                    )
+            base = slugify(text)
+            slug = base
+            n = 2
+            while self._folder(slug).exists():
+                slug = f"{base}-{n}"
+                n += 1
+            # Planting order is a fact about the store, not the clock: two
+            # questions planted in the same second still have an order.
+            # Counted before the new folder exists, so the half-planted
+            # folder is never read back.
+            seq = max((e["seq"] for e in self.list()), default=0) + 1
+            folder = self._folder(slug)
+            folder.mkdir(parents=True)
+            (folder / "question.txt").write_text(text + "\n")
+            watch = {
+                "kind": kind,
+                "pattern": pattern or {"kind": "interval", "minutes": 15},
+                "state": "planting",
+                "seq": seq,
+                "planted_at": datetime.now().isoformat(timespec="seconds"),
+                "last_checked_at": None,
+                "answered_at": None,
+                "witness": None,
+                "redo_spoken": False,
+            }
+            self._write_watch(slug, watch)
+            return slug
 
     def save_ref(self, slug, kind, data):
         """Save one reference look (kind is "yes" or "no").
@@ -200,141 +239,181 @@ class QuestionStore:
         When both looks exist, a planting question starts standing.
         Returns the question's state after the save.
         """
-        if kind not in ("yes", "no"):
-            raise ValueError("A reference look is either yes or no.")
-        folder = self._folder(slug)
-        if not folder.exists():
-            raise KeyError(f"No question named {slug}.")
-        (folder / f"ref-{kind}.jpg").write_bytes(data)
-        watch = self._read_watch(slug)
-        if (
-            watch["state"] == "planting"
-            and (folder / "ref-yes.jpg").exists()
-            and (folder / "ref-no.jpg").exists()
-        ):
-            watch["state"] = "standing"
-            self._write_watch(slug, watch)
-        return watch["state"]
+        with self._lock:
+            if kind not in ("yes", "no"):
+                raise ValueError("A reference look is either yes or no.")
+            folder = self._folder(slug)
+            if not folder.exists():
+                raise KeyError(f"No question named {slug}.")
+            (folder / f"ref-{kind}.jpg").write_bytes(data)
+            watch = self._read_watch(slug)
+            if watch is None or not isinstance(watch.get("state"), str):
+                raise KeyError(f"No question named {slug}.")
+            if (
+                watch["state"] == "planting"
+                and (folder / "ref-yes.jpg").exists()
+                and (folder / "ref-no.jpg").exists()
+            ):
+                watch["state"] = "standing"
+                self._write_watch(slug, watch)
+            return watch["state"]
 
     # -- reading ----------------------------------------------------------
 
     def get(self, slug):
-        folder = self._folder(slug)
-        if not folder.exists():
-            return None
-        watch = self._read_watch(slug)
-        return {
-            "slug": slug,
-            "question": (folder / "question.txt").read_text().strip(),
-            "kind": _clean_kind(watch.get("kind")),
-            "pattern": watch["pattern"],
-            "state": watch["state"],
-            "witness": _clean_witness(watch.get("witness")),
-            "redo_spoken": bool(watch.get("redo_spoken")),
-            "planted_at": watch["planted_at"],
-            "seq": watch.get("seq", 0),
-            "last_checked_at": watch["last_checked_at"],
-            "answered_at": watch["answered_at"],
-            "has_ref_yes": (folder / "ref-yes.jpg").exists(),
-            "has_ref_no": (folder / "ref-no.jpg").exists(),
-            "ref_yes_path": str(folder / "ref-yes.jpg"),
-            "ref_no_path": str(folder / "ref-no.jpg"),
-        }
+        """One question's record, or None when it cannot be read as
+        one: the folder is missing, the question text is missing,
+        or there is no readable watch record (a crash during the
+        first write can leave only question.txt and a side file
+        behind, and a torn watch.json reads as no record at all).
+        A broken record is skipped, never fatal: it must not block
+        listing, planting, or checks for every other question."""
+        with self._lock:
+            folder = self._folder(slug)
+            if not folder.exists():
+                return None
+            watch = self._read_watch(slug)
+            if watch is None:
+                return None
+            if not isinstance(watch.get("pattern"), dict):
+                return None
+            if not isinstance(watch.get("state"), str):
+                return None
+            if not all(
+                key in watch
+                for key in ("planted_at", "last_checked_at", "answered_at")
+            ):
+                return None
+            try:
+                question_text = (folder / "question.txt").read_text().strip()
+            except Exception:
+                return None
+            return {
+                "slug": slug,
+                "question": question_text,
+                "kind": _clean_kind(watch.get("kind")),
+                "pattern": watch["pattern"],
+                "state": watch["state"],
+                "witness": _clean_witness(watch.get("witness")),
+                "redo_spoken": bool(watch.get("redo_spoken")),
+                "planted_at": watch["planted_at"],
+                "seq": watch.get("seq", 0),
+                "last_checked_at": watch["last_checked_at"],
+                "answered_at": watch["answered_at"],
+                "has_ref_yes": (folder / "ref-yes.jpg").exists(),
+                "has_ref_no": (folder / "ref-no.jpg").exists(),
+                "ref_yes_path": str(folder / "ref-yes.jpg"),
+                "ref_no_path": str(folder / "ref-no.jpg"),
+            }
 
     def list(self):
-        out = []
-        for folder in sorted(self.root.iterdir()):
-            if folder.is_dir():
-                entry = self.get(folder.name)
-                if entry is not None:
-                    out.append(entry)
-        # Planting order, not folder order: it is the order the wearer
-        # meets the questions in, and the order due() hands them to
-        # the check loop. Questions planted before seq existed all
-        # carry 0 and fall back to their timestamps.
-        out.sort(key=lambda e: (e["seq"], e["planted_at"] or "", e["slug"]))
-        return out
+        with self._lock:
+            out = []
+            try:
+                folders = sorted(self.root.iterdir())
+            except Exception:
+                return []
+            for folder in folders:
+                if folder.is_dir():
+                    entry = self.get(folder.name)
+                    if entry is not None:
+                        out.append(entry)
+            # Planting order, not folder order: it is the order the wearer
+            # meets the questions in, and the order due() hands them to
+            # the check loop. Questions planted before seq existed all
+            # carry 0 and fall back to their timestamps.
+            out.sort(key=lambda e: (e["seq"], e["planted_at"] or "", e["slug"]))
+            return out
 
     # -- the check loop's view ---------------------------------------------
 
     def due(self, now=None):
         """Standing questions whose pattern says a check is due now."""
-        now = now or datetime.now()
-        out = []
-        for entry in self.list():
-            if entry["state"] != "standing":
-                continue
-            pattern = entry["pattern"]
-            kind = pattern.get("kind")
-            if kind == "interval":
-                last = entry["last_checked_at"] or entry["planted_at"]
-                last_dt = datetime.fromisoformat(last)
-                if (now - last_dt).total_seconds() >= pattern["minutes"] * 60:
-                    out.append(entry)
-            elif kind == "nightly":
-                after = time.fromisoformat(pattern.get("after", "20:00"))
-                if now.time() < after:
+        with self._lock:
+            now = now or datetime.now()
+            out = []
+            for entry in self.list():
+                if entry["state"] != "standing":
                     continue
-                answered = entry["answered_at"]
-                if answered and datetime.fromisoformat(answered).date() == now.date():
-                    continue
-                last = entry["last_checked_at"]
-                if last:
-                    gap = pattern.get("minutes", 15) * 60
-                    if (now - datetime.fromisoformat(last)).total_seconds() < gap:
+                pattern = entry["pattern"]
+                kind = pattern.get("kind")
+                if kind == "interval":
+                    last = entry["last_checked_at"] or entry["planted_at"]
+                    last_dt = datetime.fromisoformat(last)
+                    if (now - last_dt).total_seconds() >= pattern["minutes"] * 60:
+                        out.append(entry)
+                elif kind == "nightly":
+                    after = time.fromisoformat(pattern.get("after", "20:00"))
+                    if now.time() < after:
                         continue
-                out.append(entry)
-            elif kind == "window":
-                times = _window_times(pattern)
-                if times is None:
-                    # A window that cannot be read is never due. It
-                    # was refused at planting time; a record damaged
-                    # afterwards degrades to silence, not an error.
-                    continue
-                after, until = times
-                if not after <= now.time() < until:
-                    continue
-                answered = entry["answered_at"]
-                if answered:
-                    try:
-                        if datetime.fromisoformat(answered).date() == now.date():
+                    answered = entry["answered_at"]
+                    if answered and datetime.fromisoformat(answered).date() == now.date():
+                        continue
+                    last = entry["last_checked_at"]
+                    if last:
+                        gap = pattern.get("minutes", 15) * 60
+                        if (now - datetime.fromisoformat(last)).total_seconds() < gap:
                             continue
-                    except ValueError:
-                        pass
-                last = entry["last_checked_at"]
-                if last:
-                    try:
-                        last_dt = datetime.fromisoformat(last)
-                    except ValueError:
-                        last_dt = None
-                    if (
-                        last_dt is not None
-                        and (now - last_dt).total_seconds() < _gap_seconds(pattern)
-                    ):
+                    out.append(entry)
+                elif kind == "window":
+                    times = _window_times(pattern)
+                    if times is None:
+                        # A window that cannot be read is never due. It
+                        # was refused at planting time; a record damaged
+                        # afterwards degrades to silence, not an error.
                         continue
-                out.append(entry)
-        return out
+                    after, until = times
+                    if not after <= now.time() < until:
+                        continue
+                    answered = entry["answered_at"]
+                    if answered:
+                        try:
+                            if datetime.fromisoformat(answered).date() == now.date():
+                                continue
+                        except ValueError:
+                            pass
+                    last = entry["last_checked_at"]
+                    if last:
+                        try:
+                            last_dt = datetime.fromisoformat(last)
+                        except ValueError:
+                            last_dt = None
+                        if (
+                            last_dt is not None
+                            and (now - last_dt).total_seconds() < _gap_seconds(pattern)
+                        ):
+                            continue
+                    out.append(entry)
+            return out
 
     def mark_checked(self, slug, when=None):
-        watch = self._read_watch(slug)
-        watch["last_checked_at"] = (when or datetime.now()).isoformat(
-            timespec="seconds"
-        )
-        self._write_watch(slug, watch)
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            watch["last_checked_at"] = (when or datetime.now()).isoformat(
+                timespec="seconds"
+            )
+            self._write_watch(slug, watch)
 
     def mark_answered(self, slug, when=None):
         """Record a firing. Nightly and window questions re-arm for
         the next day; interval questions retire until the wearer
         plants them again."""
-        watch = self._read_watch(slug)
-        when = when or datetime.now()
-        watch["answered_at"] = when.isoformat(timespec="seconds")
-        if watch["pattern"].get("kind") in ("nightly", "window"):
-            watch["state"] = "standing"
-            watch["last_checked_at"] = when.isoformat(timespec="seconds")
-        else:
-            watch["state"] = "answered"
-        self._write_watch(slug, watch)
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            when = when or datetime.now()
+            watch["answered_at"] = when.isoformat(timespec="seconds")
+            pattern = watch.get("pattern")
+            pattern_kind = pattern.get("kind") if isinstance(pattern, dict) else None
+            if pattern_kind in ("nightly", "window"):
+                watch["state"] = "standing"
+                watch["last_checked_at"] = when.isoformat(timespec="seconds")
+            else:
+                watch["state"] = "answered"
+            self._write_watch(slug, watch)
 
     # -- the witness: what a done question saw, and when ------------------
 
@@ -344,62 +423,74 @@ class QuestionStore:
         either both land, or the write fails and neither does, so a
         wearer can never be told later that a seen act was not done
         only because half of its firing was saved."""
-        watch = self._read_watch(slug)
-        when = when or datetime.now()
-        watch["answered_at"] = when.isoformat(timespec="seconds")
-        pattern = watch.get("pattern")
-        if isinstance(pattern, dict) and pattern.get("kind") in (
-            "nightly",
-            "window",
-        ):
-            watch["state"] = "standing"
-            watch["last_checked_at"] = when.isoformat(timespec="seconds")
-        else:
-            watch["state"] = "answered"
-        watch["witness"] = {
-            "date": when.date().isoformat(),
-            "at": when.isoformat(timespec="seconds"),
-            "frame": frame_name,
-        }
-        watch["redo_spoken"] = False
-        self._write_watch(slug, watch)
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            when = when or datetime.now()
+            watch["answered_at"] = when.isoformat(timespec="seconds")
+            pattern = watch.get("pattern")
+            if isinstance(pattern, dict) and pattern.get("kind") in (
+                "nightly",
+                "window",
+            ):
+                watch["state"] = "standing"
+                watch["last_checked_at"] = when.isoformat(timespec="seconds")
+            else:
+                watch["state"] = "answered"
+            watch["witness"] = {
+                "date": when.date().isoformat(),
+                "at": when.isoformat(timespec="seconds"),
+                "frame": frame_name,
+            }
+            watch["redo_spoken"] = False
+            self._write_watch(slug, watch)
 
     def record_witness(self, slug, frame_name, when=None):
         """Write the witness for a done question that just fired: the
         day, the time, and the evidence photo's name. A fresh witness
         clears any redo flag left from an older one."""
-        watch = self._read_watch(slug)
-        when = when or datetime.now()
-        watch["witness"] = {
-            "date": when.date().isoformat(),
-            "at": when.isoformat(timespec="seconds"),
-            "frame": frame_name,
-        }
-        watch["redo_spoken"] = False
-        self._write_watch(slug, watch)
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            when = when or datetime.now()
+            watch["witness"] = {
+                "date": when.date().isoformat(),
+                "at": when.isoformat(timespec="seconds"),
+                "frame": frame_name,
+            }
+            watch["redo_spoken"] = False
+            self._write_watch(slug, watch)
 
     def witness_today(self, slug, now=None):
         """Today's witness for a question, or None. A witness from an
         earlier day is cleared on the way out and never returned: it
         must never be spoken from on a later day."""
-        now = now or datetime.now()
-        watch = self._read_watch(slug)
-        witness = _clean_witness(watch.get("witness"))
-        if witness is None:
-            return None
-        if witness["date"] != now.date().isoformat():
-            watch["witness"] = None
-            watch["redo_spoken"] = False
-            self._write_watch(slug, watch)
-            return None
-        return witness
+        with self._lock:
+            now = now or datetime.now()
+            watch = self._read_watch(slug)
+            if watch is None:
+                return None
+            witness = _clean_witness(watch.get("witness"))
+            if witness is None:
+                return None
+            if witness["date"] != now.date().isoformat():
+                watch["witness"] = None
+                watch["redo_spoken"] = False
+                self._write_watch(slug, watch)
+                return None
+            return witness
 
     def mark_redo_spoken(self, slug):
         """Record that today's redo reminder has been spoken. It is
         spoken once per witness, never twice."""
-        watch = self._read_watch(slug)
-        watch["redo_spoken"] = True
-        self._write_watch(slug, watch)
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            watch["redo_spoken"] = True
+            self._write_watch(slug, watch)
 
     def redo_watch(self, now=None):
         """Done questions holding a witness from today whose redo
@@ -409,44 +500,49 @@ class QuestionStore:
         between checks as an ordinary due question, counted from the
         last recorded check of any kind, so a watched question costs
         at most one return check per gap."""
-        now = now or datetime.now()
-        out = []
-        for entry in self.list():
-            if entry["kind"] != "done" or entry["redo_spoken"]:
-                continue
-            if entry["state"] != "standing":
-                continue
-            if self.witness_today(entry["slug"], now=now) is None:
-                continue
-            last = entry.get("last_checked_at")
-            if last:
-                try:
-                    last_dt = datetime.fromisoformat(last)
-                except (TypeError, ValueError):
-                    last_dt = None
-                if (
-                    last_dt is not None
-                    and (now - last_dt).total_seconds()
-                    < _gap_seconds(entry["pattern"])
-                ):
+        with self._lock:
+            now = now or datetime.now()
+            out = []
+            for entry in self.list():
+                if entry["kind"] != "done" or entry["redo_spoken"]:
                     continue
-            out.append(entry)
-        return out
+                if entry["state"] != "standing":
+                    continue
+                if self.witness_today(entry["slug"], now=now) is None:
+                    continue
+                last = entry.get("last_checked_at")
+                if last:
+                    try:
+                        last_dt = datetime.fromisoformat(last)
+                    except (TypeError, ValueError):
+                        last_dt = None
+                    if (
+                        last_dt is not None
+                        and (now - last_dt).total_seconds()
+                        < _gap_seconds(entry["pattern"])
+                    ):
+                        continue
+                out.append(entry)
+            return out
 
     def done_status(self, slug, now=None):
         """For listings: today's witness as a spoken time of day (or
         None), and whether today's redo reminder has been spoken."""
-        now = now or datetime.now()
-        witness = self.witness_today(slug, now=now)
-        if witness is None:
-            return {"witness_time": None, "redo_spoken": False}
-        watch = self._read_watch(slug)
-        return {
-            "witness_time": display_time(witness["at"]),
-            "redo_spoken": bool(watch.get("redo_spoken")),
-        }
+        with self._lock:
+            now = now or datetime.now()
+            witness = self.witness_today(slug, now=now)
+            if witness is None:
+                return {"witness_time": None, "redo_spoken": False}
+            watch = self._read_watch(slug)
+            return {
+                "witness_time": display_time(witness["at"]),
+                "redo_spoken": bool(watch.get("redo_spoken")) if watch else False,
+            }
 
     def retire(self, slug):
-        watch = self._read_watch(slug)
-        watch["state"] = "retired"
-        self._write_watch(slug, watch)
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            watch["state"] = "retired"
+            self._write_watch(slug, watch)
