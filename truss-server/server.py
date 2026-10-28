@@ -16,8 +16,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import aman_check
 from alerts import AlertStore, sweep_missed
+import aman_check
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
