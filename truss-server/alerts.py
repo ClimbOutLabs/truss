@@ -15,6 +15,24 @@ ack). Nothing else clears it: not time passing, not the act being
 done late. The sweep that creates alerts is idempotent, so it can run
 on a timer and at the start of every capture without ever raising a
 second alert for the same question and day.
+
+What an alert says is held to two rules.
+
+It never says more than the loop knows. A missed witness is not a
+missed act: she may have done it with the glasses off. So the line
+never says the thing was not done. It says what was watched, read
+from frame arrivals (see coverage.py): the whole window, the spans
+the glasses were with her, or none of it.
+
+For a safety question (the stove, the pills) it directs her to look
+and never tells her to act. "You didn't take your pills" after a
+missed witness is how the product would cause the double dose it
+exists to prevent. The line sends her to the thing itself, and the
+sweep leaves a state check owed: the next frame that shows the thing
+is checked as it is now, and that result is spoken (see checkloop.py).
+
+Every sentence an alert can speak is in MISS_TEMPLATES below, and
+test_safety.py scans all of them for action verbs.
 """
 
 import json
@@ -22,6 +40,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from coverage import DEFAULT_GAP_MINUTES, coverage
 from questions import _window_times
 
 
@@ -136,23 +155,113 @@ class AlertStore:
         return False
 
 
-def miss_line(entry, until):
-    """The spoken line for a missed window: plain, factual, and it
-    reads sensibly whatever words the question itself uses."""
-    until_text = until.strftime("%I:%M %p").lstrip("0")
-    return (
-        f"It is past {until_text}. "
-        f"This has not been done today: {entry['question']}"
-    )
+# Every sentence a missed-window alert can speak. Placeholders are
+# filled with times, the question's own words, and the look-at
+# phrase; nothing else is ever added to a line. The safety direction
+# is the only instruction any alert gives, and it is to look.
+MISS_TEMPLATES = {
+    "opening": "It is past {until}. About your question: {question}",
+    "complete": "I watched the whole window, from {start} to {end}, and didn't see it.",
+    "partial": (
+        "I was with you {spans} and didn't see it. "
+        "I wasn't with you for the rest of the window."
+    ),
+    "none": (
+        "I wasn't with you during that window, from {start} to {end}, "
+        "so I can't say either way."
+    ),
+    "look_at": (
+        "Check {look_at} before anything else. "
+        "When you look at it, I will tell you what I see."
+    ),
+    "look": (
+        "Check with your own eyes before anything else. "
+        "When you look, I will tell you what I see."
+    ),
+}
+
+# How spans are joined into the partial sentence. Beyond three, the
+# spans are summed up rather than read out one by one.
+SPAN_TEMPLATES = {
+    "range": "from {first} to {last}",
+    "moment": "at {first}",
+    "on_and_off": "on and off between {first} and {last}",
+}
 
 
-def sweep_missed(store, alerts, now=None):
+def _clock(moment):
+    return moment.strftime("%I:%M %p").lstrip("0")
+
+
+def _spans_text(spans):
+    if len(spans) > 3:
+        return SPAN_TEMPLATES["on_and_off"].format(
+            first=_clock(spans[0][0]), last=_clock(spans[-1][1])
+        )
+    parts = []
+    for first, last in spans:
+        if _clock(first) == _clock(last):
+            parts.append(SPAN_TEMPLATES["moment"].format(first=_clock(first)))
+        else:
+            parts.append(
+                SPAN_TEMPLATES["range"].format(first=_clock(first), last=_clock(last))
+            )
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _question_text(entry):
+    question = entry["question"].strip()
+    return question if question.endswith("?") else question + "?"
+
+
+def look_at_text(entry, day):
+    """The look-at phrase for a day, with {weekday} spoken as that
+    day's name, or None when the question has none."""
+    look_at = entry.get("look_at")
+    if not look_at:
+        return None
+    return look_at.replace("{weekday}", day.strftime("%A"))
+
+
+def miss_line(entry, until, cov=None, start=None, day=None):
+    """The spoken line for a missed window, worded for what was
+    watched. Without a coverage reading, nothing is known to have
+    been watched, and the line says so."""
+    cov = cov or {"kind": "none", "spans": []}
+    day = day or datetime.now().date()
+    start_text = _clock(datetime.combine(day, start)) if start else None
+    until_text = _clock(datetime.combine(day, until))
+    sentences = [
+        MISS_TEMPLATES["opening"].format(until=until_text, question=_question_text(entry))
+    ]
+    kind = cov["kind"]
+    if kind == "partial":
+        sentences.append(MISS_TEMPLATES["partial"].format(spans=_spans_text(cov["spans"])))
+    elif kind == "complete" and start_text:
+        sentences.append(MISS_TEMPLATES["complete"].format(start=start_text, end=until_text))
+    elif start_text:
+        sentences.append(MISS_TEMPLATES["none"].format(start=start_text, end=until_text))
+    if entry.get("safety"):
+        target = look_at_text(entry, day)
+        if target:
+            sentences.append(MISS_TEMPLATES["look_at"].format(look_at=target))
+        else:
+            sentences.append(MISS_TEMPLATES["look"])
+    return " ".join(sentences)
+
+
+def sweep_missed(store, alerts, now=None, frames=None, gap_minutes=DEFAULT_GAP_MINUTES):
     """Create one pending alert for each done question whose window
     has closed today with no witness. Returns the alerts created.
 
     Safe to run as often as anyone likes: a question and day that
     already have an alert are skipped, and a record that cannot be
     read is skipped with them. Never raises.
+
+    The frame log (a coverage.FrameLog) says how much of the window
+    was watched. Without one, nothing is known to have been watched.
     """
     now = now or datetime.now()
     if getattr(alerts, "disabled", False):
@@ -166,7 +275,7 @@ def sweep_missed(store, alerts, now=None):
     created = []
     for entry in entries:
         try:
-            alert = _sweep_one(store, alerts, entry, now)
+            alert = _sweep_one(store, alerts, entry, now, frames, gap_minutes)
         except Exception:
             continue
         if alert is not None:
@@ -174,7 +283,7 @@ def sweep_missed(store, alerts, now=None):
     return created
 
 
-def _sweep_one(store, alerts, entry, now):
+def _sweep_one(store, alerts, entry, now, frames, gap_minutes):
     if entry.get("kind") != "done":
         return None
     if entry.get("state") in ("planting", "retired"):
@@ -186,7 +295,7 @@ def _sweep_one(store, alerts, entry, now):
         # a window that does not end after it starts never raises
         # a miss, on any day.
         return None
-    until = times[1]
+    after, until = times
     today = now.date().isoformat()
     planted = entry.get("planted_at")
     if isinstance(planted, str):
@@ -207,13 +316,32 @@ def _sweep_one(store, alerts, entry, now):
         return None
     if alerts.exists_for(entry["slug"], today):
         return None
+    try:
+        arrivals = frames.times(now.date()) if frames is not None else []
+    except Exception:
+        arrivals = []
+    cov = coverage(
+        arrivals,
+        datetime.combine(now.date(), after),
+        datetime.combine(now.date(), until),
+        gap_minutes=gap_minutes,
+    )
+    safety = bool(entry.get("safety"))
+    if safety:
+        # Owed before the alert is written: an owed check with no
+        # alert only means one extra look is spoken, while an alert
+        # with no owed check would leave her sent to look with no
+        # one to tell her what is there.
+        store.owe_miss_check(entry["slug"], today)
     alert = {
         "id": f"{today}-{entry['slug']}",
         "slug": entry["slug"],
         "question": entry["question"],
         "date": today,
         "until": pattern.get("until"),
-        "line": miss_line(entry, until),
+        "safety": safety,
+        "coverage": cov["kind"],
+        "line": miss_line(entry, until, cov=cov, start=after, day=now.date()),
         "spoken": False,
         "created_at": now.isoformat(timespec="seconds"),
     }

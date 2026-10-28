@@ -20,6 +20,13 @@ mode with the question's own reference looks.
   place about to do it again, one reminder is spoken: that is
   already done, with the witnessed time. The reminder is spoken
   once, and its frame is kept as evidence like any firing.
+- A safety done question whose window closed unwitnessed is owed a
+  state check (see alerts.py). Later that day, frames are checked
+  under a state prompt: how the thing is right now, not what anyone
+  did. The first yes or no is spoken once, as a description of what
+  is there, and its frame is kept as evidence. A cannot_tell means
+  the thing is not in view yet, and the check waits for a later
+  frame.
 - When no question is standing, frames are not managed at all and the
   capture path behaves exactly as it did on day 1.
 
@@ -72,6 +79,36 @@ def redo_text(witness):
     return f"That is already done. You did it at {spoken}."
 
 
+def state_prompt(entry):
+    """The check prompt for the state check owed after a missed
+    window: how things are in this frame now, judged against the
+    question's own reference looks. Built only from the question's
+    own words."""
+    return (
+        "Judge only how things are in this frame right now, not what "
+        f"anyone did earlier. Does it match the yes look for: {entry['question']}"
+    )
+
+
+# Every sentence the post-miss state check can speak. The checker's
+# reason is spoken as it is: a description of the frame.
+MISS_CHECK_TEMPLATES = {
+    "reason": "About your question, {question} Here is what I see now: {reason}",
+    "yes": "About your question, {question} What I see now looks like your yes look.",
+    "no": "About your question, {question} What I see now looks like your no look.",
+}
+
+
+def miss_check_text(entry, result, verdict):
+    question = entry["question"].strip()
+    if not question.endswith("?"):
+        question += "?"
+    reason = _reason_text(result)
+    if reason:
+        return MISS_CHECK_TEMPLATES["reason"].format(question=question, reason=reason)
+    return MISS_CHECK_TEMPLATES[verdict].format(question=question)
+
+
 class CheckLoop:
     def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None):
         self.store = store
@@ -86,6 +123,7 @@ class CheckLoop:
             standing = [e for e in self.store.list() if e["state"] == "standing"]
             due = self.store.due(now=self.now_fn()) if standing else []
             watch = self.store.redo_watch(now=self.now_fn())
+            owed = self.store.miss_check_watch(now=self.now_fn())
         except Exception:
             # A broken question file must never break capturing. Fall
             # back to day 1 behavior: keep the frame, manage nothing.
@@ -158,11 +196,42 @@ class CheckLoop:
                     redo = (entry, witness)
                     break
 
+        # The state check owed after a missed window: a safety done
+        # question is offered the frame under a state prompt. A yes or
+        # a no is a sighting of the thing and is spoken; a cannot_tell
+        # or a failed check stays silent and waits for a later frame.
+        seen = []
+        for entry in owed:
+            if entry["slug"] in fired_slugs:
+                continue
+            prompt_entry = dict(entry)
+            prompt_entry["question"] = state_prompt(entry)
+            try:
+                result = self.check_fn(frame_path, prompt_entry)
+                if not isinstance(result, dict):
+                    raise TypeError("check returned no verdict")
+                verdict = result.get("verdict")
+            except Exception:
+                result, verdict = {}, None
+                errors += 1
+            try:
+                self.store.mark_checked(entry["slug"], when=now)
+            except Exception:
+                errors += 1
+                continue
+            if verdict in ("yes", "no"):
+                seen.append((entry, result, verdict))
+
         speak = []
         evidence = None
         completed_fired = []
-        if fired or redo is not None:
-            first = fired[0][0] if fired else redo[0]
+        if fired or redo is not None or seen:
+            if fired:
+                first = fired[0][0]
+            elif redo is not None:
+                first = redo[0]
+            else:
+                first = seen[0][0]
             try:
                 evidence = self._save_evidence(frame_path, first, now)
             except Exception:
@@ -222,6 +291,25 @@ class CheckLoop:
                             self.speak_fn(text, entry, evidence)
                         except Exception:
                             errors += 1
+            for entry, result, verdict in seen:
+                text = miss_check_text(entry, result, verdict)
+                try:
+                    self._append_miss_check_log(entry, verdict, text, evidence, now)
+                except Exception:
+                    errors += 1
+                try:
+                    self.store.mark_miss_check_spoken(entry["slug"])
+                except Exception:
+                    # Unmarked means unspoken: the check waits for a
+                    # later frame rather than risk being spoken twice.
+                    errors += 1
+                    continue
+                speak.append(text)
+                if self.speak_fn is not None:
+                    try:
+                        self.speak_fn(text, entry, evidence)
+                    except Exception:
+                        errors += 1
         else:
             frame_path.unlink(missing_ok=True)
 
@@ -266,6 +354,16 @@ class CheckLoop:
         line = (
             f"{now.strftime('%H:%M:%S')} | {entry['question']} | "
             f"redo reminder | {redo_text(witness)} | "
+            f"evidence: {evidence.name}\n"
+        )
+        with open(day / "answers.txt", "a") as f:
+            f.write(line)
+
+    def _append_miss_check_log(self, entry, verdict, text, evidence, now):
+        day = self._day_dir(now)
+        line = (
+            f"{now.strftime('%H:%M:%S')} | {entry['question']} | "
+            f"state check after a missed window | {verdict} | {text} | "
             f"evidence: {evidence.name}\n"
         )
         with open(day / "answers.txt", "a") as f:

@@ -19,6 +19,15 @@ on its record: the day, the time, and the evidence photo's name. The
 witness lasts the rest of that day and powers the redo watch in the
 check loop and the missed-window alerts in alerts.py.
 
+A question can also carry a safety flag (the stove, the pills): one
+where a wrong word does harm. A missed-window alert for a safety
+question directs her to look and never tells her to act, and after
+the miss the next frame that shows the thing gets a state check whose
+result is spoken (see alerts.py and checkloop.py). An optional "look
+at" phrase names the thing to look at in her own words, like "the
+{weekday} PM compartment"; {weekday} is spoken as the alert's day.
+Records planted before the flag existed read as not safety.
+
 Patterns:
     {"kind": "interval", "minutes": 15}   check every 15 minutes
     {"kind": "nightly", "after": "20:00"} due once per evening at or
@@ -110,6 +119,33 @@ def _clean_witness(value):
     return {"date": date, "at": at, "frame": frame}
 
 
+LOOK_AT_MAX = 80
+
+
+def _clean_look_at(value):
+    """A stored look-at phrase, or None when it is missing or not
+    one line of text. Never raises."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > LOOK_AT_MAX or "\n" in value:
+        return None
+    return value
+
+
+def _clean_miss_check(value):
+    """A stored post-miss state check, or None when it is missing or
+    not in the shape the sweep writes: a date and a state, "owed" or
+    "spoken". Never raises."""
+    if not isinstance(value, dict):
+        return None
+    date = value.get("date")
+    state = value.get("state")
+    if not isinstance(date, str) or state not in ("owed", "spoken"):
+        return None
+    return {"date": date, "state": state}
+
+
 def display_time(iso_text):
     """An ISO datetime as a spoken time of day, like 8:05 PM."""
     moment = datetime.fromisoformat(iso_text)
@@ -179,10 +215,12 @@ class QuestionStore:
 
     # -- planting ---------------------------------------------------------
 
-    def create(self, text, pattern=None, kind="state"):
+    def create(self, text, pattern=None, kind="state", safety=False, look_at=None):
         """Start a new question in the planting state. Returns its slug.
 
-        The kind is "state" unless a done question is asked for. A
+        The kind is "state" unless a done question is asked for. The
+        safety flag is a plain true or false, and the look-at phrase,
+        when given, is one short line of text. A
         window pattern is checked here, at planting time, so a bad
         window is refused to the wearer's face instead of failing
         quietly every evening afterwards.
@@ -193,6 +231,16 @@ class QuestionStore:
                 raise ValueError("The question text is empty.")
             if kind not in QUESTION_KINDS:
                 raise ValueError("A question is either a state question or a done question.")
+            if not isinstance(safety, bool):
+                raise ValueError("The safety flag is either true or false.")
+            if isinstance(look_at, str) and not look_at.strip():
+                look_at = None
+            if look_at is not None:
+                if _clean_look_at(look_at) is None:
+                    raise ValueError(
+                        f"What to look at is one short line, up to {LOOK_AT_MAX} characters."
+                    )
+                look_at = look_at.strip()
             if isinstance(pattern, dict) and pattern.get("kind") == "window":
                 after = _parse_time(pattern.get("after"))
                 until = _parse_time(pattern.get("until"))
@@ -229,6 +277,9 @@ class QuestionStore:
                 "answered_at": None,
                 "witness": None,
                 "redo_spoken": False,
+                "safety": safety,
+                "look_at": look_at,
+                "miss_check": None,
             }
             self._write_watch(slug, watch)
             return slug
@@ -296,6 +347,9 @@ class QuestionStore:
                 "state": watch["state"],
                 "witness": _clean_witness(watch.get("witness")),
                 "redo_spoken": bool(watch.get("redo_spoken")),
+                "safety": watch.get("safety") is True,
+                "look_at": _clean_look_at(watch.get("look_at")),
+                "miss_check": _clean_miss_check(watch.get("miss_check")),
                 "planted_at": watch["planted_at"],
                 "seq": watch.get("seq", 0),
                 "last_checked_at": watch["last_checked_at"],
@@ -538,6 +592,67 @@ class QuestionStore:
                 "witness_time": display_time(witness["at"]),
                 "redo_spoken": bool(watch.get("redo_spoken")) if watch else False,
             }
+
+    # -- after a missed window: the owed state check --------------------
+
+    def owe_miss_check(self, slug, date):
+        """Record that a safety question's window closed unwitnessed
+        on this day, so the next frame that shows the thing gets a
+        state check and its result is spoken."""
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            watch["miss_check"] = {"date": date, "state": "owed"}
+            self._write_watch(slug, watch)
+
+    def miss_check_watch(self, now=None):
+        """Safety done questions owed a state check today, with no
+        witness today. An owed check from an earlier day is never
+        offered: that day's compartment is not today's. A state check
+        obeys the same gap between checks as any other check."""
+        with self._lock:
+            now = now or datetime.now()
+            today = now.date().isoformat()
+            out = []
+            for entry in self.list():
+                if entry["kind"] != "done" or not entry["safety"]:
+                    continue
+                if entry["state"] != "standing":
+                    continue
+                owed = entry["miss_check"]
+                if owed is None or owed["state"] != "owed" or owed["date"] != today:
+                    continue
+                if self.witness_today(entry["slug"], now=now) is not None:
+                    continue
+                last = entry.get("last_checked_at")
+                if last:
+                    try:
+                        last_dt = datetime.fromisoformat(last)
+                    except (TypeError, ValueError):
+                        last_dt = None
+                    if (
+                        last_dt is not None
+                        and (now - last_dt).total_seconds()
+                        < _gap_seconds(entry["pattern"])
+                    ):
+                        continue
+                out.append(entry)
+            return out
+
+    def mark_miss_check_spoken(self, slug):
+        """Record that the owed state check's result was spoken. It is
+        spoken once per miss, never twice."""
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            owed = _clean_miss_check(watch.get("miss_check"))
+            if owed is None:
+                raise KeyError(f"No state check is owed for {slug}.")
+            owed["state"] = "spoken"
+            watch["miss_check"] = owed
+            self._write_watch(slug, watch)
 
     def retire(self, slug):
         with self._lock:

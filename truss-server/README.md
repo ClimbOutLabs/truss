@@ -41,7 +41,7 @@ The server will:
 - `POST /capture` - Upload JPEG photo (multipart field "image"), returns `{"bytes": n}`
 - `POST /stt` - Upload WAV audio (multipart field "audio"), returns `{"text": "..."}`
 - `POST /tts` - Send JSON `{"text": "..."}`, returns audio/wav file
-- `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}`, returns the slug and the next prompt
+- `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}` with optional `"kind"`, `"pattern"`, `"safety"` (true or false), and `"look_at"`, returns the slug and the next prompt
 - `POST /plant/bedtime` - Plant the bedtime round (stove, front door, tonight's pills) in walk order, JSON with optional `"after"` and `"gap_minutes"`
 - `POST /guide/start` - Start a guided job, JSON `{"title": "...", "steps": ["Is the water shut off?", ...]}`, returns the first step as a line to speak
 - `POST /guide/skip` - Skip the guide's current step
@@ -145,6 +145,38 @@ seconds while it runs, speaks the line through the glasses, and
 only then tells the server it was spoken. An alert that could not
 be spoken stays pending and is offered again on the next poll. The
 only thing that ever clears an alert is that confirmation.
+
+An alert never says the thing was not done, because a missed witness
+is not a missed act: she may have done it with the glasses off. It
+says how much of the window was watched, read from frame arrival
+times (`coverage.py`; every capture leaves one line with its time in
+`log/<date>/frames.txt`, while the photo itself is still deleted when
+nothing fires). A gap of more than ten minutes between frames counts
+as not watching. The three cases are worded as "I watched the whole
+window and didn't see it", "I was with you from 9:10 PM to 9:50 PM
+and didn't see it", and "I wasn't with you during that window, so I
+can't say either way."
+
+## Safety questions
+
+A question planted with `"safety": true` (the stove, the pills) is
+one where a wrong word does harm. "You didn't take your pills" after
+a missed witness is how Truss would cause the double dose it exists
+to prevent, so a safety alert directs her to look and never tells her
+to act: "Check the Tuesday PM compartment before anything else. When
+you look at it, I will tell you what I see." The thing to look at is
+the optional `"look_at"` phrase given at planting; `{weekday}` in it
+is spoken as the day's name. Every sentence an alert can speak lives
+in one template table, and `test_safety.py` fails if any of them
+holds an action verb such as take, turn, feed, or lock.
+
+After a safety miss, a state check is owed for the rest of that day.
+The next frame that shows the thing is checked as it is now, against
+her own reference looks, and the result is spoken once as a
+description ("Here is what I see now: the Tuesday PM compartment is
+empty"), with the frame kept as evidence. A cannot_tell means it is
+not in view yet, and the check waits. The state check never records
+a witness: it says what is there, never when anything was done.
 
 ## The guide
 

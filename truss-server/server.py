@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 import aman_check
 from alerts import AlertStore, sweep_missed
+from coverage import FrameLog
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
@@ -85,13 +86,19 @@ STORE = QuestionStore(Path(__file__).parent / "questions")
 # was spoken; nothing else clears it.
 ALERTS = AlertStore(Path(__file__).parent / "alerts")
 
+# Frame arrival times, one line per captured photo, kept by day next
+# to the answer log (see coverage.py). Only the time is kept; the
+# photo itself still goes when no question fires on it. Alerts read
+# these to say how much of a window was watched.
+FRAMES = FrameLog(Path(__file__).parent / "log")
+
 
 def run_sweep(now=None):
     """Raise any missed-window alerts that are due. Idempotent and
     quiet about failure: a sweep that cannot run loses nothing, the
     next one a few seconds later sees the same closed windows."""
     try:
-        return sweep_missed(STORE, ALERTS, now=now)
+        return sweep_missed(STORE, ALERTS, now=now, frames=FRAMES)
     except Exception as e:
         print(f"Missed-window sweep failed: {e}")
         return []
@@ -235,6 +242,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 "slug": entry["slug"],
                 "question": entry["question"],
                 "kind": entry["kind"],
+                "safety": entry["safety"],
                 "state": entry["state"],
                 "pattern": entry["pattern"],
                 "has_ref_yes": entry["has_ref_yes"],
@@ -286,7 +294,10 @@ class TrussHandler(BaseHTTPRequestHandler):
         """Start planting a question: POST JSON {"text": ..., "pattern": ...}.
 
         An optional "kind" says whether it is a state question or a
-        done question; without one it is a state question. Voice
+        done question; without one it is a state question. An optional
+        "safety" (true or false) marks a question where a wrong word
+        does harm, and an optional "look_at" names the thing to look at
+        in a missed-window alert, like "the {weekday} PM compartment". Voice
         planting uses the same endpoint: the app sends the recording
         to /stt first, then posts the transcript here as text.
         """
@@ -299,11 +310,16 @@ class TrussHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "No question text provided")
                 return
             slug = STORE.create(
-                text, data.get("pattern"), kind=data.get("kind") or "state"
+                text,
+                data.get("pattern"),
+                kind=data.get("kind") or "state",
+                safety=data.get("safety", False),
+                look_at=data.get("look_at"),
             )
             self.send_json({
                 "slug": slug,
                 "kind": STORE.get(slug)["kind"],
+                "safety": STORE.get(slug)["safety"],
                 "state": "planting",
                 "next": "Show me what yes looks like.",
             })
@@ -512,6 +528,13 @@ class TrussHandler(BaseHTTPRequestHandler):
                 f.write(image_data)
             
             file_size = len(image_data)
+
+            # The arrival is what tells a later alert the glasses were
+            # with her. A failed write must never break the capture.
+            try:
+                FRAMES.record()
+            except Exception as e:
+                print(f"POST /capture -> frame arrival not logged: {e}")
 
             response = {"bytes": file_size}
             session = GUIDE["session"]

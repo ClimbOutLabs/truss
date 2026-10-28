@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from alerts import AlertStore, sweep_missed  # noqa: E402
 from checkloop import CheckLoop  # noqa: E402
+from coverage import FrameLog  # noqa: E402
 from questions import QuestionStore  # noqa: E402
 
 JPEG = b"\xff\xd8\xff\xe0" + b"frame-bytes" + b"\xff\xd9"
@@ -597,10 +598,11 @@ def test_miss_alert_lifecycle():
     created = sweep_missed(store, alerts, now=after_close)
     check("a closed window with no witness raises one alert",
           len(created) == 1 and created[0]["slug"] == slug)
-    check("the alert line is plain and factual",
+    check("the alert line is plain and claims only what was watched",
           created[0]["line"]
-          == "It is past 10:00 PM. This has not been done today: "
-             "Did I take my night pills?")
+          == "It is past 10:00 PM. About your question: "
+             "Did I take my night pills? I wasn't with you during that "
+             "window, from 8:00 PM to 10:00 PM, so I can't say either way.")
     check("the sweep is idempotent",
           sweep_missed(store, alerts, now=after_close) == []
           and len(alerts.pending()) == 1)
@@ -816,6 +818,7 @@ def test_http():
     with tempfile.TemporaryDirectory() as tmp:
         server_module.STORE = QuestionStore(Path(tmp) / "questions")
         server_module.ALERTS = AlertStore(Path(tmp) / "alerts")
+        server_module.FRAMES = FrameLog(Path(tmp) / "log")
         server_module.CAPTURES_DIR = Path(tmp) / "captures"
         server_module.CAPTURES_DIR.mkdir()
         httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
@@ -887,7 +890,7 @@ def test_http():
             check("GET /alerts returns the pending alert",
                   len(got["alerts"]) == 1
                   and got["alerts"][0]["id"] == pending[0]["id"]
-                  and "has not been done today" in got["alerts"][0]["line"])
+                  and "About your question" in got["alerts"][0]["line"])
 
             status, _ = post(
                 base + "/alerts/ack",
