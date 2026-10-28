@@ -162,6 +162,7 @@ def run_check(photo, q, mode, cfg):
         "photo": photo["name"],
         "question": q["id"],
         "mode": mode,
+        "model": result["model"],
         "label": photo["labels"].get(q["id"]),
         "verdict": result["verdict"],
         "reason": result["reason"],
@@ -241,9 +242,11 @@ def summarize(rows, cfg, max_tokens):
         blind = [r for r in ok if r["label"] == "cannot_tell"]
         seen = [r for r in ok if r["label"] in ("yes", "no")]
         if blind:
+            blind_failed = sum(1 for r in mine if r["failed"] and r["label"] == "cannot_tell")
             out.append(
                 "- **cannot_tell on uninformative frames: "
                 f"{_pct(sum(1 for r in blind if r['verdict'] == 'cannot_tell'), len(blind))}**"
+                f" (plus {blind_failed} failed checks on those frames, not counted)"
             )
         if seen:
             out.append(f"- cannot_tell on informative frames: {_pct(sum(1 for r in seen if r['verdict'] == 'cannot_tell'), len(seen))}")

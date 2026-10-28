@@ -37,8 +37,21 @@ mirror by itself (UD-Q4_K_XL instead of Q4_K_M).
     ./dgx/bringup.sh all
 
 It stops with a plain `STOP:` line if anything is missing (nvcc, a tag
-older than b10353, the drafter flags). When it finishes it prints the
-warm-up reply and the timings of that one request.
+older than b10353, the drafter flags). A download that fails for any
+reason other than a refused license stops too, instead of switching to
+the mirror. When it finishes it prints the warm-up reply, how much
+Glimmer thought (should be short at strength low), the timings of that
+one request, and the `LLAMA_TAG` to pin so the Q4 and Q8 runs use the
+same build.
+
+The server listens on all interfaces (`HOST=0.0.0.0`) so the laptop can
+reach it, with no key by default; it warns about that. On any network
+you do not trust, serve with a key and give the laptop the same one:
+
+    API_KEY=some-long-secret ./dgx/bringup.sh serve
+    export TRUSS_API_KEY=some-long-secret     # on the laptop
+
+The key goes to llama-server in a file, never on a command line.
 
 ## 3. Check the flags by eye (2 min)
 

@@ -73,26 +73,54 @@ die() { printf 'STOP: %s\n' "$*" >&2; exit 1; }
 
 # -- download -----------------------------------------------------------------
 
-hf_cli() {
-  if command -v hf >/dev/null 2>&1; then
-    hf "$@"
-  elif command -v huggingface-cli >/dev/null 2>&1; then
-    huggingface-cli "$@"
+HF_BIN=""
+
+# Finds the Hugging Face CLI, installing it if it is missing. DGX OS is
+# Ubuntu 24.04, where a bare `pip install --user` is refused (PEP 668),
+# so this tries pipx, then uv, then a private venv.
+find_hf() {
+  [ -n "$HF_BIN" ] && return 0
+  export PATH="$HOME/.local/bin:$PATH"
+  if command -v hf >/dev/null 2>&1; then HF_BIN=hf; return 0; fi
+  if command -v huggingface-cli >/dev/null 2>&1; then HF_BIN=huggingface-cli; return 0; fi
+  say "Installing the Hugging Face CLI"
+  if command -v pipx >/dev/null 2>&1; then
+    pipx install "huggingface_hub[cli]" >/dev/null || true
+  elif command -v uv >/dev/null 2>&1; then
+    uv tool install "huggingface_hub[cli]" >/dev/null || true
   else
-    say "Installing the Hugging Face CLI for this user"
-    python3 -m pip install --user -U "huggingface_hub[cli]" >/dev/null
-    export PATH="$HOME/.local/bin:$PATH"
-    hf "$@"
+    python3 -m venv "$MODELS_DIR/.hf-venv" \
+      && "$MODELS_DIR/.hf-venv/bin/pip" install -q -U "huggingface_hub[cli]" \
+      && export PATH="$MODELS_DIR/.hf-venv/bin:$PATH" || true
   fi
+  if command -v hf >/dev/null 2>&1; then HF_BIN=hf; return 0; fi
+  die "Could not install the Hugging Face CLI. Install it yourself (sudo apt install pipx; pipx install 'huggingface_hub[cli]') and rerun."
 }
 
-# hf_get REPO DEST PATTERN... ; returns non-zero when the repo refuses
-# (gated without access, or missing), so the caller can fall back.
+# hf_get REPO DEST PATTERN...
+# One download per pattern: the newer typer-based `hf` reads extra
+# values after a single --include as file names, and a repeated
+# --include on the older CLI keeps only the last one.
+# Returns 0 on success, 3 when the repo refuses access (gated, no
+# token, or not visible), and stops the script on any other failure
+# (network, disk, Ctrl-C), so a half-finished download never quietly
+# turns into a different quant from the mirror.
 hf_get() {
   local repo="$1" dest="$2"; shift 2
-  # One --include followed by every pattern: a repeated --include keeps
-  # only the last one.
-  hf_cli download "$repo" --include "$@" --local-dir "$dest"
+  find_hf
+  mkdir -p "$dest" "$RUN_DIR"
+  local out="$RUN_DIR/hf-download.log"
+  for pattern in "$@"; do
+    local rc=0
+    # pipefail (set at the top) makes rc the CLI's status, not tee's.
+    "$HF_BIN" download "$repo" --include "$pattern" --local-dir "$dest" 2>&1 | tee "$out" || rc=$?
+    if [ "$rc" != 0 ]; then
+      if grep -qiE '401|403|gated|restricted|RepositoryNotFound|Repository Not Found|access to model' "$out"; then
+        return 3
+      fi
+      die "Downloading $pattern from $repo failed (not an access refusal; see above). Fix that and rerun; finished files are kept."
+    fi
+  done
 }
 
 do_download() {
@@ -112,16 +140,16 @@ do_download() {
   fi
 
   if [ "$meta_ok" = 0 ]; then
-    echo "The meta-models repo refused (gated, or no access yet). Trying the Unsloth mirror."
-    echo "Unsloth publishes no Q4_K_M; its closest file is UD-Q4_K_XL (~16 GB)."
+    echo "The meta-models repo refused access (gated, or no access yet). Trying the Unsloth mirror."
+    [ "$QUANT" = "Q4_K_M" ] && echo "Unsloth publishes no Q4_K_M; its closest file is UD-Q4_K_XL (~16 GB)."
     local want="$QUANT"
     [ "$want" = "Q4_K_M" ] && want="UD-Q4_K_XL"
     hf_get "$UNSLOTH_REPO" "$unsloth" "*${want}*.gguf" "*mmproj*" "*dflash*" "*DFlash*" \
-      || die "Neither $META_REPO nor $UNSLOTH_REPO could be downloaded. Check 'hf auth login' and the license on huggingface.co."
+      || die "Neither $META_REPO nor $UNSLOTH_REPO gave access. Check 'hf auth login' and the license on huggingface.co."
   elif [ "$QUANT" != "Q4_K_M" ]; then
     say "Downloading $UNSLOTH_REPO: $QUANT weights"
     hf_get "$UNSLOTH_REPO" "$unsloth" "*${QUANT}*.gguf" \
-      || die "Could not download $QUANT from $UNSLOTH_REPO."
+      || die "$UNSLOTH_REPO refused access to $QUANT."
   fi
   resolve_files
   echo "Weights:  $MODEL_FILE"
@@ -197,15 +225,42 @@ do_flags() {
 
 server_running() { [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; }
 
+# Where this script reaches the server: loopback when it listens on all
+# interfaces, else the address it was told to bind.
+local_host() {
+  case "$HOST" in
+    0.0.0.0|::|127.0.0.1|localhost) echo 127.0.0.1 ;;
+    *) echo "$HOST" ;;
+  esac
+}
+
+health_ok() { curl -sf -m 5 "http://$(local_host):$PORT/health" >/dev/null 2>&1; }
+
+# The key goes in files only readable by this user, never on a command
+# line, where `ps` would show it.
+write_key_files() {
+  [ -n "$API_KEY" ] || return 0
+  mkdir -p "$RUN_DIR"
+  (umask 077
+   printf '%s\n' "$API_KEY" > "$RUN_DIR/api-key"
+   printf 'Authorization: Bearer %s\n' "$API_KEY" > "$RUN_DIR/auth-header")
+}
+
 curl_auth() {
-  if [ -n "$API_KEY" ]; then curl -sS -H "Authorization: Bearer $API_KEY" "$@"; else curl -sS "$@"; fi
+  if [ -n "$API_KEY" ]; then curl -sS -H @"$RUN_DIR/auth-header" "$@"; else curl -sS "$@"; fi
 }
 
 do_serve() {
   [ -x "$SERVER_BIN" ] || die "No llama-server at $SERVER_BIN. Run: ./bringup.sh build"
   server_running && die "llama-server is already running (pid $(cat "$PID_FILE")). Run: ./bringup.sh stop"
+  health_ok && die "Something already answers on port $PORT (another llama-server?). Stop it first, or set PORT."
   resolve_files
   mkdir -p "$RUN_DIR"
+
+  if [ "$HOST" != 127.0.0.1 ] && [ "$HOST" != localhost ] && [ -z "$API_KEY" ]; then
+    echo "WARNING: serving on $HOST with no API_KEY: anyone on this network can use the model and send it images."
+    echo "         Set API_KEY (and TRUSS_API_KEY on the laptop) on any network you do not trust."
+  fi
 
   # Context: one slot (-np 1), since one checker asks one question at a
   # time and llama-server splits -c across slots. A multi-mode check is
@@ -240,54 +295,93 @@ do_serve() {
 
   # Glimmer's template always opens a thinking channel; --reasoning off
   # does nothing. Keep thinking short so a verdict stays inside the
-  # checker's max_tokens (300 in verdict.py, thinking included).
+  # checker's max_tokens (300 in verdict.py, thinking included). The
+  # flag existing does not prove the template reads reasoning_strength:
+  # the warm-up below prints how much it thought, so check that it is
+  # short.
   if help_has '--chat-template-kwargs'; then
     args+=(--chat-template-kwargs "{\"reasoning_strength\":\"$REASONING\"}")
   else
     echo "This build has no --chat-template-kwargs; reasoning strength stays at the template default (high)."
   fi
   if [ -n "$REASONING_BUDGET" ]; then
+    help_has '--reasoning-budget' || die "This build has no --reasoning-budget flag; unset REASONING_BUDGET."
     args+=(--reasoning-budget "$REASONING_BUDGET")
   fi
-  [ -n "$API_KEY" ] && args+=(--api-key "$API_KEY")
+
+  local key_env=()
+  if [ -n "$API_KEY" ]; then
+    write_key_files
+    if help_has '--api-key-file'; then
+      args+=(--api-key-file "$RUN_DIR/api-key")
+    else
+      key_env=(env "LLAMA_API_KEY=$API_KEY")
+    fi
+  fi
 
   say "Starting llama-server on $HOST:$PORT (log: $LOG_FILE)"
-  printf '%q ' "$SERVER_BIN" "${args[@]}" | sed "s/--api-key [^ ]*/--api-key ***/" > "$RUN_DIR/command.txt"
+  printf '%q ' "$SERVER_BIN" "${args[@]}" > "$RUN_DIR/command.txt"
   cat "$RUN_DIR/command.txt"; echo
-  nohup "$SERVER_BIN" "${args[@]}" >"$LOG_FILE" 2>&1 &
+  nohup "${key_env[@]}" "$SERVER_BIN" "${args[@]}" >"$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
 
   # Loading ~20 GB from disk takes a minute or two the first time.
   local waited=0
-  until curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; do
+  until health_ok; do
     server_running || { tail -n 40 "$LOG_FILE"; die "llama-server exited during load (log above)."; }
     sleep 3; waited=$((waited + 3))
     [ "$waited" -lt 600 ] || die "llama-server not healthy after 10 minutes. See $LOG_FILE"
   done
+  server_running || { tail -n 40 "$LOG_FILE"; die "The server that answered is not the one just started (log above)."; }
   echo "Healthy after ${waited}s."
 
   say "Warm-up request"
-  curl_auth -m 300 "http://127.0.0.1:$PORT/v1/chat/completions" \
+  curl_auth -m 300 "http://$(local_host):$PORT/v1/chat/completions" \
     -H 'Content-Type: application/json' \
-    -d "{\"model\":\"$ALIAS\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the word ready.\"}],\"max_tokens\":200}" \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); t=d.get("timings",{}); print("reply:", (d["choices"][0]["message"].get("content") or "").strip()[:80]); print("timings:", {k: t[k] for k in ("prompt_n","prompt_ms","predicted_n","predicted_ms","draft_n","draft_n_accepted") if k in t})'
+    -d "{\"model\":\"$ALIAS\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the word ready.\"}],\"max_tokens\":400}" \
+    | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+    m = d["choices"][0]["message"]
+except Exception:
+    print("The warm-up did not get a normal reply:", raw[:300]); sys.exit(0)
+t = d.get("timings", {})
+print("reply:", (m.get("content") or "").strip()[:80])
+print("thinking:", len(m.get("reasoning_content") or ""), "chars (at reasoning_strength low this should be short; hundreds of words means the setting is ignored)")
+print("finish_reason:", d["choices"][0].get("finish_reason"))
+print("timings:", {k: t[k] for k in ("prompt_n", "prompt_ms", "predicted_n", "predicted_ms", "draft_n", "draft_n_accepted") if k in t})
+'
   do_status
   echo
   echo "llama-server stays loaded until './bringup.sh stop' or a reboot; it does not unload when idle."
+  echo "Pin this build for the Q4 and Q8 runs: LLAMA_TAG=$(git -C "$LLAMA_DIR" describe --tags 2>/dev/null || echo '?')"
 }
 
 do_status() {
   if server_running; then echo "llama-server pid $(cat "$PID_FILE")"; else echo "llama-server is not running (from this script)"; fi
-  curl -s "http://127.0.0.1:$PORT/health" || true; echo
+  curl -s -m 5 "http://$(local_host):$PORT/health" || true; echo
   [ -f "$LOG_FILE" ] && grep -E 'n_ctx_slot|n_ctx +=|draft|mmproj|offloaded' "$LOG_FILE" | tail -n 12 || true
 }
 
 do_stop() {
-  if server_running; then
-    kill "$(cat "$PID_FILE")"; rm -f "$PID_FILE"; echo "Stopped."
-  else
+  if ! server_running; then
     echo "Not running."
+    return 0
   fi
+  local pid waited=0
+  pid=$(cat "$PID_FILE")
+  kill "$pid"
+  # Wait for the process to exit and free the port, so a serve right
+  # after this cannot find the old server still answering.
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1; waited=$((waited + 1))
+    if [ "$waited" -ge 30 ]; then kill -9 "$pid" 2>/dev/null || true; fi
+    [ "$waited" -lt 40 ] || die "llama-server (pid $pid) did not exit."
+  done
+  rm -f "$PID_FILE"
+  echo "Stopped."
 }
 
 case "${1:-}" in

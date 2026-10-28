@@ -110,6 +110,7 @@ def main():
     check("the bench exits cleanly", run.returncode == 0)
     rows = [json.loads(l) for l in (tmp / "out" / "rows.jsonl").read_text().splitlines()]
     check("4 photos x 2 questions x 2 modes = 16 rows", len(rows) == 16)
+    check("rows name the model", all(r["model"] == "muse-glimmer-30b" for r in rows))
     check("max_tokens override reaches the request", all(b.get("max_tokens") == 500 for b in Stub.seen))
     multi = [b for b in Stub.seen if sum(p["type"] == "image_url" for p in b["messages"][1]["content"]) == 3]
     check("multi checks send three images (one retried)", len(multi) == 9)
@@ -123,7 +124,7 @@ def main():
           all(r["failed"] and r["requests"] == 2 and "length" in r["finish_reasons"] for r in cut))
     summary = (tmp / "out" / "summary.md").read_text()
     check("the summary counts the cut-off replies", "replies cut off by max_tokens: 1" in summary)
-    check("the summary reports cannot_tell on uninformative frames", "cannot_tell on uninformative frames: 67% (2/3)" in summary)
+    check("the summary reports cannot_tell on uninformative frames", "cannot_tell on uninformative frames: 67% (2/3)** (plus 0 failed checks on those frames, not counted)" in summary)
     check("the summary reports a wrong yes", "photos/01.jpg / door (label cannot_tell)" in summary)
     check("the summary reports the drafter", "drafter acceptance: 75%" in summary)
     check("the summary lists the multi/single disagreement",
