@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import aman_check
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
@@ -89,10 +90,35 @@ def no_key_result():
     }
 
 
+# Which checker makes the checks. "meta" (the default, and the
+# submission path) uses the canonical checker in eval/checker.py.
+# "aman" asks the owner's own Aman instance instead, a bridge while
+# the Meta model key is awaited; see aman_check.py. Any other value is
+# not understood and falls back to "meta", said out loud here.
+CHECKER = os.environ.get("TRUSS_CHECKER", "meta")
+if CHECKER not in ("meta", "aman"):
+    print(
+        f"TRUSS_CHECKER value {CHECKER!r} was not understood; "
+        "the Meta checker is being used."
+    )
+    CHECKER = "meta"
+if CHECKER == "aman":
+    print("Checks will be made by Aman (TRUSS_CHECKER=aman).")
+
+
 def production_check(frame_path, entry):
-    """The loop's check function. With a model key in the environment,
-    run the canonical checker in planted mode with the question's own
-    reference looks. Without a key, no real check can be made."""
+    """The loop's check function. With TRUSS_CHECKER=aman, Aman makes
+    the check with the question's own reference looks. Otherwise, with
+    a model key in the environment, run the canonical checker in
+    planted mode with the question's reference looks. Without a key,
+    no real check can be made."""
+    if CHECKER == "aman":
+        return aman_check.check(
+            frame_path,
+            entry["question"],
+            ref_yes=entry["ref_yes_path"],
+            ref_no=entry["ref_no_path"],
+        )
     if os.environ.get("MODEL_API_KEY") and eval_checker is not None:
         return eval_checker.check(
             str(frame_path),
@@ -105,8 +131,11 @@ def production_check(frame_path, entry):
 
 
 def guide_check(frame_path, question_text):
-    """The guide's check function: the canonical checker in generic
-    mode, since guide steps carry no reference looks."""
+    """The guide's check function. With TRUSS_CHECKER=aman, Aman makes
+    the check. Otherwise the canonical checker in generic mode, since
+    guide steps carry no reference looks."""
+    if CHECKER == "aman":
+        return aman_check.check(frame_path, question_text)
     if os.environ.get("MODEL_API_KEY") and eval_checker is not None:
         return eval_checker.check(str(frame_path), question_text, "generic")
     return no_key_result()
@@ -214,11 +243,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(400, str(e))
         except Exception as e:
             print(f"POST /plant/question -> ERROR: {e}")
-            self.send_error(
-                500,
-                "Something went wrong planting that question. "
-                "The error is in the server log.",
-            )
+            self.send_error(500, str(e))
 
     def handle_plant_bedtime(self):
         """Plant the bedtime round: POST JSON, optional "after" (HH:MM)
@@ -240,7 +265,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "Body must be a JSON object")
                 return
         try:
-            planted = plant_round(
+            slugs = plant_round(
                 STORE,
                 after=opts.get("after", "20:00"),
                 gap_minutes=opts.get("gap_minutes", 1),
@@ -248,21 +273,8 @@ class TrussHandler(BaseHTTPRequestHandler):
         except ValueError as e:
             self.send_error(400, str(e))
             return
-        except Exception as e:
-            print(f"POST /plant/bedtime -> ERROR: {e}")
-            self.send_error(
-                500,
-                "Something went wrong planting the round. "
-                "The error is in the server log.",
-            )
-            return
-        slugs = planted["slugs"]
-        questions = [
-            (STORE.get(slug) or {"question": slug})["question"] for slug in slugs
-        ]
-        self.send_json(
-            {"slugs": slugs, "questions": questions, "notes": planted["notes"]}
-        )
+        questions = [STORE.get(slug)["question"] for slug in slugs]
+        self.send_json({"slugs": slugs, "questions": questions})
         print(f"POST /plant/bedtime -> {slugs}")
 
     def _guide_body(self):
@@ -386,8 +398,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             state = STORE.save_ref(slug, kind, image_data)
             entry = STORE.get(slug)
             if state == "standing":
-                name = entry["question"] if entry else slug
-                next_step = f"Standing question planted: {name}"
+                next_step = f"Standing question planted: {entry['question']}"
             elif kind == "yes":
                 next_step = "Now show me what no looks like."
             else:

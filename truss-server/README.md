@@ -68,6 +68,59 @@ Checks run through the canonical checker in `eval/checker.py`, in planted
 mode. Without `MODEL_API_KEY` in the environment no real check can be
 made, and every check honestly reports cannot-tell.
 
+## Checking with Aman for now
+
+While the Meta model key is awaited, the server can ask your own Aman
+instance to make the checks instead (see `aman_check.py`). This is a
+bridge for now, not a Meta check: nothing about it counts as a Meta
+model check, and the eval stays Meta-only. Each check is one full Aman
+turn in a dedicated chat, and the verdict comes back in the same shape
+the Meta checker returns, so the check loop and the guide work
+unchanged.
+
+Setup:
+
+1. In Aman, make a chat on a model that can read images, with vision
+   enabled in that model's settings (Settings, then the model
+   provider, then the model's Vision option). A model without vision
+   enabled only receives text read out of the photo, and most visual
+   questions honestly come back cannot-tell.
+2. Get the sign-in token from the browser by clipboard, never typed
+   into a file: in the browser tab where Aman is signed in, open
+   DevTools, then Application, then Cookies, then the Aman address,
+   and copy the value of the cookie whose name starts with
+   `accessToken`. In the terminal, load it with
+   `export AMAN_TOKEN="$(pbpaste)"`.
+3. Find the chat's session id by running the spike probe,
+   `python3 eval/aman_truss_spike.py probe`, from the repo root. The
+   chat is listed with its id. A chat with no message in it does not
+   appear yet, so send it any first message.
+4. Set the checker and start the server:
+
+   ```bash
+   export AMAN_CHECK_SESSION_ID=<the chat's session id>
+   export TRUSS_CHECKER=aman
+   python3 server.py
+   ```
+
+   `AMAN_BASE` defaults to `http://127.0.0.1:8791`; set it if Aman
+   answers at a different address. At startup the server prints
+   "Checks will be made by Aman" when the setting is on. Any other
+   `TRUSS_CHECKER` value is reported at startup and the Meta checker
+   is used instead.
+
+Honest limits:
+
+- The token expires. When it does, Aman refuses it and every check
+  reads cannot-tell, never a wrong verdict, until `AMAN_TOKEN` is
+  refreshed the same way and the server is restarted.
+- Each check is a full Aman turn, about 11 seconds and a full persona
+  prompt of tokens on the Aman side (about 15,000 input tokens in the
+  owner's spike runs). Questions are checked on glances, so the wait
+  is livable; the token cost is the price of the bridge.
+- A check never answers an approval card. If an Aman turn pauses for
+  one, that check reads cannot-tell.
+
 ## The guide
 
 `guide.py` is the over-the-shoulder mode: the wearer states a job as
@@ -91,7 +144,8 @@ hardware, or `python3 test_bedtime.py` for the tested choreography.
 ## Notes
 
 - No cloud services are called by the server itself; model checks go to
-  the Meta Model API only when a key is set
+  the Meta Model API only when a key is set, or to your own Aman
+  instance when `TRUSS_CHECKER=aman` (see "Checking with Aman for now")
 - Speech, photos, and the question store are handled on this machine;
   the model check is the only outside call, and only with a key set
 - Photos are saved with timestamps in the captures/ directory
