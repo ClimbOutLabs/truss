@@ -76,8 +76,19 @@ with different settings:
 | `TRUSS_BASE_URL` | `http://127.0.0.1:8080/v1` | `https://api.meta.ai/v1` |
 | `TRUSS_MODEL` | `muse-glimmer-30b` | `muse-spark-1.3` (never the contributor tier) |
 | `TRUSS_API_KEY` | none (falls back to `MODEL_API_KEY`) | the key |
-| `TRUSS_TIMEOUT_S` | `60` | |
+| `TRUSS_TIMEOUT_S` | `120` (the whole check, retry included) | |
+| `TRUSS_MAX_TOKENS` | `2048` (room to think, then answer) | |
 | `TRUSS_CHECK_MODE` | `single` | |
+
+Any model name containing `contributor` is refused before anything is
+sent: that tier trains on what it is sent. A key is only sent over
+https or to this machine; over plain http to the DGX it is left off
+(llama-server needs none), so an exported `MODEL_API_KEY` never crosses
+the LAN in the clear.
+
+Run `llama-server` with `--reasoning-format deepseek` so Glimmer's
+thinking lands in `reasoning_content`, which is never read. Thinking
+left in the reply is stripped before it is read either way.
 
 Set `TRUSS_BASE_URL` to the DGX's address, for example
 `http://<dgx>:8080/v1`. Set `TRUSS_MODEL` to the name `llama-server`
@@ -95,17 +106,32 @@ out in the prompt:
  "missing": "what would be needed if cannot_tell, else empty"}
 ```
 
-The reply is validated against the schema here as well. A reply that
-does not validate, or a server that refuses `response_format`, gets one
-retry; a second failure, an unreachable endpoint, a refused key or a
-timeout is a cannot-tell that says no check was made, never a verdict.
-Each line in the answer log names the model that made the call.
+The reply is validated against the schema here as well, strictly: after
+thinking is stripped and one code fence allowed, the whole reply must be
+one JSON object with no duplicate keys, so prose around it, or a draft
+inside the thinking, is never read as the answer. A reply cut off by the
+token limit is never read at all, whatever it holds; it is retried once
+with twice the room. A reply that does not validate, or a server that
+refuses `response_format`, gets one retry. A second failure, an
+unreachable endpoint, a refused key or a timeout is a cannot-tell that
+says no check was made, never a verdict, and the result's `failure`
+field names why (`truncated`, `invalid`, `timeout`, ...), so the eval
+can tell a cut-off from the model honestly saying cannot-tell. A yes or
+no with an empty reason, or with something named as missing, is read as
+cannot-tell. Each line in the answer log, and the guide's done line,
+names the model that made the call (`unknown` if a checker does not
+say; Aman's answers are `aman` or `aman:<AMAN_MODEL_NAME>`).
 
 Two modes, set by `TRUSS_CHECK_MODE`:
 
 - `single` (default): the current frame, plus the question's
   `looks.txt` (the plant-time words for what tells this home's yes-look
-  from its no-look) when the question folder has one.
+  from its no-look) when the question folder has one, quoted in the
+  user turn as description, never in the system prompt. A question with
+  no `looks.txt` (planted before the compile, or a re-shot look whose
+  recompile has not landed) is checked from the frame and question
+  alone, with no reference at all; the result's `looks` field says
+  `none` when that happened.
 - `multi`: the yes-look, the no-look and the current frame as three
   images. Stays off until the multi-image test on the DGX passes.
 

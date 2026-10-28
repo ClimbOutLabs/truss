@@ -187,6 +187,21 @@ def test_done_writes_one_log_line():
         "guided: Faucet cartridge | done" in text
         and all(step in text for step in FAUCET),
     )
+    check("log line names the model, unknown when the checker does not say",
+          text.rstrip().endswith("| model: unknown"))
+
+
+def test_done_line_names_the_checking_model():
+    tmp = tempfile.mkdtemp()
+    named = dict(verdict("yes"), model="muse-glimmer-30b")
+    guide, checker, captures = rig(
+        FAUCET, {step: [named] for step in FAUCET}, log_dir=Path(tmp) / "log"
+    )
+    for i, _step in enumerate(FAUCET):
+        guide.process_frame(frame(captures, f"{i}.jpg"), checker)
+    text = next((Path(tmp) / "log").rglob("answers.txt")).read_text()
+    check("done line names the model once", text.count("muse-glimmer-30b") == 1
+          and text.rstrip().endswith("| model: muse-glimmer-30b"))
 
 
 def test_empty_steps_refused():
@@ -203,5 +218,6 @@ if __name__ == "__main__":
     test_skip_on_last_step_finishes_with_a_note()
     test_checker_failure_is_silent_and_keeps_the_step()
     test_done_writes_one_log_line()
+    test_done_line_names_the_checking_model()
     test_empty_steps_refused()
     print("ALL PASS")

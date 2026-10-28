@@ -26,6 +26,16 @@ from datetime import datetime
 from pathlib import Path
 
 
+def model_name(result):
+    """The model a checker says made the call, for the answer log.
+    Every answer line names one; a checker that does not say is logged
+    as unknown rather than left out."""
+    model = result.get("model") if isinstance(result, dict) else None
+    if isinstance(model, str) and model.strip():
+        return " ".join(model.split())
+    return "unknown"
+
+
 def _reason_text(result):
     """The checker's one-sentence reason, as text. A model can return a
     reason that is not a string at all; anything that is not text counts
@@ -158,11 +168,6 @@ class CheckLoop:
             f"{now.strftime('%H:%M:%S')} | {entry['question']} | yes | "
             f"{reason} | evidence: {evidence.name}"
         )
-        # Every answer names the model that made the call, when the
-        # checker says which one it was.
-        model = result.get("model")
-        if isinstance(model, str) and model.strip():
-            line += f" | model: {model.strip()}"
-        line += "\n"
+        line += f" | model: {model_name(result)}\n"
         with open(day / "answers.txt", "a") as f:
             f.write(line)
