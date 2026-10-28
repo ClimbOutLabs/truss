@@ -175,7 +175,10 @@ the optional `"look_at"` phrase given at planting; `{weekday}` in it
 is spoken as the day's name. Every sentence an alert can speak lives
 in one template table, and `test_safety.py` fails if any of them
 holds an action verb such as take, turn, feed, or lock, in any form
-(`wording.py`). The same scan refuses a look-at phrase with one.
+(`wording.py`). The same scan refuses a look-at phrase with one, and a
+safety question's own words, which the alert speaks back, must open
+as a question (is, did, has, and so on), so "Take my night pills" is
+refused at planting.
 
 After a safety miss, a state check is owed for the rest of that day.
 The next frame that shows the thing is checked as it is now, against

@@ -313,8 +313,8 @@ def test_check_log_is_plain_and_forgiving():
           len(lines) == 2
           and datetime.fromisoformat(lines[0]).tzinfo is not None)
     with open(path, "a") as f:
-        f.write("not a time\n\n")
-    check("unreadable lines are skipped and times come back sorted",
+        f.write("not a time\n\n2026-10-27T21:3\n2026-10-27T21:30:00\n")
+    check("unreadable, cut-short and offsetless lines are skipped; times sorted",
           [t.replace(tzinfo=None) for t in checks.times(DAY.date(), "pills")]
           == [at(21, 1), at(21, 5)])
     check("a day with no log is no checks",
@@ -459,7 +459,20 @@ def test_safety_flag_in_the_store():
             except ValueError:
                 refused = True
             check(f"a look-at phrase is refused: {bad[:30]}", refused)
-        check("refused questions planted nothing", len(store.list()) == 4)
+        for bad in ("Take my night pills", "Please turn off the stove?",
+                    "Don't forget to lock up", "Should I take my pills?"):
+            try:
+                store.create(bad, WINDOW, kind="done")
+                refused = False
+            except ValueError:
+                refused = True
+            check(f"a safety question that is not asked as one is refused: {bad}",
+                  refused)
+        unasked = store.create("Take my night pills", WINDOW, kind="done", safety=False)
+        check("words that are not a question may stand when not safety",
+              store.get(unasked)["safety"] is False)
+        store.retire(unasked)
+        check("refused questions planted nothing", len(store.list()) == 5)
         edit_watch(tmp, dog, safety="false")
         check("a stored flag that is not true or false reads as its kind's default",
               store.get(dog)["safety"] is True)

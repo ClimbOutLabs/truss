@@ -34,11 +34,16 @@ Three cases come out, and every alert is worded for its case:
     none       not watched at any point in the window
 """
 
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_GAP_MINUTES = 10
+
+# One check per line, exactly as record() writes it: seconds and a
+# UTC offset, nothing missing.
+_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$")
 
 
 def _absolute(moment):
@@ -81,8 +86,12 @@ class CheckLog:
             return []
         out = []
         for line in text.splitlines():
+            # Only a whole line counts: one cut short by a crash is
+            # skipped, never read as a check at some other time.
+            if not _LINE.match(line):
+                continue
             try:
-                out.append(datetime.fromisoformat(line.strip()))
+                out.append(datetime.fromisoformat(line))
             except ValueError:
                 continue
         out.sort(key=_absolute)

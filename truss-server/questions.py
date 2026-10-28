@@ -213,6 +213,21 @@ def _clean_look_at(value):
     return value
 
 
+# The words a question may open with. "Should" and "must" are left
+# out on purpose: "Should I take my pills" invites a verdict on acting.
+# No question mark is required, since voice transcripts often lack one.
+QUESTION_OPENERS = {
+    "is", "are", "was", "were", "am", "did", "do", "does", "have", "has",
+    "had", "can", "could", "will", "would", "which", "what", "where",
+    "when", "who", "how",
+}
+
+
+def _asks_a_question(text):
+    words = re.findall(r"[a-z']+", text.lower())
+    return bool(words) and words[0] in QUESTION_OPENERS
+
+
 def _clean_safety(value, kind):
     """A stored safety flag. A record with no usable flag (planted
     before the flag existed, or damaged) reads as the default for its
@@ -338,6 +353,14 @@ class QuestionStore:
                 safety = kind == "done"
             if not isinstance(safety, bool):
                 raise ValueError("The safety flag is either true or false.")
+            if safety and not _asks_a_question(text):
+                # A safety question's words are spoken back inside its
+                # alert. Words that do not open as a question ("Take my
+                # night pills") would be an instruction to act.
+                raise ValueError(
+                    "A safety question must be asked as a question, "
+                    "like: Did I take my night pills?"
+                )
             if isinstance(look_at, str) and not look_at.strip():
                 look_at = None
             if look_at is not None:
