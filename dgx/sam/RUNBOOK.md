@@ -7,8 +7,9 @@ firing getting a copy with the object outlined.
 Checked against `github.com/facebookresearch/sam3` at commit `f1647e8`
 (2026-10-23) on 2026-10-28. What the code says, and the kit assumes:
 
-- Checkpoints: `facebook/sam3` has `sam3.pt` (approved for you on
-  2026-10-28); `facebook/sam3.1` has `sam3.1_multiplex.pt`. Both gated.
+- Checkpoints: `facebook/sam3.1` has `sam3.1_multiplex.pt`, the
+  default; `facebook/sam3` has `sam3.pt`, the fallback. Both gated, both
+  approved for you on 2026-10-28; the download fetches both.
 - The image API is `build_sam3_image_model()` plus `Sam3Processor`:
   `set_image(photo)`, then `set_text_prompt(phrase)` gives boxes,
   masks and scores. One image pass serves every phrase, so three
@@ -17,8 +18,10 @@ Checked against `github.com/facebookresearch/sam3` at commit `f1647e8`
   checkpoint is built for the video model; whether its detector loads
   cleanly into the image model is **not verified**. The service counts
   the weights a checkpoint leaves unloaded and, for sam3.1, refuses to
-  start if any are, so trying sam3.1 cannot quietly serve a broken
-  model. For sam3 it warns and starts, as the upstream loader does.
+  start if any are, so sam3.1 can never quietly serve a broken model;
+  `serve` then starts sam3 by itself and says `FALLBACK:`. Still-image
+  detection is SAM 3 accuracy either way, so nothing is lost. For sam3
+  the service warns and starts, as the upstream loader does.
 - Wants Python 3.12+, PyTorch 2.7+ (README installs 2.10.0), CUDA
   12.6+. The package forgets `einops`; the script adds it.
 
@@ -35,15 +38,20 @@ Glimmer can stay up; SAM needs a few GB beside it.
     cd ~/truss && git pull
     ./dgx/sam/setup.sh all
 
-`hf auth login` from the Glimmer bring-up is reused. The checkpoint is
-~3.5 GB. On success it prints the health reply and the checkpoint line:
+`hf auth login` from the Glimmer bring-up is reused. Both checkpoints
+download (a few GB each). On success it prints which model it serves,
+the health reply and the checkpoint line:
 
-    sam3.pt: N tensors loaded, 0 model weights missing, ...
+    Up after ...s, serving sam3.1.
+    sam3.1_multiplex.pt: N tensors loaded, 0 model weights missing, ...
     Warm-up done in ...s.
 
-`0 model weights missing` is the line that matters. If it says more
-than 0 for sam3, it starts anyway with a WARNING line: paste that into
-the thread before trusting the acceptance numbers. The service
+`0 model weights missing` is the line that matters. If sam3.1 does not
+fit, you see its `STOP:` line, then `FALLBACK: ... serving sam3
+instead`, and `serving sam3`: that is fine, say which one served when
+you paste the result. If sam3 itself reports more than 0 missing, it
+starts anyway with a WARNING line: paste that into the thread before
+trusting the acceptance numbers. The service
 listens on all interfaces, port 8090, with no key by default (it warns).
 On a network you do not trust:
 
@@ -108,17 +116,14 @@ photo in `truss-server/log/<day>/`. The evidence photo itself is
 unchanged. If SAM is down or finds nothing, the answer is spoken as
 always and the server says why there is no outline.
 
-## 4. sam3.1, when the approval lands
+## 4. Choosing the model by hand
 
     ./dgx/sam/setup.sh stop
-    SAM_VERSION=sam3.1 ./dgx/sam/setup.sh download
-    SAM_VERSION=sam3.1 ./dgx/sam/setup.sh serve
+    SAM_VERSION=sam3 ./dgx/sam/setup.sh serve      # sam3 only
+    SAM_FALLBACK=0 ./dgx/sam/setup.sh serve        # sam3.1 or stop, no fallback
 
-If serve stops with `... weights of the image model are not in ...`,
-the multiplex checkpoint does not fit the image model: go back to
-`./dgx/sam/setup.sh serve` (sam3). Still-image detection is SAM 3
-accuracy either way, so nothing is lost. If it starts, rerun step 2 and
-compare scores and times with the sam3 run.
+To compare the two (when sam3.1 served), run step 2 once on each with
+the same photos, and paste both summaries.
 
 ## Troubleshooting
 

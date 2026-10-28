@@ -24,9 +24,10 @@ inside the box before the cut, which the acceptance run checks.
 
 Settings (environment variables, all optional):
 
-    SAM_VERSION       sam3 (default) or sam3.1. Still-image detection
+    SAM_VERSION       sam3.1 (default) or sam3. Still-image detection
                       is SAM 3 accuracy either way; sam3.1's change is
-                      video tracking.
+                      video tracking. setup.sh falls back to sam3 when
+                      the sam3.1 checkpoint is refused (SAM_STRICT).
     SAM_CHECKPOINT    path to the .pt file; default: the file setup.sh
                       downloaded under SAM_MODELS_DIR
     SAM_MODELS_DIR    default ~/models/sam
@@ -414,7 +415,7 @@ class Sam3Segmenter:
             else:
                 raise SystemExit(
                     f"STOP: {self.missing} weights of the image model are not in {checkpoint}. "
-                    "If this is the sam3.1 checkpoint, serve SAM_VERSION=sam3 instead "
+                    "If this is the sam3.1 checkpoint, serve SAM_VERSION=sam3 instead (setup.sh does so by itself) "
                     "(SAM_STRICT=0 starts anyway, with those weights random)."
                 )
         model.eval()
@@ -463,7 +464,7 @@ def main():
     ap.add_argument("--port", type=int, default=8090)
     args = ap.parse_args()
 
-    version = os.environ.get("SAM_VERSION", "sam3")
+    version = os.environ.get("SAM_VERSION", "sam3.1")
     if version not in CHECKPOINTS:
         raise SystemExit(f"STOP: SAM_VERSION must be one of {', '.join(CHECKPOINTS)}.")
     models_dir = os.environ.get("SAM_MODELS_DIR") or str(Path.home() / "models" / "sam")

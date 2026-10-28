@@ -17,11 +17,14 @@
 #
 # Settings (environment variables, all optional):
 #
-#   SAM_VERSION    sam3 (default; facebook/sam3, sam3.pt) or sam3.1
-#                  (facebook/sam3.1, sam3.1_multiplex.pt). Still-image
+#   SAM_VERSION    sam3.1 (default; facebook/sam3.1, sam3.1_multiplex.pt)
+#                  or sam3 (facebook/sam3, sam3.pt). Still-image
 #                  detection is SAM 3 accuracy either way. The sam3.1
-#                  file is made for the video model; serve refuses it
-#                  if it leaves image-model weights unloaded.
+#                  file is made for the video model and may not fit the
+#                  image model: the service refuses it if it leaves
+#                  image-model weights unloaded, and serve then falls
+#                  back to sam3 by itself (download fetches both).
+#   SAM_FALLBACK   1 (default): sam3.1 refused -> serve sam3. 0: stop.
 #   SAM_HOME       default ~/sam (venv and the sam3 code)
 #   SAM_MODELS_DIR default ~/models/sam (checkpoints, run files)
 #   SAM_REF        sam3 commit to install; default the one this kit
@@ -43,7 +46,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SAM_VERSION="${SAM_VERSION:-sam3}"
+SAM_VERSION="${SAM_VERSION:-sam3.1}"
+SAM_FALLBACK="${SAM_FALLBACK:-1}"
 SAM_HOME="${SAM_HOME:-$HOME/sam}"
 SAM_MODELS_DIR="${SAM_MODELS_DIR:-$HOME/models/sam}"
 SAM_REF="${SAM_REF:-f1647e8d0c1d280991f4d1b7d974c2704537fe66}"
@@ -62,11 +66,17 @@ PID_FILE="$RUN_DIR/sam-service.pid"
 LOG_FILE="$RUN_DIR/sam-service.log"
 
 case "$SAM_VERSION" in
-  sam3)   HF_REPO="facebook/sam3";   CKPT_NAME="sam3.pt" ;;
-  sam3.1) HF_REPO="facebook/sam3.1"; CKPT_NAME="sam3.1_multiplex.pt" ;;
-  *) echo "STOP: SAM_VERSION must be sam3 or sam3.1." >&2; exit 1 ;;
+  sam3|sam3.1) ;;
+  *) echo "STOP: SAM_VERSION must be sam3.1 or sam3." >&2; exit 1 ;;
 esac
-CKPT="$SAM_MODELS_DIR/$SAM_VERSION/$CKPT_NAME"
+
+hf_repo() { echo "facebook/$1"; }
+ckpt_for() {
+  case "$1" in
+    sam3)   echo "$SAM_MODELS_DIR/sam3/sam3.pt" ;;
+    sam3.1) echo "$SAM_MODELS_DIR/sam3.1/sam3.1_multiplex.pt" ;;
+  esac
+}
 
 say() { printf '\n== %s\n' "$*"; }
 die() { printf 'STOP: %s\n' "$*" >&2; exit 1; }
@@ -165,23 +175,35 @@ print('sam3 imports fine; numpy', numpy.__version__, 'Pillow', PIL.__version__)
 
 # -- download -----------------------------------------------------------------
 
-do_download() {
-  [ -x "$VENV/bin/hf" ] || die "No hf CLI in $VENV. Run: ./setup.sh install"
-  mkdir -p "$SAM_MODELS_DIR/$SAM_VERSION" "$RUN_DIR"
-  say "Downloading $HF_REPO: $CKPT_NAME and config.json"
-  local out="$RUN_DIR/hf-download.log"
-  for f in config.json "$CKPT_NAME"; do
+download_one() {
+  local version="$1" ckpt name out="$RUN_DIR/hf-download.log"
+  ckpt=$(ckpt_for "$version"); name=$(basename "$ckpt")
+  mkdir -p "$SAM_MODELS_DIR/$version" "$RUN_DIR"
+  say "Downloading $(hf_repo "$version"): $name and config.json"
+  for f in config.json "$name"; do
     local rc=0
-    "$VENV/bin/hf" download "$HF_REPO" "$f" --local-dir "$SAM_MODELS_DIR/$SAM_VERSION" 2>&1 | tee "$out" || rc=$?
+    "$VENV/bin/hf" download "$(hf_repo "$version")" "$f" --local-dir "$SAM_MODELS_DIR/$version" 2>&1 | tee "$out" || rc=$?
     if [ "$rc" != 0 ]; then
       if grep -qiE '401|403|gated|restricted|RepositoryNotFound|Repository Not Found|access to model' "$out"; then
-        [ "$SAM_VERSION" = sam3.1 ] && die "$HF_REPO refused access (approval may still be pending). Serve sam3 meanwhile: ./setup.sh serve"
-        die "$HF_REPO refused access. Check 'hf auth login' (\"$VENV/bin/hf\" auth whoami) and the approval email."
+        echo "$(hf_repo "$version") refused access. Check 'hf auth login' (\"$VENV/bin/hf\" auth whoami) and the approval email."
+        return 3
       fi
       die "Downloading $f failed (not an access refusal; see above). Rerun; finished files are kept."
     fi
   done
-  ls -la "$CKPT"
+  ls -la "$ckpt"
+}
+
+# sam3.1 is the default; sam3 is fetched beside it as the fallback, so
+# serve never has to stop for a download if sam3.1 does not fit.
+do_download() {
+  [ -x "$VENV/bin/hf" ] || die "No hf CLI in $VENV. Run: ./setup.sh install"
+  local got=0
+  download_one "$SAM_VERSION" && got=1
+  if [ "$SAM_VERSION" = sam3.1 ] && [ "$SAM_FALLBACK" = 1 ]; then
+    download_one sam3 && got=1 || echo "No sam3 fallback downloaded (above)."
+  fi
+  [ "$got" = 1 ] || die "No checkpoint could be downloaded."
 }
 
 # -- serve --------------------------------------------------------------------
@@ -197,14 +219,38 @@ local_host() {
 
 health() { curl -sf -m 5 "http://$(local_host):$PORT/health" 2>/dev/null; }
 
+# start_service VERSION: 0 when up, 4 when the service refused the
+# checkpoint (image-model weights missing), else it stops the script.
+start_service() {
+  local version="$1" ckpt
+  ckpt=$(ckpt_for "$version")
+  [ -f "$ckpt" ] || { echo "No checkpoint at $ckpt."; return 4; }
+  say "Starting the SAM service ($version, $SAM_DTYPE) on $HOST:$PORT (log: $LOG_FILE)"
+  env PYTHONNOUSERSITE=1 SAM_VERSION="$version" SAM_CHECKPOINT="$ckpt" SAM_DTYPE="$SAM_DTYPE" \
+    "${key_env[@]}" nohup "$PY" "$HERE/sam_service.py" --host "$HOST" --port "$PORT" \
+    >"$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
+
+  local waited=0
+  until health >/dev/null; do
+    if ! running; then
+      tail -n 20 "$LOG_FILE"
+      grep -q 'weights of the image model are not in' "$LOG_FILE" && return 4
+      die "The SAM service exited during load (log above)."
+    fi
+    sleep 2; waited=$((waited + 2))
+    [ "$waited" -lt 600 ] || die "The SAM service is not up after 10 minutes. See $LOG_FILE"
+  done
+  echo "Up after ${waited}s, serving $version."
+}
+
 do_serve() {
   [ -x "$PY" ] || die "No venv at $VENV. Run: ./setup.sh install"
-  [ -f "$CKPT" ] || die "No checkpoint at $CKPT. Run: ./setup.sh download"
   running && die "The SAM service is already running (pid $(cat "$PID_FILE")). Run: ./setup.sh stop"
   health >/dev/null && die "Something already answers on port $PORT. Stop it first, or set PORT."
   mkdir -p "$RUN_DIR"
 
-  local key_env=()
+  key_env=()
   if [ -n "$SAM_API_KEY" ]; then
     (umask 077; printf '%s\n' "$SAM_API_KEY" > "$RUN_DIR/api-key")
     key_env=("SAM_API_KEY_FILE=$RUN_DIR/api-key")
@@ -216,19 +262,21 @@ do_serve() {
     fi
   fi
 
-  say "Starting the SAM service ($SAM_VERSION, $SAM_DTYPE) on $HOST:$PORT (log: $LOG_FILE)"
-  env PYTHONNOUSERSITE=1 SAM_VERSION="$SAM_VERSION" SAM_CHECKPOINT="$CKPT" SAM_DTYPE="$SAM_DTYPE" \
-    "${key_env[@]}" nohup "$PY" "$HERE/sam_service.py" --host "$HOST" --port "$PORT" \
-    >"$LOG_FILE" 2>&1 &
-  echo $! > "$PID_FILE"
-
-  local waited=0
-  until health >/dev/null; do
-    running || { tail -n 40 "$LOG_FILE"; die "The SAM service exited during load (log above)."; }
-    sleep 2; waited=$((waited + 2))
-    [ "$waited" -lt 600 ] || die "The SAM service is not up after 10 minutes. See $LOG_FILE"
-  done
-  echo "Up after ${waited}s."
+  local rc=0
+  start_service "$SAM_VERSION" || rc=$?
+  if [ "$rc" = 4 ]; then
+    rm -f "$PID_FILE"
+    if [ "$SAM_VERSION" = sam3.1 ] && [ "$SAM_FALLBACK" = 1 ]; then
+      echo
+      echo "FALLBACK: sam3.1 could not be served as an image model (above); serving sam3 instead."
+      echo "          Still-image detection is SAM 3 accuracy either way."
+      rc=0
+      start_service sam3 || rc=$?
+      [ "$rc" = 0 ] || die "sam3 could not be served either (above). Run: SAM_VERSION=sam3 ./setup.sh download"
+    else
+      die "$SAM_VERSION could not be served (above). Run: ./setup.sh download, or try SAM_VERSION=sam3."
+    fi
+  fi
   do_status
   echo
   echo "Laptop: export TRUSS_SAM_URL=http://<dgx-ip>:$PORT  (and TRUSS_SAM_KEY if you set SAM_API_KEY)"
