@@ -93,6 +93,18 @@ class CheckLoop:
         if not standing and not watch:
             return {"managed": False, "fired": [], "speak": [], "errors": 0}
 
+        # Done questions under check are claimed for the whole check,
+        # from before the model call until the witness is written, so
+        # the sweep cannot raise a miss for a window that closes while
+        # the answer is still on its way.
+        claimed = [e["slug"] for e in due if e.get("kind") == "done"]
+        self.store.begin_checks(claimed)
+        try:
+            return self._check_frame(frame_path, due, watch)
+        finally:
+            self.store.end_checks(claimed)
+
+    def _check_frame(self, frame_path, due, watch):
         now = self.now_fn()
         fired = []
         errors = 0

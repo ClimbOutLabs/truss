@@ -9,6 +9,9 @@ Stdlib only. Exits non-zero on the first failure.
 import json
 import sys
 import tempfile
+import threading
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -17,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from bedtime import ROUND, plant_round  # noqa: E402
 from checkloop import CheckLoop  # noqa: E402
 from questions import QuestionStore  # noqa: E402
+from http.server import HTTPServer  # noqa: E402
 
 JPEG = b"\xff\xd8\xff\xe0" + b"frame-bytes" + b"\xff\xd9"
 
@@ -480,6 +484,47 @@ def test_the_round():
         check("no frames left in captures", list(captures.iterdir()) == [])
 
 
+def _post_json(url, payload):
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, None
+
+
+def test_plant_bedtime_over_http():
+    """The route the phone calls. It has broken silently twice when a
+    branch carried a stale copy of the handler, so it is exercised
+    over real HTTP here."""
+    import server as server_module
+
+    with tempfile.TemporaryDirectory() as tmp:
+        server_module.STORE = QuestionStore(Path(tmp) / "questions")
+        httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        try:
+            status, body = _post_json(base + "/plant/bedtime", {})
+            check("POST /plant/bedtime returns 200", status == 200)
+            check(
+                "the reply names the round in walk order",
+                body["questions"] == ROUND
+                and len(body["slugs"]) == 3
+                and body["notes"] == [],
+            )
+            status, body = _post_json(base + "/plant/bedtime", {})
+            check(
+                "planting the round again is a 200 no-op",
+                status == 200 and len(server_module.STORE.list()) == 3,
+            )
+            status, _ = _post_json(base + "/plant/bedtime", {"after": "banana"})
+            check("a bad time is refused with 400", status == 400)
+        finally:
+            httpd.shutdown()
+
+
 if __name__ == "__main__":
     test_plant_round()
     test_bad_patterns_never_stop_checking()
@@ -490,4 +535,5 @@ if __name__ == "__main__":
     test_loose_text_match_is_the_same_question()
     test_broken_folder_never_blocks_planting()
     test_the_round()
+    test_plant_bedtime_over_http()
     print("ALL PASS")

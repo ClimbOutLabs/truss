@@ -19,10 +19,18 @@ second alert for the same question and day.
 
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from questions import _window_times
+
+# How long after a window closes before a miss is raised. A check
+# claims its question before the model call, but the claim is taken
+# just after the loop reads which questions are due, a moment that
+# can fall just inside the window. The grace covers that moment
+# with plenty to spare; the claim covers the model call however
+# long it takes.
+MISS_GRACE_S = 60
 
 
 def _valid_alert(alert):
@@ -201,7 +209,13 @@ def _sweep_one(store, alerts, entry, now):
                 # Planted after today's window had already closed:
                 # the miss happened before the question existed.
                 return None
-    if now.time() < until:
+    deadline = datetime.combine(now.date(), until) + timedelta(seconds=MISS_GRACE_S)
+    end_of_day = datetime.combine(now.date(), time(23, 59, 59))
+    if now < min(deadline, end_of_day):
+        return None
+    if store.check_in_flight(entry["slug"]):
+        # A check that may witness the act is still running. The next
+        # sweep decides, once its witness is written or not.
         return None
     if store.witness_today(entry["slug"], now=now) is not None:
         return None
