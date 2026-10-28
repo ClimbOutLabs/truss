@@ -256,18 +256,19 @@ class QuestionStore:
             folder = self._folder(slug)
             if not folder.exists():
                 raise KeyError(f"No question named {slug}.")
-            (folder / f"ref-{kind}.jpg").write_bytes(data)
             # The compiled files describe the photos they were made
-            # from. A new look makes them wrong, so they go now, under
-            # the lock, and a compile already in flight on the old
-            # photos will see the change and write nothing (see
-            # plant_compile.py). Until the recompile lands, the check
-            # runs without them rather than on a stale description.
+            # from. A new look makes them wrong, so they go first,
+            # under the lock, before the new photo is written: a crash
+            # between the two then leaves no description at all
+            # (startup recompiles it), never a stale one beside a new
+            # photo. A compile already in flight on the old photos
+            # sees the change and writes nothing (see plant_compile.py).
+            # Until the recompile lands, the check runs without them.
+            # A file that cannot be deleted stops the save: the old
+            # photo stays, and so does the description that matches it.
             for name in COMPILED_FILES:
-                try:
-                    (folder / name).unlink(missing_ok=True)
-                except OSError:
-                    pass
+                (folder / name).unlink(missing_ok=True)
+            (folder / f"ref-{kind}.jpg").write_bytes(data)
             watch = self._read_watch(slug)
             if watch is None or not isinstance(watch.get("state"), str):
                 raise KeyError(f"No question named {slug}.")
