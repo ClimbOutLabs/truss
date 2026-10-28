@@ -148,11 +148,11 @@ class CheckLoop:
         claimed = [e["slug"] for e in due if e.get("kind") == "done"]
         self.store.begin_checks(claimed)
         try:
-            return self._check_frame(frame_path, due, watch)
+            return self._check_frame(frame_path, due, watch, owed)
         finally:
             self.store.end_checks(claimed)
 
-    def _check_frame(self, frame_path, due, watch):
+    def _check_frame(self, frame_path, due, watch, owed):
         now = self.now_fn()
         fired = []
         errors = 0
