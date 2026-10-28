@@ -47,6 +47,9 @@ def slugify(text):
 
 QUESTION_KINDS = ("state", "done")
 
+# Written by plant_compile.py from the two reference looks.
+COMPILED_FILES = ("looks.txt", "prompts.txt")
+
 
 def _clean_kind(value):
     """A stored kind that is missing or not understood reads as a
@@ -132,6 +135,12 @@ class QuestionStore:
         # Contention is tiny: a handful of questions, a check every
         # so often, and a sweep every half minute.
         self._lock = threading.RLock()
+
+    @property
+    def lock(self):
+        """The store lock, for plant_compile.py: it writes the compiled
+        files under it so a re-shot look and a compile cannot cross."""
+        return self._lock
 
     # -- internal helpers -------------------------------------------------
 
@@ -248,6 +257,17 @@ class QuestionStore:
             if not folder.exists():
                 raise KeyError(f"No question named {slug}.")
             (folder / f"ref-{kind}.jpg").write_bytes(data)
+            # The compiled files describe the photos they were made
+            # from. A new look makes them wrong, so they go now, under
+            # the lock, and a compile already in flight on the old
+            # photos will see the change and write nothing (see
+            # plant_compile.py). Until the recompile lands, the check
+            # runs without them rather than on a stale description.
+            for name in COMPILED_FILES:
+                try:
+                    (folder / name).unlink(missing_ok=True)
+                except OSError:
+                    pass
             watch = self._read_watch(slug)
             if watch is None or not isinstance(watch.get("state"), str):
                 raise KeyError(f"No question named {slug}.")

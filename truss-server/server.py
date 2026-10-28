@@ -21,7 +21,7 @@ from alerts import AlertStore, sweep_missed
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
-from plant_compile import Compiler
+from plant_compile import Compiler, compile_question, needs_compile
 from questions import QuestionStore
 
 # The canonical checker lives in eval/ (see eval/checker.py). Import it
@@ -167,7 +167,17 @@ LOOP = CheckLoop(STORE, production_check, Path(__file__).parent / "log")
 # Plant-time compile (see plant_compile.py). Once a question has both
 # reference looks, one model call writes prompts.txt and looks.txt into
 # its folder, off the request thread so planting answers at once.
-COMPILER = Compiler()
+COMPILER = Compiler(lambda folder: compile_question(folder, lock=STORE.lock))
+
+
+def compile_waiting():
+    """Queue a compile for every question with both looks and no
+    looks.txt: planted while the model was away, or before compiles
+    existed. Run once at startup."""
+    for entry in STORE.list():
+        folder = STORE.root / entry["slug"]
+        if entry["state"] != "retired" and needs_compile(folder):
+            COMPILER.submit(folder)
 
 # The over-the-shoulder guide (see guide.py). One session at a time, in
 # memory; while a guide is active, captures go to it instead of the loop.
@@ -472,12 +482,14 @@ class TrussHandler(BaseHTTPRequestHandler):
                 return
             state = STORE.save_ref(slug, kind, image_data)
             entry = STORE.get(slug)
-            if state == "standing":
+            if entry and entry["has_ref_yes"] and entry["has_ref_no"] and state != "retired":
                 # Both looks exist: compile them, and again whenever a
-                # look is re-shot on a standing question.
+                # look is re-shot, standing or answered. The re-shot
+                # look has already cleared the old compiled files.
                 COMPILER.submit(STORE.root / slug)
             if state == "standing":
-                next_step = f"Standing question planted: {entry['question']}"
+                name = entry["question"] if entry else slug
+                next_step = f"Standing question planted: {name}"
             elif kind == "yes":
                 next_step = "Now show me what no looks like."
             else:
@@ -733,6 +745,7 @@ def main():
     port = 8792
 
     threading.Thread(target=_sweep_forever, daemon=True).start()
+    compile_waiting()
     server = HTTPServer((host, port), TrussHandler)
     print(f"\nTruss server starting on {host}:{port}")
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")

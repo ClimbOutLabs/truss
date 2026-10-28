@@ -141,12 +141,19 @@ question's folder:
   deciding detail can name it as what is missing.
 
 The compile runs in the background, so planting answers at once. A
-look re-shot on a standing question compiles again. The call goes
+re-shot look deletes both files at once, before anything else can
+read them, and compiles again; a compile still running on the old
+photos notices the change and writes nothing. So a check never reads
+a description of photos that are no longer there. A compile that
+fails is retried after 30 seconds, 2 minutes, and 10 minutes, and at
+startup the server compiles any question that has both looks but no
+`looks.txt`. The compile never runs on a contributor-tier model,
+because it sends photos of her home. The call goes
 through the checker endpoint (`endpoint.py`), so it uses the same
 `TRUSS_BASE_URL` and `TRUSS_MODEL` as the checks: llama-server on the
 DGX by default, or the Meta Model API with no code change. A compile
-that fails writes nothing and leaves any earlier files in place; the
-question stands either way, and the server log says why.
+that fails writes nothing. The question stands either way, and the
+server log says why.
 
 To compile questions planted before this existed, or to retry:
 
@@ -154,6 +161,9 @@ To compile questions planted before this existed, or to retry:
 python3 plant_compile.py              # every question with both looks
 python3 plant_compile.py is-the-stove-off
 ```
+
+Stop the server first. The hand-run compile cannot share the server's
+store lock, so it could race a look being re-shot.
 
 ## Done questions
 
