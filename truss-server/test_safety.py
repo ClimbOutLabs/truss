@@ -599,6 +599,41 @@ def test_a_verdict_with_no_description_is_never_spoken():
                      "what I see now: The Tuesday PM compartment still holds pills."])
 
 
+def test_a_miss_settled_after_midnight_is_yesterdays():
+    late = {"kind": "window", "after": "23:00", "until": "23:59"}
+    tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
+        [verdict("yes", "The Tuesday PM compartment is empty.")],
+        start=datetime(2026, 10, 28, 0, 20),
+    )
+    slug = planted(store, pattern=late)
+    for i in range(12):
+        checks.record(slug, when=at(23, 2) + timedelta(minutes=5 * i))
+    created = sweep_missed(store, alerts, now=clock.now, checks=checks)
+    check("a miss settled after midnight reads yesterday's checks and weekday",
+          len(created) == 1
+          and created[0]["coverage"] == "complete"
+          and created[0]["line"].startswith("Yesterday's window ended at 11:59 PM.")
+          and "the Tuesday PM compartment" in created[0]["line"])
+    check("its state check is owed for yesterday",
+          store.get(slug)["miss_check"] == {"date": "2026-10-27", "state": "owed"})
+    clock.now = datetime(2026, 10, 28, 0, 30)
+    loop.process_frame(frame(captures, "night.jpg"))
+    check("and is offered through the small hours",
+          spoken == ["About your question, Did I take my night pills? Here is "
+                     "what I see now: The Tuesday PM compartment is empty."])
+
+    tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
+        [verdict("yes", "The compartment is empty.")],
+        start=datetime(2026, 10, 28, 0, 20),
+    )
+    slug = planted(store, pattern=late)
+    sweep_missed(store, alerts, now=clock.now, checks=checks)
+    clock.now = datetime(2026, 10, 28, 7, 0)
+    loop.process_frame(frame(captures, "morning.jpg"))
+    check("but not the next morning",
+          loop.check_fn.calls == [] and spoken == [])
+
+
 def test_state_check_is_for_today_only():
     tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
         [verdict("yes", "The compartment is empty.")]
@@ -740,6 +775,7 @@ if __name__ == "__main__":
     test_a_spoken_state_check_is_never_owed_again_that_day()
     test_state_check_after_a_miss()
     test_a_verdict_with_no_description_is_never_spoken()
+    test_a_miss_settled_after_midnight_is_yesterdays()
     test_state_check_is_for_today_only()
     test_no_state_check_without_a_miss()
     test_http()

@@ -46,7 +46,7 @@ import re
 import threading
 import uuid
 from collections import Counter
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from wording import action_verbs_in
@@ -226,6 +226,13 @@ QUESTION_OPENERS = {
 def _asks_a_question(text):
     words = re.findall(r"[a-z']+", text.lower())
     return bool(words) and words[0] in QUESTION_OPENERS
+
+
+# How long into the night a state check owed for yesterday's miss is
+# still offered: a window ending near midnight is settled just after
+# it, and her look at the organizer at half past midnight still
+# deserves an answer.
+OWED_OVERNIGHT_UNTIL = time(4, 0)
 
 
 def _clean_safety(value, kind):
@@ -687,9 +694,18 @@ class QuestionStore:
 
     # -- checks in flight ---------------------------------------------------
 
-    def begin_checks(self, slugs):
+    def claim_due(self, now=None):
+        """due(), with every due done question claimed in the same
+        locked step. Reading what is due and claiming it can then
+        never be split by a sweep: a sweep either runs first, when
+        the window is still open or the question is not due, or
+        finds the claim. Release with end_checks()."""
         with self._lock:
-            self._in_flight.update(slugs)
+            due = self.due(now=now)
+            self._in_flight.update(
+                e["slug"] for e in due if e.get("kind") == "done"
+            )
+            return due
 
     def end_checks(self, slugs):
         with self._lock:
@@ -842,14 +858,19 @@ class QuestionStore:
 
     def miss_check_watch(self, now=None):
         """Safety done questions owed a state check today, with no
-        witness today. An owed check from an earlier day is never
-        offered: that day's compartment is not today's. There is no
+        witness today. A miss settled just after midnight is owed for
+        yesterday, and is offered through the small hours, until
+        OWED_OVERNIGHT_UNTIL. Any older owed check is never offered:
+        that day's compartment is not today's. There is no
         gap between state checks: the alert promised to say what is
         there when she looks, and a hallway frame a minute earlier
         must not make the loop miss her look at the thing itself."""
         with self._lock:
             now = now or datetime.now()
             today = now.date().isoformat()
+            days = {today}
+            if now.time() < OWED_OVERNIGHT_UNTIL:
+                days.add((now.date() - timedelta(days=1)).isoformat())
             out = []
             for entry in self.list():
                 if entry["kind"] != "done" or not entry["safety"]:
@@ -857,9 +878,12 @@ class QuestionStore:
                 if entry["state"] != "standing":
                     continue
                 owed = entry["miss_check"]
-                if owed is None or owed["state"] != "owed" or owed["date"] != today:
+                if owed is None or owed["state"] != "owed" or owed["date"] not in days:
                     continue
-                if self.witness_today(entry["slug"], now=now) is not None:
+                if (
+                    owed["date"] == today
+                    and self.witness_today(entry["slug"], now=now) is not None
+                ):
                     continue
                 out.append(entry)
             return out

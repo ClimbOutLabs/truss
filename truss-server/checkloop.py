@@ -131,9 +131,11 @@ class CheckLoop:
         frame_path = Path(frame_path)
         try:
             standing = [e for e in self.store.list() if e["state"] == "standing"]
-            due = self.store.due(now=self.now_fn()) if standing else []
             watch = self.store.redo_watch(now=self.now_fn())
             owed = self.store.miss_check_watch(now=self.now_fn())
+            # Claimed last, so nothing after it in this block can fail
+            # and leak the claim.
+            due = self.store.claim_due(now=self.now_fn()) if standing else []
         except Exception:
             # A broken question file must never break capturing. Fall
             # back to day 1 behavior: keep the frame, manage nothing.
@@ -141,12 +143,11 @@ class CheckLoop:
         if not standing and not watch:
             return {"managed": False, "fired": [], "speak": [], "errors": 0}
 
-        # Done questions under check are claimed for the whole check,
+        # Done questions under check stay claimed for the whole check,
         # from before the model call until the witness is written, so
         # the sweep cannot raise a miss for a window that closes while
         # the answer is still on its way.
         claimed = [e["slug"] for e in due if e.get("kind") == "done"]
-        self.store.begin_checks(claimed)
         try:
             return self._check_frame(frame_path, due, watch, owed)
         finally:
