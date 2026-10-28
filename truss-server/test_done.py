@@ -666,6 +666,64 @@ def test_miss_alert_survives_reload_and_broken_records():
           sweep_missed(store, alerts, now=after_close) == [])
 
 
+def test_no_miss_while_a_check_is_in_flight():
+    """A frame just inside the window whose model call returns after
+    the window closes: the sweep that runs during the call must not
+    call it missed, and once the witness lands nothing is raised."""
+    tmp = tempfile.mkdtemp()
+    alerts = AlertStore(Path(tmp) / "alerts")
+    for answer, expect_alert in (("yes", False), ("no", True)):
+        store, loop, spoken, captures, clock = rig(
+            start=datetime(2026, 10, 27, 21, 59, 50)
+        )
+        alerts = AlertStore(Path(store.root).parent / "alerts")
+        slug = plant(store, PILLS, WINDOW, kind="done")
+        edit_watch(store.root, slug, planted_at="2026-10-27T08:00:00")
+        during = []
+
+        def slow_check(frame_path, entry, answer=answer):
+            # The window closes while the model is still answering.
+            during.append(sweep_missed(
+                store, alerts, now=datetime(2026, 10, 27, 22, 5)))
+            return verdict(answer, "Tonight's compartment is empty.")
+
+        loop.check_fn = slow_check
+        loop.process_frame(frame(captures, "late.jpg"))
+        check(f"{answer}: the sweep during the check raises nothing",
+              during == [[]] and alerts.pending() == [])
+        after = sweep_missed(store, alerts, now=datetime(2026, 10, 27, 22, 6))
+        if expect_alert:
+            check("no: once the check is over, the true miss is raised",
+                  len(after) == 1 and len(alerts.pending()) == 1)
+        else:
+            check("yes: the witnessed act is never called missed",
+                  after == [] and alerts.pending() == [])
+            check("yes: the answer was spoken",
+                  spoken == ["Did I take my night pills? Yes. "
+                             "Tonight's compartment is empty."])
+        check(f"{answer}: the claim is released after the check",
+              not store.check_in_flight(slug))
+
+
+def test_miss_waits_out_the_grace():
+    tmp, store, alerts = sweep_rig()
+    planted_done(store)
+    check("no miss at the moment the window closes",
+          sweep_missed(store, alerts, now=datetime(2026, 10, 27, 22, 0)) == [])
+    check("no miss inside the grace after the window",
+          sweep_missed(store, alerts, now=datetime(2026, 10, 27, 22, 0, 59)) == [])
+    check("the miss is raised once the grace has passed",
+          len(sweep_missed(store, alerts,
+                           now=datetime(2026, 10, 27, 22, 1))) == 1)
+
+    tmp, store, alerts = sweep_rig()
+    planted_done(store, pattern={"kind": "window", "after": "23:00",
+                                 "until": "23:59:30"})
+    check("a window closing just before midnight still raises that day",
+          len(sweep_missed(store, alerts,
+                           now=datetime(2026, 10, 27, 23, 59, 59))) == 1)
+
+
 def test_sweep_never_alerts_for_an_invalid_window():
     tmp, store, alerts = sweep_rig()
     slug = planted_done(store)
@@ -944,6 +1002,8 @@ if __name__ == "__main__":
     test_miss_alert_lifecycle()
     test_miss_alert_not_raised()
     test_miss_alert_survives_reload_and_broken_records()
+    test_no_miss_while_a_check_is_in_flight()
+    test_miss_waits_out_the_grace()
     test_sweep_never_alerts_for_an_invalid_window()
     test_ack_is_confined_to_real_alert_files()
     test_alert_store_on_a_file_path_is_disabled_not_fatal()

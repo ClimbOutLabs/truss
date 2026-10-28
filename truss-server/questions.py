@@ -45,6 +45,7 @@ import math
 import re
 import threading
 import uuid
+from collections import Counter
 from datetime import datetime, time
 from pathlib import Path
 
@@ -255,6 +256,13 @@ class QuestionStore:
         # Contention is tiny: a handful of questions, a check every
         # so often, and a sweep every half minute.
         self._lock = threading.RLock()
+        # Questions with a check running right now. The check loop
+        # claims its due done questions before the model call and
+        # releases them after the firing is recorded, so the
+        # missed-window sweep never calls a window missed while a
+        # check that may witness it is still in flight. Kept in
+        # memory only: after a restart no check is running.
+        self._in_flight = Counter()
 
     # -- internal helpers -------------------------------------------------
 
@@ -653,6 +661,21 @@ class QuestionStore:
             else:
                 watch["state"] = "answered"
             self._write_watch(slug, watch)
+
+    # -- checks in flight ---------------------------------------------------
+
+    def begin_checks(self, slugs):
+        with self._lock:
+            self._in_flight.update(slugs)
+
+    def end_checks(self, slugs):
+        with self._lock:
+            self._in_flight.subtract(slugs)
+            self._in_flight += Counter()
+
+    def check_in_flight(self, slug):
+        with self._lock:
+            return self._in_flight[slug] > 0
 
     # -- the witness: what a done question saw, and when ------------------
 
