@@ -1,0 +1,24 @@
+{
+  "_comment": "Copy to bench-set.json and fill in. Paths are relative to this file. Labels: yes, no, cannot_tell. A question may instead name a planted question folder: {\"id\": \"stove\", \"folder\": \"../truss-server/questions/is-the-stove-off\"}.",
+  "questions": [
+    {"id": "stove", "question": "Is the stove off?",
+     "yes": "refs/stove-yes.jpg", "no": "refs/stove-no.jpg",
+     "looks": "Yes looks like: all four knobs point straight up at OFF.\nNo looks like: the front-left knob is turned to HI.\nWhat decides it: the angle of each knob."},
+    {"id": "door", "question": "Is the front door locked?",
+     "yes": "refs/door-yes.jpg", "no": "refs/door-no.jpg"},
+    {"id": "pills", "question": "Is tonight's pill compartment empty?",
+     "yes": "refs/pills-yes.jpg", "no": "refs/pills-no.jpg"}
+  ],
+  "photos": [
+    {"file": "photos/01.jpg", "labels": {"stove": "yes", "door": "cannot_tell", "pills": "cannot_tell"}},
+    {"file": "photos/02.jpg", "labels": {"stove": "no", "door": "cannot_tell", "pills": "cannot_tell"}},
+    {"file": "photos/03.jpg", "labels": {"stove": "cannot_tell", "door": "cannot_tell", "pills": "cannot_tell"}},
+    {"file": "photos/04.jpg", "labels": {"stove": "cannot_tell", "door": "yes", "pills": "cannot_tell"}},
+    {"file": "photos/05.jpg", "labels": {"stove": "cannot_tell", "door": "no", "pills": "cannot_tell"}},
+    {"file": "photos/06.jpg", "labels": {"stove": "cannot_tell", "door": "cannot_tell", "pills": "yes"}},
+    {"file": "photos/07.jpg", "labels": {"stove": "cannot_tell", "door": "cannot_tell", "pills": "no"}},
+    {"file": "photos/08.jpg", "uninformative": true},
+    {"file": "photos/09.jpg", "uninformative": true},
+    {"file": "photos/10.jpg", "uninformative": true}
+  ]
+}
