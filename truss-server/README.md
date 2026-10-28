@@ -142,6 +142,27 @@ export TRUSS_BASE_URL=http://<dgx>:8080/v1
 python3 check_once.py photo.jpg "Is the tv on?"
 ```
 
+## The evidence outline (SAM on the DGX)
+
+When a question fires, the kept evidence photo can get a copy with the
+object outlined, found by SAM on the DGX from the question's compiled
+phrases (`prompts.txt`, one per line). The evidence photo is never
+changed; the copy goes beside it as `<evidence>_outline.jpg` in the
+day's log folder. It is off by default and runs in the background, so
+SAM can never delay or stop a spoken answer. A question with no
+`prompts.txt` gets no outline, said in the server's output.
+
+| Variable | Default | |
+|---|---|---|
+| `TRUSS_EVIDENCE_OUTLINE` | off | `1` turns it on |
+| `TRUSS_SAM_URL` | `http://127.0.0.1:8090` | `http://<dgx>:8090` |
+| `TRUSS_SAM_KEY` | none | the SAM service's own key, if it has one (plain http on the LAN: never the Meta key) |
+| `TRUSS_SAM_TIMEOUT_S` | `15` | |
+
+The DGX side, and the acceptance run, are in `dgx/sam/RUNBOOK.md`.
+`gate.py` holds the gate-miss detector for the later SAM presence gate;
+the gate itself is not wired until the app samples frames on its own.
+
 ## Checking with Aman for now
 
 Before `llama-server` is up on the DGX, the server can ask your own Aman
