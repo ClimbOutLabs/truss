@@ -19,10 +19,18 @@ second alert for the same question and day.
 
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from questions import _window_times
+
+# Until this time of day, the sweep also settles yesterday's windows.
+# A window that ends near midnight can close with a check still in
+# flight, or with no sweep landing before the day turns; its miss is
+# then raised just after midnight instead of never. Later than this,
+# yesterday is left alone: a laptop that was off overnight does not
+# bring up old misses in the morning.
+SETTLE_YESTERDAY_UNTIL = time(1, 0)
 
 
 def _valid_alert(alert):
@@ -136,10 +144,15 @@ class AlertStore:
         return False
 
 
-def miss_line(entry, until):
+def miss_line(entry, until, yesterday=False):
     """The spoken line for a missed window: plain, factual, and it
     reads sensibly whatever words the question itself uses."""
     until_text = until.strftime("%I:%M %p").lstrip("0")
+    if yesterday:
+        return (
+            f"Yesterday's window closed at {until_text}. "
+            f"This was not done yesterday: {entry['question']}"
+        )
     return (
         f"It is past {until_text}. "
         f"This has not been done today: {entry['question']}"
@@ -163,18 +176,45 @@ def sweep_missed(store, alerts, now=None):
         # The store cannot be read at all; that is the check loop's
         # day-1 fallback case, and the sweep simply raises nothing.
         return []
+    days = [now.date()]
+    if now.time() < SETTLE_YESTERDAY_UNTIL:
+        days.insert(0, now.date() - timedelta(days=1))
     created = []
     for entry in entries:
-        try:
-            alert = _sweep_one(store, alerts, entry, now)
-        except Exception:
-            continue
-        if alert is not None:
-            created.append(alert)
+        for day in days:
+            try:
+                alert = _sweep_one(store, alerts, entry, now, day)
+            except Exception:
+                continue
+            if alert is not None:
+                created.append(alert)
     return created
 
 
-def _sweep_one(store, alerts, entry, now):
+def _seen_on(store, slug, day):
+    """Whether a done question was seen done on the given day, read
+    fresh from its record. The answered mark is written together with
+    the witness and is never cleared, so it still tells after
+    midnight, when yesterday's witness may already have been cleared.
+    A record that cannot be read counts as seen: damage degrades to
+    silence, never to an accusation."""
+    entry = store.get(slug)
+    if entry is None:
+        return True
+    witness = entry.get("witness")
+    stamps = [witness["at"]] if witness else []
+    if entry.get("answered_at"):
+        stamps.append(entry["answered_at"])
+    for stamp in stamps:
+        try:
+            if datetime.fromisoformat(stamp).date() == day:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _sweep_one(store, alerts, entry, now, day):
     if entry.get("kind") != "done":
         return None
     if entry.get("state") in ("planting", "retired"):
@@ -186,8 +226,14 @@ def _sweep_one(store, alerts, entry, now):
         # a window that does not end after it starts never raises
         # a miss, on any day.
         return None
-    until = times[1]
-    today = now.date().isoformat()
+    after, until = times
+    if day != now.date() and now.time() >= after:
+        # Today's window has opened, so a firing today may already
+        # have replaced yesterday's answered mark and witness on the
+        # record. Yesterday can no longer be read truthfully, and it
+        # is left alone rather than risk calling a seen act missed.
+        return None
+    today = day.isoformat()
     planted = entry.get("planted_at")
     if isinstance(planted, str):
         try:
@@ -195,15 +241,19 @@ def _sweep_one(store, alerts, entry, now):
         except ValueError:
             planted_dt = None
         if planted_dt is not None:
-            if planted_dt.date() > now.date():
+            if planted_dt.date() > day:
                 return None
-            if planted_dt.date() == now.date() and planted_dt.time() >= until:
+            if planted_dt.date() == day and planted_dt.time() >= until:
                 # Planted after today's window had already closed:
                 # the miss happened before the question existed.
                 return None
-    if now.time() < until:
+    if day == now.date() and now.time() < until:
         return None
-    if store.witness_today(entry["slug"], now=now) is not None:
+    if store.check_in_flight(entry["slug"]):
+        # A check that may witness the act is still running. The next
+        # sweep decides, once its witness is written or not.
+        return None
+    if _seen_on(store, entry["slug"], day):
         return None
     if alerts.exists_for(entry["slug"], today):
         return None
@@ -213,7 +263,7 @@ def _sweep_one(store, alerts, entry, now):
         "question": entry["question"],
         "date": today,
         "until": pattern.get("until"),
-        "line": miss_line(entry, until),
+        "line": miss_line(entry, until, yesterday=day != now.date()),
         "spoken": False,
         "created_at": now.isoformat(timespec="seconds"),
     }

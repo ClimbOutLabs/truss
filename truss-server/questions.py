@@ -31,9 +31,11 @@ Patterns:
 """
 
 import json
+import math
 import re
 import threading
 import uuid
+from collections import Counter
 from datetime import datetime, time
 from pathlib import Path
 
@@ -41,6 +43,81 @@ from pathlib import Path
 def slugify(text):
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return (slug[:48].strip("-") or "question")
+
+
+def _is_number(value):
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _parse_after(value):
+    """Parse a nightly after time the one way every reader agrees on:
+    the parser due() itself uses, and only a plain clock time, with
+    no offset attached. Returns a time, or None when the value is not
+    one. Validating with any other parser lets values through that
+    due() then raises on."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = time.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return None
+    return parsed
+
+
+def _clean_pattern(pattern):
+    """Validate a watch pattern for create() and fill every field the
+    checker reads, so a stored pattern can always be evaluated.
+    Raises ValueError with a plain message for anything unusable. A
+    window is checked here, at planting time, so a bad window is
+    refused to the wearer's face instead of failing quietly every
+    evening afterwards."""
+    if pattern is None:
+        return {"kind": "interval", "minutes": 15}
+    if not isinstance(pattern, dict):
+        raise ValueError("A watch pattern must say how often to check.")
+    kind = pattern.get("kind", "interval")
+    if kind == "interval":
+        minutes = pattern.get("minutes", 15)
+        if not _is_number(minutes):
+            raise ValueError("How often to check must be a number of minutes.")
+        return {"kind": "interval", "minutes": minutes}
+    if kind == "nightly":
+        parsed_after = _parse_after(pattern.get("after", "20:00"))
+        if parsed_after is None:
+            raise ValueError("The nightly time must look like 21:30.")
+        after = parsed_after.strftime("%H:%M")
+        gap = pattern.get("minutes", 15)
+        if not _is_number(gap):
+            raise ValueError("The gap between checks must be a number of minutes.")
+        return {"kind": "nightly", "after": after, "minutes": gap}
+    if kind == "window":
+        after = _parse_after(pattern.get("after"))
+        until = _parse_after(pattern.get("until"))
+        if after is None or until is None:
+            raise ValueError(
+                "A window needs a start time and an end time, like 21:00 and 22:00."
+            )
+        if until <= after:
+            raise ValueError(
+                "A window must end after it starts. Windows that run "
+                "past midnight are not supported."
+            )
+        gap = pattern.get("minutes", 15)
+        if not _is_number(gap) or gap < 0:
+            raise ValueError("The gap between checks must be a number of minutes.")
+        return {
+            "kind": "window",
+            "after": after.strftime("%H:%M"),
+            "until": until.strftime("%H:%M"),
+            "minutes": gap,
+        }
+    raise ValueError("A watch pattern is either interval, nightly, or window.")
 
 
 QUESTION_KINDS = ("state", "done")
@@ -130,6 +207,13 @@ class QuestionStore:
         # Contention is tiny: a handful of questions, a check every
         # so often, and a sweep every half minute.
         self._lock = threading.RLock()
+        # Questions with a check running right now. The check loop
+        # claims its due done questions before the model call and
+        # releases them after the firing is recorded, so the
+        # missed-window sweep never calls a window missed while a
+        # check that may witness it is still in flight. Kept in
+        # memory only: after a restart no check is running.
+        self._in_flight = Counter()
 
     # -- internal helpers -------------------------------------------------
 
@@ -182,10 +266,7 @@ class QuestionStore:
     def create(self, text, pattern=None, kind="state"):
         """Start a new question in the planting state. Returns its slug.
 
-        The kind is "state" unless a done question is asked for. A
-        window pattern is checked here, at planting time, so a bad
-        window is refused to the wearer's face instead of failing
-        quietly every evening afterwards.
+        The kind is "state" unless a done question is asked for.
         """
         with self._lock:
             text = text.strip()
@@ -193,18 +274,9 @@ class QuestionStore:
                 raise ValueError("The question text is empty.")
             if kind not in QUESTION_KINDS:
                 raise ValueError("A question is either a state question or a done question.")
-            if isinstance(pattern, dict) and pattern.get("kind") == "window":
-                after = _parse_time(pattern.get("after"))
-                until = _parse_time(pattern.get("until"))
-                if after is None or until is None:
-                    raise ValueError(
-                        "A window needs a start time and an end time, like 21:00 and 22:00."
-                    )
-                if until <= after:
-                    raise ValueError(
-                        "A window must end after it starts. Windows that run "
-                        "past midnight are not supported."
-                    )
+            # Clean the pattern before anything is created, so a refused
+            # planting leaves no folder behind and burns no sequence.
+            pattern = _clean_pattern(pattern)
             base = slugify(text)
             slug = base
             n = 2
@@ -213,15 +285,13 @@ class QuestionStore:
                 n += 1
             # Planting order is a fact about the store, not the clock: two
             # questions planted in the same second still have an order.
-            # Counted before the new folder exists, so the half-planted
-            # folder is never read back.
-            seq = max((e["seq"] for e in self.list()), default=0) + 1
+            seq = self._next_seq()
             folder = self._folder(slug)
             folder.mkdir(parents=True)
             (folder / "question.txt").write_text(text + "\n")
             watch = {
                 "kind": kind,
-                "pattern": pattern or {"kind": "interval", "minutes": 15},
+                "pattern": pattern,
                 "state": "planting",
                 "seq": seq,
                 "planted_at": datetime.now().isoformat(timespec="seconds"),
@@ -243,12 +313,12 @@ class QuestionStore:
             if kind not in ("yes", "no"):
                 raise ValueError("A reference look is either yes or no.")
             folder = self._folder(slug)
-            if not folder.exists():
+            watch = self._read_watch(slug)
+            if not self._watch_ok(watch) or not (folder / "question.txt").is_file():
+                # Refuse before writing anything: a look saved into a
+                # folder reads cannot see would plant a phantom.
                 raise KeyError(f"No question named {slug}.")
             (folder / f"ref-{kind}.jpg").write_bytes(data)
-            watch = self._read_watch(slug)
-            if watch is None or not isinstance(watch.get("state"), str):
-                raise KeyError(f"No question named {slug}.")
             if (
                 watch["state"] == "planting"
                 and (folder / "ref-yes.jpg").exists()
@@ -258,7 +328,99 @@ class QuestionStore:
                 self._write_watch(slug, watch)
             return watch["state"]
 
+    def _next_seq(self):
+        """The next planting sequence number. A counter file in the
+        store root is the source; when it is missing or unreadable the
+        number is derived by scanning the existing questions, skipping
+        any folder too broken to read, so one bad folder can never
+        block planting. Call with the store lock held."""
+        counter = self.root / ".seq"
+        try:
+            last = int(counter.read_text().strip())
+        except (OSError, ValueError):
+            last = 0
+            if self.root.exists():
+                for folder in self.root.iterdir():
+                    if not folder.is_dir():
+                        continue
+                    watch = self._read_watch(folder.name)
+                    if isinstance(watch, dict):
+                        seq = watch.get("seq", 0)
+                        if isinstance(seq, int) and not isinstance(seq, bool):
+                            last = max(last, seq)
+        nxt = last + 1
+        try:
+            counter.write_text(str(nxt))
+        except OSError:
+            pass
+        return nxt
+
+    def set_sequence(self, slug, seq):
+        """Rewrite a question's planting sequence number. Used when a
+        set of questions must be put into a known order, as the
+        bedtime round does."""
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            watch["seq"] = seq
+            self._write_watch(slug, watch)
+
     # -- reading ----------------------------------------------------------
+
+    @staticmethod
+    def _watch_ok(watch):
+        """Whether a watch record is complete enough to read as a
+        question: a mapping with a pattern, a state, and timestamps
+        that parse. Anything less is damage, and reads treat the
+        folder as no question rather than raising over it."""
+        if not isinstance(watch, dict):
+            return False
+        if not isinstance(watch.get("state"), str):
+            return False
+        pattern = watch.get("pattern")
+        if not isinstance(pattern, dict):
+            return False
+        kind = pattern.get("kind")
+        if kind == "interval":
+            if not _is_number(pattern.get("minutes")):
+                return False
+        elif kind == "nightly":
+            if _parse_after(pattern.get("after")) is None:
+                return False
+            if not _is_number(pattern.get("minutes", 15)):
+                return False
+        elif kind == "window":
+            # A window damaged after planting still reads as a
+            # question: due() and the missed-window sweep both go
+            # through _window_times and treat it as never due.
+            pass
+        else:
+            # No kind, or a kind due() has no branch for: due() would
+            # silently never check it, so it is not a readable record.
+            return False
+        for key in ("planted_at", "last_checked_at", "answered_at"):
+            value = watch.get(key)
+            if value is None:
+                if key == "planted_at":
+                    return False
+                continue
+            if not isinstance(value, str):
+                return False
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                return False
+            if parsed.tzinfo is not None:
+                # The store writes plain local times; a stamp carrying
+                # an offset cannot be compared with them.
+                return False
+        return True
+
+    @staticmethod
+    def _stamp(watch, key):
+        value = watch.get(key)
+        return value if isinstance(value, str) else None
 
     def get(self, slug):
         """One question's record, or None when it cannot be read as
@@ -273,21 +435,15 @@ class QuestionStore:
             if not folder.exists():
                 return None
             watch = self._read_watch(slug)
-            if watch is None:
-                return None
-            if not isinstance(watch.get("pattern"), dict):
-                return None
-            if not isinstance(watch.get("state"), str):
-                return None
-            if not all(
-                key in watch
-                for key in ("planted_at", "last_checked_at", "answered_at")
-            ):
+            if not self._watch_ok(watch):
                 return None
             try:
                 question_text = (folder / "question.txt").read_text().strip()
             except Exception:
                 return None
+            if not question_text:
+                return None
+            seq = watch.get("seq", 0)
             return {
                 "slug": slug,
                 "question": question_text,
@@ -297,9 +453,9 @@ class QuestionStore:
                 "witness": _clean_witness(watch.get("witness")),
                 "redo_spoken": bool(watch.get("redo_spoken")),
                 "planted_at": watch["planted_at"],
-                "seq": watch.get("seq", 0),
-                "last_checked_at": watch["last_checked_at"],
-                "answered_at": watch["answered_at"],
+                "seq": seq if isinstance(seq, int) and not isinstance(seq, bool) else 0,
+                "last_checked_at": self._stamp(watch, "last_checked_at"),
+                "answered_at": self._stamp(watch, "answered_at"),
                 "has_ref_yes": (folder / "ref-yes.jpg").exists(),
                 "has_ref_no": (folder / "ref-no.jpg").exists(),
                 "ref_yes_path": str(folder / "ref-yes.jpg"),
@@ -414,6 +570,30 @@ class QuestionStore:
             else:
                 watch["state"] = "answered"
             self._write_watch(slug, watch)
+
+    # -- checks in flight ---------------------------------------------------
+
+    def claim_due(self, now=None):
+        """due(), with every due done question claimed in the same
+        locked step. Reading what is due and claiming it can then
+        never be split by a sweep: a sweep either runs first, when
+        the window is still open or the question is not due, or
+        finds the claim. Release with end_checks()."""
+        with self._lock:
+            due = self.due(now=now)
+            self._in_flight.update(
+                e["slug"] for e in due if e.get("kind") == "done"
+            )
+            return due
+
+    def end_checks(self, slugs):
+        with self._lock:
+            self._in_flight.subtract(slugs)
+            self._in_flight += Counter()
+
+    def check_in_flight(self, slug):
+        with self._lock:
+            return self._in_flight[slug] > 0
 
     # -- the witness: what a done question saw, and when ------------------
 
