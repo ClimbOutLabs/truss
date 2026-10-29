@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 from alerts import AlertStore, sweep_missed
 import aman_check
+from coverage import CheckLog
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
@@ -85,13 +86,24 @@ STORE = QuestionStore(Path(__file__).parent / "questions")
 # was spoken; nothing else clears it.
 ALERTS = AlertStore(Path(__file__).parent / "alerts")
 
+# The times each done question was actually checked, kept by day
+# next to the answer log (see coverage.py). Only the time is kept; the
+# photo itself still goes when no question fires on it. Alerts read
+# these to say how much of a window was really watched.
+CHECKS = CheckLog(Path(__file__).parent / "log")
+
+
+# The clock the sweep and the check loop read. Always the wall clock
+# in use; tests pin it so they never depend on the time of day.
+CLOCK = datetime.now
+
 
 def run_sweep(now=None):
     """Raise any missed-window alerts that are due. Idempotent and
     quiet about failure: a sweep that cannot run loses nothing, the
     next one a few seconds later sees the same closed windows."""
     try:
-        return sweep_missed(STORE, ALERTS, now=now)
+        return sweep_missed(STORE, ALERTS, now=now or CLOCK(), checks=CHECKS)
     except Exception as e:
         print(f"Missed-window sweep failed: {e}")
         return []
@@ -161,7 +173,13 @@ def guide_check(frame_path, question_text):
 
 # The check loop (see checkloop.py). Spoken answers are returned to the
 # app in the /capture response; speaking them is the app's side.
-LOOP = CheckLoop(STORE, production_check, Path(__file__).parent / "log")
+LOOP = CheckLoop(
+    STORE,
+    production_check,
+    Path(__file__).parent / "log",
+    now_fn=lambda: CLOCK(),
+    checks=CHECKS,
+)
 
 # The over-the-shoulder guide (see guide.py). One session at a time, in
 # memory; while a guide is active, captures go to it instead of the loop.
@@ -227,7 +245,7 @@ class TrussHandler(BaseHTTPRequestHandler):
 
     def handle_questions(self):
         """List the standing questions and their states."""
-        today = datetime.now().date().isoformat()
+        today = CLOCK().date().isoformat()
         pending = {a["slug"] for a in ALERTS.pending() if a.get("date") == today}
         entries = []
         for entry in STORE.list():
@@ -235,6 +253,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 "slug": entry["slug"],
                 "question": entry["question"],
                 "kind": entry["kind"],
+                "safety": entry["safety"],
                 "state": entry["state"],
                 "pattern": entry["pattern"],
                 "has_ref_yes": entry["has_ref_yes"],
@@ -242,7 +261,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             }
             if entry["kind"] == "done":
                 try:
-                    status = STORE.done_status(entry["slug"])
+                    status = STORE.done_status(entry["slug"], now=CLOCK())
                 except Exception:
                     status = {"witness_time": None, "redo_spoken": False}
                 item["witness_time"] = status["witness_time"]
@@ -286,7 +305,11 @@ class TrussHandler(BaseHTTPRequestHandler):
         """Start planting a question: POST JSON {"text": ..., "pattern": ...}.
 
         An optional "kind" says whether it is a state question or a
-        done question; without one it is a state question. Voice
+        done question; without one it is a state question. An optional
+        "safety" (true or false) marks a question where a wrong word
+        does harm (left out, a done question is safety and a state
+        question is not), and an optional "look_at" names the thing to look at
+        in a missed-window alert, like "the {weekday} PM compartment". Voice
         planting uses the same endpoint: the app sends the recording
         to /stt first, then posts the transcript here as text.
         """
@@ -299,11 +322,16 @@ class TrussHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "No question text provided")
                 return
             slug = STORE.create(
-                text, data.get("pattern"), kind=data.get("kind") or "state"
+                text,
+                data.get("pattern"),
+                kind=data.get("kind") or "state",
+                safety=data.get("safety"),
+                look_at=data.get("look_at"),
             )
             self.send_json({
                 "slug": slug,
                 "kind": STORE.get(slug)["kind"],
+                "safety": STORE.get(slug)["safety"],
                 "state": "planting",
                 "next": "Show me what yes looks like.",
             })

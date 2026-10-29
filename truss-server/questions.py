@@ -19,6 +19,16 @@ on its record: the day, the time, and the evidence photo's name. The
 witness lasts the rest of that day and powers the redo watch in the
 check loop and the missed-window alerts in alerts.py.
 
+A question can also carry a safety flag (the stove, the pills): one
+where a wrong word does harm. A missed-window alert for a safety
+question directs her to look and never tells her to act, and after
+the miss the next frame that shows the thing gets a state check whose
+result is spoken (see alerts.py and checkloop.py). An optional "look
+at" phrase names the thing to look at in her own words, like "the
+{weekday} PM compartment"; {weekday} is spoken as the alert's day.
+A done question is a safety question unless planted with an explicit
+opt-out, and a record with no usable flag reads the same way.
+
 Patterns:
     {"kind": "interval", "minutes": 15}   check every 15 minutes
     {"kind": "nightly", "after": "20:00"} due once per evening at or
@@ -36,8 +46,10 @@ import re
 import threading
 import uuid
 from collections import Counter
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
+
+from wording import action_verbs_in
 
 
 def slugify(text):
@@ -187,6 +199,178 @@ def _clean_witness(value):
     return {"date": date, "at": at, "frame": frame}
 
 
+LOOK_AT_MAX = 80
+
+
+def _clean_look_at(value):
+    """A stored look-at phrase, or None when it is missing or not
+    one line of text. Never raises."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > LOOK_AT_MAX or "\n" in value:
+        return None
+    return value
+
+
+# The words a question may open with. "Should" and "must" are left
+# out on purpose: "Should I take my pills" invites a verdict on acting.
+# No question mark is required, since voice transcripts often lack one.
+QUESTION_OPENERS = {
+    "is", "are", "was", "were", "am", "did", "do", "does", "have", "has",
+    "had", "can", "could", "will", "would", "which", "what", "where",
+    "when", "who", "how",
+}
+
+
+# Openers that are also helper verbs, and so also open commands: "Have
+# your pills now", "Do take my night pills". After one of these, the
+# next word must be who or what is asked about.
+HELPER_OPENERS = {"have", "has", "had", "do", "does", "did", "can", "could", "will", "would"}
+SUBJECT_WORDS = {
+    # "your" is left out: "Have your pills now" is a command, and she
+    # asks about her own things as "my".
+    "i", "you", "we", "he", "she", "it", "they", "the", "my",
+    "our", "his", "her", "their", "this", "that", "these", "those", "a",
+    "an", "there", "anyone", "someone", "somebody", "tonight's", "today's",
+}
+
+
+# Capitalized words after a helper opener that are never a name:
+# "Do Not forget", "Have Some pills", "Can Make sure".
+NOT_A_NAME = {
+    "not", "some", "make", "please", "be", "get", "keep", "let", "try",
+    "check", "look", "any", "all", "no", "never", "just", "now", "always",
+    "also", "then", "so", "more", "another", "one", "two", "both", "each",
+    # Verbs that open a command but are not on the action-verb list.
+    # Title-case imperatives beyond these are an accepted residual risk:
+    # without a dictionary, a capitalized word after a helper opener is
+    # taken as a name.
+    "remind", "got", "help", "bring", "call", "tell", "wait", "see",
+    "show", "have", "need", "want",
+}
+
+
+def _asks_a_question(text):
+    """Whether the words open as a question. A helper-verb opener must
+    be followed by a subject: a word from SUBJECT_WORDS, or a name
+    (capitalized in her words, and not an action verb)."""
+    words = re.findall(r"[A-Za-z']+", text)
+    if not words or words[0].lower() not in QUESTION_OPENERS:
+        return False
+    if words[0].lower() not in HELPER_OPENERS:
+        return True
+    if len(words) < 2:
+        return False
+    nxt = words[1]
+    if nxt.lower() in SUBJECT_WORDS:
+        return True
+    return (
+        nxt[0].isupper()
+        and nxt.lower() not in NOT_A_NAME
+        and not action_verbs_in(nxt)
+    )
+
+
+DAY_NAMES = (
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+)
+# Abbreviations as organizers print them (TUE, THURS, MON-FRI).
+DAY_ABBREVIATIONS = {
+    "mon", "tue", "tues", "wed", "weds", "thu", "thur", "thurs", "fri",
+    "sat", "sun",
+}
+RELATIVE_DAY_WORDS = {"today", "tonight", "tomorrow", "yesterday", "morrow"}
+RELATIVE_DAY_PHRASES = (
+    "last night", "this evening", "this morning", "this afternoon",
+    "this night", "next day",
+)
+
+
+def _day_word(word):
+    """The day a word names by itself, or None. Plurals and possessives
+    are stripped first, so "Tuesdays" and "tonight's" are caught."""
+    for suffix in ("'s", "s"):
+        if word.endswith(suffix) and len(word) > len(suffix) + 2:
+            stem = word[: -len(suffix)]
+            if _day_word(stem):
+                return word
+    if word in DAY_ABBREVIATIONS or word in RELATIVE_DAY_WORDS:
+        return word
+    if any(word.startswith(name) for name in DAY_NAMES):
+        return word
+    return None
+
+
+def _look_at_day_problem(look_at):
+    """Why a look-at phrase cannot be planted, or None. A phrase that
+    names a day by itself ("the Tuesday PM compartment", "tonight's
+    compartment") is right one day in seven, or wrong after midnight;
+    the only way to name a day is {weekday}, spoken as the missed day.
+    Any other {...} token would be spoken aloud as it is."""
+    tokens = re.findall(r"\{[^}]*\}", look_at)
+    if any(token != "{weekday}" for token in tokens):
+        return "The only placeholder a look-at phrase can hold is {weekday}."
+    bare = look_at.replace("{weekday}", " ")
+    if "{" in bare or "}" in bare:
+        return "The only placeholder a look-at phrase can hold is {weekday}."
+    lowered = bare.lower()
+    words = set(re.findall(r"[a-z']+", lowered))
+    named = sorted({w for w in words if _day_word(w)})
+    named += [p for p in RELATIVE_DAY_PHRASES if re.search(rf"\b{p}\b", lowered)]
+    if named:
+        return (
+            "Name the day as {weekday}, never as a fixed day, so it is "
+            f"always the missed day's. Leave out: {', '.join(named)}."
+        )
+    return None
+
+
+def look_at_for(entry, date_text):
+    """A question's look-at phrase for one day, with {weekday} spoken as
+    that day's name, or None when it has none. The day is the owed
+    day, never the day it happens to be now: at 3 AM on Wednesday, a
+    check owed for Tuesday is about Tuesday's compartment."""
+    look_at = entry.get("look_at")
+    if not look_at:
+        return None
+    try:
+        day = datetime.fromisoformat(date_text)
+    except (TypeError, ValueError):
+        return None
+    return look_at.replace("{weekday}", day.strftime("%A"))
+
+
+# How long into the night a state check owed for yesterday's miss is
+# still offered: a window ending near midnight is settled just after
+# it, and her look at the organizer at half past midnight still
+# deserves an answer.
+OWED_OVERNIGHT_UNTIL = time(4, 0)
+
+
+def _clean_safety(value, kind):
+    """A stored safety flag. A record with no usable flag (planted
+    before the flag existed, or damaged) reads as the default for its
+    kind: a done question is a safety question. Failing toward the
+    careful wording is the safe way to fail. Never raises."""
+    if isinstance(value, bool):
+        return value
+    return _clean_kind(kind) == "done"
+
+
+def _clean_miss_check(value):
+    """A stored post-miss state check, or None when it is missing or
+    not in the shape the sweep writes: a date and a state, "owed" or
+    "spoken". Never raises."""
+    if not isinstance(value, dict):
+        return None
+    date = value.get("date")
+    state = value.get("state")
+    if not isinstance(date, str) or state not in ("owed", "spoken"):
+        return None
+    return {"date": date, "state": state}
+
+
 def display_time(iso_text):
     """An ISO datetime as a spoken time of day, like 8:05 PM."""
     moment = datetime.fromisoformat(iso_text)
@@ -263,10 +447,21 @@ class QuestionStore:
 
     # -- planting ---------------------------------------------------------
 
-    def create(self, text, pattern=None, kind="state"):
+    def create(self, text, pattern=None, kind="state", safety=None, look_at=None):
         """Start a new question in the planting state. Returns its slug.
 
-        The kind is "state" unless a done question is asked for.
+        The kind is "state" unless a done question is asked for. The
+        safety flag is a plain true or false; left out, a done question
+        is a safety question and a state question is not, so the
+        careful wording is what a planter gets without asking for it.
+        The look-at phrase, when given, is one short line of text with
+        no action verb in it, since it is spoken inside the direction
+        to look (see wording.py).
+
+        A done question's window with no gap given is checked on every
+        frame inside it: an act takes seconds, and a question resting
+        between checks would neither see it nor be able to say it
+        watched.
         """
         with self._lock:
             text = text.strip()
@@ -274,6 +469,42 @@ class QuestionStore:
                 raise ValueError("The question text is empty.")
             if kind not in QUESTION_KINDS:
                 raise ValueError("A question is either a state question or a done question.")
+            if safety is None:
+                safety = kind == "done"
+            if not isinstance(safety, bool):
+                raise ValueError("The safety flag is either true or false.")
+            if (safety or kind == "done") and not _asks_a_question(text):
+                # A safety or done question's words are spoken back
+                # inside its alert. Words that do not open as a question
+                # ("Take my night pills") would be an instruction to act.
+                raise ValueError(
+                    "This must be asked as a question, "
+                    "like: Did I take my night pills?"
+                )
+            if isinstance(look_at, str) and not look_at.strip():
+                look_at = None
+            if look_at is not None:
+                if _clean_look_at(look_at) is None:
+                    raise ValueError(
+                        f"What to look at is one short line, up to {LOOK_AT_MAX} characters."
+                    )
+                look_at = look_at.strip()
+                verbs = action_verbs_in(look_at)
+                if verbs:
+                    raise ValueError(
+                        "What to look at names the thing, never the act. "
+                        f"Leave out: {', '.join(verbs)}."
+                    )
+                problem = _look_at_day_problem(look_at)
+                if problem:
+                    raise ValueError(problem)
+            if (
+                kind == "done"
+                and isinstance(pattern, dict)
+                and pattern.get("kind") == "window"
+                and "minutes" not in pattern
+            ):
+                pattern = dict(pattern, minutes=0)
             # Clean the pattern before anything is created, so a refused
             # planting leaves no folder behind and burns no sequence.
             pattern = _clean_pattern(pattern)
@@ -299,6 +530,9 @@ class QuestionStore:
                 "answered_at": None,
                 "witness": None,
                 "redo_spoken": False,
+                "safety": safety,
+                "look_at": look_at,
+                "miss_check": None,
             }
             self._write_watch(slug, watch)
             return slug
@@ -452,6 +686,9 @@ class QuestionStore:
                 "state": watch["state"],
                 "witness": _clean_witness(watch.get("witness")),
                 "redo_spoken": bool(watch.get("redo_spoken")),
+                "safety": _clean_safety(watch.get("safety"), watch.get("kind")),
+                "look_at": _clean_look_at(watch.get("look_at")),
+                "miss_check": _clean_miss_check(watch.get("miss_check")),
                 "planted_at": watch["planted_at"],
                 "seq": seq if isinstance(seq, int) and not isinstance(seq, bool) else 0,
                 "last_checked_at": self._stamp(watch, "last_checked_at"),
@@ -718,6 +955,74 @@ class QuestionStore:
                 "witness_time": display_time(witness["at"]),
                 "redo_spoken": bool(watch.get("redo_spoken")) if watch else False,
             }
+
+    # -- after a missed window: the owed state check --------------------
+
+    def owe_miss_check(self, slug, date):
+        """Record that a safety question's window closed unwitnessed
+        on this day, so the next frame that shows the thing gets a
+        state check and its result is spoken."""
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            current = _clean_miss_check(watch.get("miss_check"))
+            if current is not None and current["date"] == date:
+                return
+            watch["miss_check"] = {"date": date, "state": "owed"}
+            self._write_watch(slug, watch)
+
+    def miss_check_watch(self, now=None):
+        """Safety done questions owed a state check today, with no
+        witness today. A miss settled just after midnight is owed for
+        yesterday, and is offered through the small hours, until
+        OWED_OVERNIGHT_UNTIL, but only when its look-at phrase names
+        the day as {weekday}, so the check can say which day it means. Any older owed check is never offered:
+        that day's compartment is not today's. There is no
+        gap between state checks: the alert promised to say what is
+        there when she looks, and a hallway frame a minute earlier
+        must not make the loop miss her look at the thing itself."""
+        with self._lock:
+            now = now or datetime.now()
+            today = now.date().isoformat()
+            days = {today}
+            if now.time() < OWED_OVERNIGHT_UNTIL:
+                days.add((now.date() - timedelta(days=1)).isoformat())
+            out = []
+            for entry in self.list():
+                if entry["kind"] != "done" or not entry["safety"]:
+                    continue
+                if entry["state"] != "standing":
+                    continue
+                owed = entry["miss_check"]
+                if owed is None or owed["state"] != "owed" or owed["date"] not in days:
+                    continue
+                if (
+                    owed["date"] == today
+                    and self.witness_today(entry["slug"], now=now) is not None
+                ):
+                    continue
+                if owed["date"] != today and "{weekday}" not in (entry["look_at"] or ""):
+                    # Overnight, only a look-at phrase that names the
+                    # day as {weekday} can say which day's compartment
+                    # it means; anything else is not checked at all.
+                    continue
+                out.append(entry)
+            return out
+
+    def mark_miss_check_spoken(self, slug):
+        """Record that the owed state check's result was spoken. It is
+        spoken once per miss, never twice."""
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            owed = _clean_miss_check(watch.get("miss_check"))
+            if owed is None:
+                raise KeyError(f"No state check is owed for {slug}.")
+            owed["state"] = "spoken"
+            watch["miss_check"] = owed
+            self._write_watch(slug, watch)
 
     def retire(self, slug):
         with self._lock:
