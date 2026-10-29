@@ -118,9 +118,8 @@ The failure designed against is a wrong all-clear, above all on the stove and th
    reverted file. Every finding names a file and line and gives the failing scenario.
 4. Post one PR comment headed `Adversarial review` with the verdict on the first line,
    then blockers, should-fix, notes, and the test results (suite name, pass/fail).
+   No tool attribution, footers, or internal links in the comment.
 5. When the author pushes fixes, review the delta the same way (a "delta round"),
    and post a new verdict. Repeat until MERGE.
 6. Only then ask Sidd to merge, with the verdict and the merge order for stacked PRs.
-
-With Claude Code: `/adversarial-review <PR number>` runs steps 1 to 4
-(see `.claude/commands/adversarial-review.md`).
+   Squash-merge with a clean one-line message (no trailer lines).
