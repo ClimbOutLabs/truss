@@ -326,6 +326,13 @@ do_serve() {
   else
     echo "This build has no --chat-template-kwargs; reasoning strength stays at the template default (high)."
   fi
+  # Thinking goes in reasoning_content, which the checker never reads,
+  # so only the answer is parsed as the verdict.
+  if help_has '--reasoning-format'; then
+    args+=(--reasoning-format deepseek)
+  else
+    echo "This build has no --reasoning-format; thinking may reach the reply text (the checker strips it, but check the warm-up)."
+  fi
   if [ -n "$REASONING_BUDGET" ]; then
     help_has '--reasoning-budget' || die "This build has no --reasoning-budget flag; unset REASONING_BUDGET."
     args+=(--reasoning-budget "$REASONING_BUDGET")

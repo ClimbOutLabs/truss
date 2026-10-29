@@ -141,7 +141,7 @@ def main():
     cfg = bench_glimmer.endpoint.config_from_env()
     failed_rows = [
         {"mode": "single", "photo": f"p{i}", "question": "stove", "label": "cannot_tell",
-         "verdict": "cannot_tell", "reason": "x So no check was made.", "failed": True,
+         "verdict": "cannot_tell", "reason": "x So no check was made.", "failed": True, "failure": "truncated",
          "finish_reasons": ["length"], "requests": 2, "has_timings": False, "total_ms": 1}
         for i in range(3)
     ]
