@@ -45,6 +45,10 @@
 #   REASONING    low (default) | medium | high | xhigh; Glimmer always
 #                thinks first, this sets how much
 #   REASONING_BUDGET  optional cap on thinking tokens (--reasoning-budget)
+#   IMAGE_MAX_TOKENS  optional cap on tokens per image (--image-max-tokens).
+#                Unset, a large photo can take 3,000+ tokens and ~10 s to
+#                read on the DGX; 1024 bounds that near 2.5 s. Check that
+#                small details (a knob angle) still read before keeping it.
 #
 # Needs: git, cmake, a C++ compiler, the CUDA toolkit (nvcc), curl,
 # python3. The meta-models repo may be gated: accept the license on
@@ -66,6 +70,7 @@ DRAFT="${DRAFT:-1}"
 NGL="${NGL:-99}"
 REASONING="${REASONING:-low}"
 REASONING_BUDGET="${REASONING_BUDGET:-}"
+IMAGE_MAX_TOKENS="${IMAGE_MAX_TOKENS:-}"
 
 META_REPO="meta-models/Muse-Glimmer-30B-GGUF"
 UNSLOTH_REPO="unsloth/Muse-Glimmer-30B-GGUF"
@@ -353,6 +358,10 @@ do_serve() {
   if [ -n "$REASONING_BUDGET" ]; then
     help_has '--reasoning-budget' || die "This build has no --reasoning-budget flag; unset REASONING_BUDGET."
     args+=(--reasoning-budget "$REASONING_BUDGET")
+  fi
+  if [ -n "$IMAGE_MAX_TOKENS" ]; then
+    help_has '--image-max-tokens' || die "This build has no --image-max-tokens flag; unset IMAGE_MAX_TOKENS."
+    args+=(--image-max-tokens "$IMAGE_MAX_TOKENS")
   fi
 
   if [ -n "$API_KEY" ]; then
