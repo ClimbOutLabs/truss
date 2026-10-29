@@ -98,16 +98,28 @@ Post the printed JSON in the thread: this closes item A's acceptance.
 
 ## 5. The bench (about 15 min of your time, ~10 min of running)
 
-Make the set: 10 glasses photos and the yes/no reference pair for each
-of 3 questions (stove, door, pills is the natural set). Make at least
-3 of the 10 deliberately uninformative for every question (ceiling,
-floor, a blurred turn, the stove from behind with the knobs out of
-view), and label the rest.
+Make the set: 10 photos and a yes/no reference pair for each of 3
+questions (stove, door, pills). Eye height, like the glasses see it;
+a phone is fine. Name them exactly as below and the example set needs
+no edits:
+
+| Folder | File | Shows |
+|---|---|---|
+| refs | `stove-yes.jpg` / `stove-no.jpg` | knobs all off / one knob on |
+| refs | `door-yes.jpg` / `door-no.jpg` | deadbolt locked / unlocked |
+| refs | `pills-yes.jpg` / `pills-no.jpg` | tonight's compartment empty / full |
+| photos | `stove-off.jpg`, `stove-on.jpg` | same as the refs, a different shot |
+| photos | `stove-knobs-hidden.jpg` | the stove with the knobs out of view |
+| photos | `door-locked.jpg`, `door-unlocked.jpg` | the deadbolt |
+| photos | `pills-empty.jpg`, `pills-full.jpg` | the organizer |
+| photos | `ceiling.jpg`, `floor.jpg`, `other-room.jpg` | nothing relevant |
 
     mkdir -p dgx/bench/photos dgx/bench/refs
     cp dgx/bench-set.example.json dgx/bench/bench-set.json
-    # put photos in dgx/bench/photos, refs in dgx/bench/refs,
-    # and edit labels in bench-set.json to match what each photo shows
+    # put the files in dgx/bench/photos and dgx/bench/refs
+
+The refs and the photos must be different shots, or the multi check
+is just matching a photo to itself.
 
 `dgx/bench/` is git-ignored, so photos of the house never reach the
 public repo. A question can also point at a planted question folder
