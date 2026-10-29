@@ -41,10 +41,10 @@ class LaptopClient(laptopIp: String) {
     base = "http://$ip:8792"
   }
 
-  private fun open(path: String): HttpURLConnection {
+  private fun open(path: String, readTimeoutMs: Int = READ_TIMEOUT_MS): HttpURLConnection {
     val connection = URL(base + path).openConnection() as HttpURLConnection
     connection.connectTimeout = CONNECT_TIMEOUT_MS
-    connection.readTimeout = READ_TIMEOUT_MS
+    connection.readTimeout = readTimeoutMs
     return connection
   }
 
@@ -69,7 +69,13 @@ class LaptopClient(laptopIp: String) {
   /** POST /capture, multipart field "image" (JPEG). Returns the byte count plus any
    * standing questions the photo fired and the lines to speak for them. */
   fun postCapture(jpeg: File): CaptureResult {
-    val body = postMultipart("/capture", "image", jpeg.name, "image/jpeg", jpeg.readBytes())
+    // The laptop answers only after every due question has been checked, one
+    // model call each (several seconds apiece, longer on a retry), so this one
+    // call waits much longer than the rest. Giving up early would lose the
+    // spoken answer: the question still fires and rests on the laptop.
+    val body =
+        postMultipart(
+            "/capture", "image", jpeg.name, "image/jpeg", jpeg.readBytes(), CAPTURE_READ_TIMEOUT_MS)
     val json = JSONObject(body)
     fun lines(key: String): List<String> {
       val array = json.optJSONArray(key) ?: return emptyList()
@@ -197,9 +203,10 @@ class LaptopClient(laptopIp: String) {
       fileName: String,
       contentType: String,
       bytes: ByteArray,
+      readTimeoutMs: Int = READ_TIMEOUT_MS,
   ): String {
     val boundary = "mannie-" + System.nanoTime().toString(16)
-    val connection = open(path)
+    val connection = open(path, readTimeoutMs)
     try {
       connection.requestMethod = "POST"
       connection.doOutput = true
@@ -229,5 +236,6 @@ class LaptopClient(laptopIp: String) {
   private companion object {
     const val CONNECT_TIMEOUT_MS = 5_000
     const val READ_TIMEOUT_MS = 15_000
+    const val CAPTURE_READ_TIMEOUT_MS = 300_000
   }
 }
