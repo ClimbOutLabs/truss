@@ -7,7 +7,6 @@ Handles photo uploads, speech-to-text, and text-to-speech for the Truss app.
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -19,18 +18,13 @@ from urllib.parse import parse_qs, urlparse
 from alerts import AlertStore, sweep_missed
 import aman_check
 from coverage import CheckLog
+import endpoint
+import sam_client
+import verdict
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
 from questions import QuestionStore
-
-# The canonical checker lives in eval/ (see eval/checker.py). Import it
-# if it can be imported; the loop falls back to cannot_tell without it.
-sys.path.insert(0, str(Path(__file__).parent.parent / "eval"))
-try:
-    import checker as eval_checker
-except Exception:
-    eval_checker = None
 
 # Get the Wi-Fi interface address
 def get_wifi_address():
@@ -109,39 +103,44 @@ def run_sweep(now=None):
         return []
 
 
-def no_key_result():
-    """The honest answer when no real check can be made: cannot_tell,
-    silent, and nothing is kept or confirmed on its word."""
-    return {
-        "verdict": "cannot_tell",
-        "reason": "No model key is set, so no real check was made.",
-        "latency_ms": 0,
-        "usage": {"spark_input_tokens": 0, "spark_output_tokens": 0, "sam_images": 0},
-    }
+# Which checker makes the checks. "endpoint" (the default, and the
+# submission path) asks the configured OpenAI-compatible endpoint, the
+# DGX's llama-server unless TRUSS_BASE_URL says otherwise; see
+# endpoint.py and verdict.py. "meta" is accepted as the same thing.
+# "aman" asks the owner's own Aman instance instead, a bridge that is
+# never used in the demo; see aman_check.py. Any other value is not
+# understood and falls back to "endpoint", said out loud here.
+CHECKER = os.environ.get("TRUSS_CHECKER", "endpoint")
+if CHECKER == "meta":
+    CHECKER = "endpoint"
+if CHECKER not in ("endpoint", "aman"):
+    print("The TRUSS_CHECKER value was not understood; the endpoint checker is being used.")
+    CHECKER = "endpoint"
 
+# The endpoint checker's mode: "single" (the frame plus the question's
+# looks.txt, the default) or "multi" (yes-look, no-look and frame as
+# three images). See verdict.py.
+CHECK_MODE = os.environ.get("TRUSS_CHECK_MODE", "single")
+if CHECK_MODE not in verdict.MODES:
+    print("The TRUSS_CHECK_MODE value was not understood; single mode is being used.")
+    CHECK_MODE = "single"
 
-# Which checker makes the checks. "meta" (the default, and the
-# submission path) uses the canonical checker in eval/checker.py.
-# "aman" asks the owner's own Aman instance instead, a bridge while
-# the Meta model key is awaited; see aman_check.py. Any other value is
-# not understood and falls back to "meta", said out loud here.
-CHECKER = os.environ.get("TRUSS_CHECKER", "meta")
-if CHECKER not in ("meta", "aman"):
-    print(
-        f"TRUSS_CHECKER value {CHECKER!r} was not understood; "
-        "the Meta checker is being used."
-    )
-    CHECKER = "meta"
 if CHECKER == "aman":
     print("Checks will be made by Aman (TRUSS_CHECKER=aman).")
+else:
+    try:
+        _cfg = endpoint.config_from_env()
+        print(f"Checks will be made by {_cfg.model} at {_cfg.base_url}, {CHECK_MODE} mode.")
+    except endpoint.EndpointError as e:
+        # Every check will read cannot_tell with the same reason.
+        print(f"No checks will be made: {e}")
 
 
 def production_check(frame_path, entry):
-    """The loop's check function. With TRUSS_CHECKER=aman, Aman makes
-    the check with the question's own reference looks. Otherwise, with
-    a model key in the environment, run the canonical checker in
-    planted mode with the question's reference looks. Without a key,
-    no real check can be made."""
+    """The loop's check function, with the question's own reference
+    looks. The endpoint checker reads the question's looks.txt from its
+    folder in single mode and sends both looks as images in multi
+    mode; Aman gets both looks as images."""
     if CHECKER == "aman":
         return aman_check.check(
             frame_path,
@@ -149,27 +148,31 @@ def production_check(frame_path, entry):
             ref_yes=entry["ref_yes_path"],
             ref_no=entry["ref_no_path"],
         )
-    if os.environ.get("MODEL_API_KEY") and eval_checker is not None:
-        return eval_checker.check(
-            str(frame_path),
-            entry["question"],
-            "planted",
-            ref_yes=entry["ref_yes_path"],
-            ref_no=entry["ref_no_path"],
-        )
-    return no_key_result()
+    return verdict.check(
+        frame_path,
+        entry["question"],
+        mode=CHECK_MODE,
+        ref_yes=entry["ref_yes_path"],
+        ref_no=entry["ref_no_path"],
+        looks=verdict.read_looks(Path(entry["ref_yes_path"]).parent),
+    )
 
 
 def guide_check(frame_path, question_text):
-    """The guide's check function. With TRUSS_CHECKER=aman, Aman makes
-    the check. Otherwise the canonical checker in generic mode, since
-    guide steps carry no reference looks."""
+    """The guide's check function. Guide steps carry no reference
+    looks, so the check is the frame and the step's question alone."""
     if CHECKER == "aman":
         return aman_check.check(frame_path, question_text)
-    if os.environ.get("MODEL_API_KEY") and eval_checker is not None:
-        return eval_checker.check(str(frame_path), question_text, "generic")
-    return no_key_result()
+    return verdict.check(frame_path, question_text, mode=CHECK_MODE)
 
+
+# The evidence outline (see sam_client.py): with TRUSS_EVIDENCE_OUTLINE=1,
+# each firing also gets a copy of its evidence photo with the object
+# outlined by SAM on the DGX, written beside it in the background.
+OUTLINER = None
+if sam_client.outline_enabled():
+    OUTLINER = sam_client.EvidenceOutliner()
+    print(f"Evidence photos will be outlined by SAM at {sam_client.config_from_env().url}.")
 
 # The check loop (see checkloop.py). Spoken answers are returned to the
 # app in the /capture response; speaking them is the app's side.
@@ -179,6 +182,7 @@ LOOP = CheckLoop(
     Path(__file__).parent / "log",
     now_fn=lambda: CLOCK(),
     checks=CHECKS,
+    outline_fn=OUTLINER,
 )
 
 # The over-the-shoulder guide (see guide.py). One session at a time, in

@@ -29,6 +29,8 @@ with scripted verdicts and no model key.
 from datetime import datetime
 from pathlib import Path
 
+from checkloop import model_name
+
 
 def _question(text):
     text = text.strip()
@@ -60,6 +62,7 @@ class Guide:
         self.streak = 0
         self.state = "active"
         self.outcomes = []
+        self.models = []
 
     # -- speaking -----------------------------------------------------------
 
@@ -103,6 +106,9 @@ class Guide:
                 result, verdict = {}, None
                 errors += 1
             if verdict == "yes":
+                name = model_name(result)
+                if name not in self.models:
+                    self.models.append(name)
                 speak = self._advance("yes")
             elif verdict == "cannot_tell":
                 self.streak += 1
@@ -155,6 +161,9 @@ class Guide:
             line = (
                 f"{now.strftime('%H:%M:%S')} | guided: {self.title} | done | "
                 + "; ".join(self.steps)
+                # The models that confirmed steps; none when every step
+                # was skipped.
+                + f" | model: {', '.join(self.models) or 'none'}"
                 + "\n"
             )
             with open(day / "answers.txt", "a") as f:

@@ -66,18 +66,113 @@ day's `answers.txt`, and its spoken answer is returned to the app in the
 deleted: kept photos are only ones a question fired on. When no question
 is standing, `/capture` behaves exactly as it did before the loop.
 
-Checks run through the canonical checker in `eval/checker.py`, in planted
-mode. Without `MODEL_API_KEY` in the environment no real check can be
-made, and every check honestly reports cannot-tell.
+## Checking
+
+Checks go to one OpenAI-compatible `chat/completions` endpoint (see
+`endpoint.py` and `verdict.py`). By default that is Muse Glimmer 30B
+under `llama-server` on the DGX; the Meta Model API is the same code
+with different settings:
+
+| Variable | Default | Meta Model API |
+| --- | --- | --- |
+| `TRUSS_BASE_URL` | `http://127.0.0.1:8080/v1` | `https://api.meta.ai/v1` |
+| `TRUSS_MODEL` | `muse-glimmer-30b` | `muse-spark-1.3` (never the contributor tier) |
+| `TRUSS_API_KEY` | none (falls back to `MODEL_API_KEY`) | the key |
+| `TRUSS_TIMEOUT_S` | `120` (the whole check, retry included) | |
+| `TRUSS_MAX_TOKENS` | `2048` (room to think, then answer) | |
+| `TRUSS_CHECK_MODE` | `single` | |
+
+Any model name containing `contributor` is refused before anything is
+sent: that tier trains on what it is sent. A key is only sent over
+https or to this machine; over plain http to the DGX it is left off
+(llama-server needs none), so an exported `MODEL_API_KEY` never crosses
+the LAN in the clear.
+
+Run `llama-server` with `--reasoning-format deepseek` so Glimmer's
+thinking lands in `reasoning_content`, which is never read. Thinking
+left in the reply is stripped before it is read either way.
+
+Set `TRUSS_BASE_URL` to the DGX's address, for example
+`http://<dgx>:8080/v1`. Set `TRUSS_MODEL` to the name `llama-server`
+reports, if it is not `muse-glimmer-30b` (llama-server serves one model
+and does not check the name, but the answer log records it). The server
+prints the model, address and mode it will use at startup.
+
+Every check asks for this reply, as a strict JSON schema
+(`response_format` json_schema, strict), with the schema also spelled
+out in the prompt:
+
+```json
+{"verdict": "yes | no | cannot_tell",
+ "reason": "one sentence naming what in the frame decides it",
+ "missing": "what would be needed if cannot_tell, else empty"}
+```
+
+The reply is validated against the schema here as well, strictly: after
+thinking is stripped and one code fence allowed, the whole reply must be
+one JSON object with no duplicate keys, so prose around it, or a draft
+inside the thinking, is never read as the answer. A reply cut off by the
+token limit is never read at all, whatever it holds; it is retried once
+with twice the room. A reply that does not validate, or a server that
+refuses `response_format`, gets one retry. A second failure, an
+unreachable endpoint, a refused key or a timeout is a cannot-tell that
+says no check was made, never a verdict, and the result's `failure`
+field names why (`truncated`, `invalid`, `timeout`, ...), so the eval
+can tell a cut-off from the model honestly saying cannot-tell. A yes or
+no with an empty reason, or with something named as missing, is read as
+cannot-tell. Each line in the answer log, and the guide's done line,
+names the model that made the call (`unknown` if a checker does not
+say; Aman's answers are `aman` or `aman:<AMAN_MODEL_NAME>`).
+
+Two modes, set by `TRUSS_CHECK_MODE`:
+
+- `single` (default): the current frame, plus the question's
+  `looks.txt` (the plant-time words for what tells this home's yes-look
+  from its no-look) when the question folder has one, quoted in the
+  user turn as description, never in the system prompt. A question with
+  no `looks.txt` (planted before the compile, or a re-shot look whose
+  recompile has not landed) is checked from the frame and question
+  alone, with no reference at all; the result's `looks` field says
+  `none` when that happened.
+- `multi`: the yes-look, the no-look and the current frame as three
+  images. Stays off until the multi-image test on the DGX passes.
+
+One live check from the command line, for acceptance and bring-up:
+
+```bash
+export TRUSS_BASE_URL=http://<dgx>:8080/v1
+python3 check_once.py photo.jpg "Is the tv on?"
+```
+
+## The evidence outline (SAM on the DGX)
+
+When a question fires, the kept evidence photo can get a copy with the
+object outlined, found by SAM on the DGX from the question's compiled
+phrases (`prompts.txt`, one per line). The evidence photo is never
+changed; the copy goes beside it as `<evidence>_outline.jpg` in the
+day's log folder. It is off by default and runs in the background, so
+SAM can never delay or stop a spoken answer. A question with no
+`prompts.txt` gets no outline, said in the server's output.
+
+| Variable | Default | |
+|---|---|---|
+| `TRUSS_EVIDENCE_OUTLINE` | off | `1` turns it on |
+| `TRUSS_SAM_URL` | `http://127.0.0.1:8090` | `http://<dgx>:8090` |
+| `TRUSS_SAM_KEY` | none | the SAM service's own key, if it has one (plain http on the LAN: never the Meta key) |
+| `TRUSS_SAM_TIMEOUT_S` | `15` | |
+
+The DGX side, and the acceptance run, are in `dgx/sam/RUNBOOK.md`.
+`gate.py` holds the gate-miss detector for the later SAM presence gate;
+the gate itself is not wired until the app samples frames on its own.
 
 ## Checking with Aman for now
 
-While the Meta model key is awaited, the server can ask your own Aman
+Before `llama-server` is up on the DGX, the server can ask your own Aman
 instance to make the checks instead (see `aman_check.py`). This is a
-bridge for now, not a Meta check: nothing about it counts as a Meta
+bridge for now, not a Meta check, and it is never used in the demo: nothing about it counts as a Meta
 model check, and the eval stays Meta-only. Each check is one full Aman
 turn in a dedicated chat, and the verdict comes back in the same shape
-the Meta checker returns, so the check loop and the guide work
+the endpoint checker returns, so the check loop and the guide work
 unchanged.
 
 Setup:
@@ -108,8 +203,8 @@ Setup:
    `AMAN_BASE` defaults to `http://127.0.0.1:8791`; set it if Aman
    answers at a different address. At startup the server prints
    "Checks will be made by Aman" when the setting is on. Any other
-   `TRUSS_CHECKER` value is reported at startup and the Meta checker
-   is used instead.
+   `TRUSS_CHECKER` value is reported at startup and the endpoint
+   checker is used instead.
 
 Honest limits:
 
@@ -219,11 +314,12 @@ hardware, or `python3 test_bedtime.py` for the tested choreography.
 
 ## Notes
 
-- No cloud services are called by the server itself; model checks go to
-  the Meta Model API only when a key is set, or to your own Aman
-  instance when `TRUSS_CHECKER=aman` (see "Checking with Aman for now")
+- No cloud services are called by the server itself by default; model
+  checks go to the endpoint in `TRUSS_BASE_URL` (the DGX's
+  `llama-server` unless it points at the Meta Model API), or to your
+  own Aman instance when `TRUSS_CHECKER=aman`
 - Speech, photos, and the question store are handled on this machine;
-  the model check is the only outside call, and only with a key set
+  the model check is the only call off it
 - Photos are saved with timestamps in the captures/ directory
 - If whisper-cli is not installed, STT returns an error
 - The whisper model (ggml-small.en.bin) should be in truss-server/models/
