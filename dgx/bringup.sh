@@ -240,15 +240,27 @@ do_flags() {
 
 # True only when the pid file names a live llama-server on this port, so
 # a stale pid reused by some other process is never treated as ours.
+# True when the pid in the pid file is still alive, whatever it is
+# running. Right after launch the child may not have exec'd llama-server
+# yet, so the load loop uses only this.
+pid_alive() { [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; }
+
+# True only when the pid file names a live process running this script's
+# llama-server binary, so a stale pid reused by some other process is
+# never treated as ours. Matched on the executable, not the arguments.
 server_running() {
-  [ -f "$PID_FILE" ] || return 1
-  local pid; pid=$(cat "$PID_FILE")
-  kill -0 "$pid" 2>/dev/null || return 1
-  local cmd; cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
-  case "$cmd" in
-    *llama-server*"--port $PORT"*) return 0 ;;
-    *) return 1 ;;
+  pid_alive || return 1
+  local pid exe want
+  pid=$(cat "$PID_FILE")
+  exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null) || return 1
+  want=$(readlink -f "$SERVER_BIN" 2>/dev/null) || return 1
+  [ -n "$exe" ] && [ "$exe" = "$want" ] && return 0
+  # A wrapper script (or an interpreter) runs as another executable but
+  # carries the binary's path in its arguments.
+  case "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" in
+    *"$want "*|*"$SERVER_BIN "*) return 0 ;;
   esac
+  return 1
 }
 
 # Where this script reaches the server: loopback when it listens on all
@@ -361,7 +373,7 @@ do_serve() {
   # Loading ~20 GB from disk takes a minute or two the first time.
   local waited=0
   until health_ok; do
-    server_running || { tail -n 40 "$LOG_FILE"; die "llama-server exited during load (log above)."; }
+    pid_alive || { tail -n 40 "$LOG_FILE"; die "llama-server exited during load (log above)."; }
     sleep 3; waited=$((waited + 3))
     [ "$waited" -lt 600 ] || die "llama-server not healthy after 10 minutes. See $LOG_FILE"
   done
