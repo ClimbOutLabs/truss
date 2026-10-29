@@ -735,7 +735,7 @@ def test_miss_for_a_window_ending_at_midnight():
 
     early = {"kind": "window", "after": "00:30", "until": "02:00"}
     tmp, store, alerts = sweep_rig()
-    slug = planted_done(store, pattern=early)
+    slug = planted_done(store, pattern=early, planted_at="2026-10-26T08:00:00")
     store.mark_answered_with_witness(slug, "pills.jpg",
                                      when=datetime(2026, 10, 27, 0, 40))
     check("before an early window opens, yesterday's seen act stays seen",
