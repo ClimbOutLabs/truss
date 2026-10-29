@@ -78,15 +78,23 @@ Look for:
 
 ## 4. The acceptance check (item A's test, 1 min)
 
-From the laptop (or on the DGX with the default URL):
+From the laptop (or on the DGX with the default URL). The model name is
+the alias the script serves, `muse-glimmer-30b`; `curl
+http://<dgx-ip>:8080/v1/models` shows it.
 
     export TRUSS_BASE_URL=http://<dgx-ip>:8080/v1
-    python3 truss-server/check_once.py some-glasses-photo.jpg "Is the stove off?"
+    export TRUSS_MODEL=muse-glimmer-30b
+    python3 truss-server/check_once.py some-glasses-photo.jpg "Is the tv on?"
 
 Pass: a `yes`, `no` or `cannot_tell` with a one-sentence reason that
-names something really in the photo, and `"model": "muse-glimmer-30b"`.
-A reason ending "So no check was made." is a failure, not a verdict:
-go to Troubleshooting.
+names something really in the photo, `"failure": null`, and
+`"model": "muse-glimmer-30b"`. Any other `failure` (or a reason ending
+"So no check was made.") is a failed check, not a verdict: go to
+Troubleshooting. A 400 to the strict JSON-schema request is normal on
+some builds: the checker retries once without it. The checker allows
+2048 reply tokens (`TRUSS_MAX_TOKENS`) and 120 s (`TRUSS_TIMEOUT_S`).
+
+Post the printed JSON in the thread: this closes item A's acceptance.
 
 ## 5. The bench (about 15 min of your time, ~10 min of running)
 

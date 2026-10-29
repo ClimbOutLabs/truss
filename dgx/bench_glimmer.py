@@ -57,7 +57,6 @@ import endpoint  # noqa: E402
 import verdict  # noqa: E402
 
 LABELS = ("yes", "no", "cannot_tell")
-NO_CHECK = "no check was made"
 
 
 # -- llama-server timings -----------------------------------------------------
@@ -169,7 +168,10 @@ def run_check(photo, q, mode, cfg):
         "verdict": result["verdict"],
         "reason": result["reason"],
         "missing": result["missing"],
-        "failed": NO_CHECK in result["reason"],
+        # verdict.check names why no check was made in "failure" (None
+        # for an answer the model gave).
+        "failed": result.get("failure") is not None,
+        "failure": result.get("failure"),
         "total_ms": result["latency_ms"],
         "prefill_ms": round(total("prompt_ms")),
         "prompt_tokens": total("prompt_n"),
