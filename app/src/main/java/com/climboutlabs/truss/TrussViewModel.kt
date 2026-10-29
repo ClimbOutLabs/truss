@@ -130,6 +130,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   fun onSdkReady() {
     if (monitoringStarted) return
     monitoringStarted = true
+    startAlertPolling()
     _uiState.update { it.copy(sdkReady = true) }
     viewModelScope.launch {
       Wearables.registrationState.collect { value ->
@@ -462,30 +463,91 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   /**
-   * Speak lines through the glasses, in order. Only called once a capture's camera
-   * session has ended: opening Bluetooth audio can end a toolkit session, so the two
-   * are never held open together. A failure here never fails the capture itself; the
-   * lines stay on screen.
+   * Speak lines through the glasses, in order, returning true only when every
+   * line was played. Only called once a capture's camera session has ended:
+   * opening Bluetooth audio can end a toolkit session, so the two are never
+   * held open together. A failure here never fails the capture itself; the
+   * lines stay on screen. The missed-alert polling below relies on the true:
+   * an alert is confirmed to the laptop only when this returns it.
    */
-  private suspend fun speakViaGlasses(lines: List<String>) {
+  private suspend fun speakViaGlasses(lines: List<String>): Boolean {
     val audio = GlassesAudio(getApplication())
     try {
       val glasses = audio.routeToGlasses()
       if (glasses == null) {
         photoLog("No glasses audio route, so the answers were not spoken. They are on screen.")
-        return
+        return false
       }
       for (line in lines) {
         val requestStart = SystemClock.elapsedRealtime()
         val wavBytes = withContext(Dispatchers.IO) { laptopClient().postTts(line) }
         audio.playWav(wavBytes, glasses, requestStart)
       }
+      return true
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
       photoLog("Speaking the answers failed: ${e.message ?: e.toString()}")
+      return false
     } finally {
       audio.clearRouting()
+    }
+  }
+
+  // MARK: - Missed alerts
+
+  private var alertPollingStarted = false
+
+  /**
+   * Poll the laptop for missed-window alerts while the app runs. An alert's
+   * line is spoken through the same glasses path as capture answers, and the
+   * laptop is told only after it was spoken, so an alert that could not be
+   * spoken is offered again on the next poll instead of being lost.
+   */
+  private fun startAlertPolling() {
+    if (alertPollingStarted) return
+    alertPollingStarted = true
+    viewModelScope.launch {
+      while (true) {
+        delay(ALERT_POLL_MS)
+        pollAlertsOnce()
+      }
+    }
+  }
+
+  private suspend fun pollAlertsOnce() {
+    val state = _uiState.value
+    if (state.laptopIp.isBlank()) return
+    // Never together: while a capture may be holding a toolkit camera
+    // session, or the glasses audio is busy recording, speaking, or
+    // planting by voice, this cycle is skipped rather than opening
+    // audio alongside it.
+    if (state.photoBusy ||
+        state.streamActive ||
+        state.recordBusy ||
+        state.speakBusy ||
+        state.plantBusy) return
+    try {
+      val alerts = withContext(Dispatchers.IO) { laptopClient().getAlerts() }
+      for (alert in alerts) {
+        if (!speakViaGlasses(listOf(alert.line))) {
+          Log.i(TAG, "Missed alert ${alert.id} could not be spoken; it stays pending.")
+          continue
+        }
+        try {
+          withContext(Dispatchers.IO) { laptopClient().ackAlert(alert.id) }
+        } catch (e: Exception) {
+          // Spoken but not confirmed: the laptop will offer it again, and
+          // hearing it twice beats it never being heard at all.
+          Log.i(TAG, "Missed alert ${alert.id} confirmation failed: ${e.message ?: e.toString()}")
+        }
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      // The laptop being unreachable between polls is ordinary. Nothing
+      // here is a user-facing error, and no other flow waits on this.
+      Log.i(TAG, "Missed alert poll failed: ${e.message ?: e.toString()}")
     }
   }
 
@@ -729,5 +791,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val STEP_TIMEOUT_MS = 15_000L
     private const val RETURN_TIMEOUT_MS = 15_000L
     private const val POLL_MS = 500L
+    private const val ALERT_POLL_MS = 30_000L
   }
 }

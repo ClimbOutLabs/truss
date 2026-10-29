@@ -41,7 +41,7 @@ The server will:
 - `POST /capture` - Upload JPEG photo (multipart field "image"), returns `{"bytes": n}`
 - `POST /stt` - Upload WAV audio (multipart field "audio"), returns `{"text": "..."}`
 - `POST /tts` - Send JSON `{"text": "..."}`, returns audio/wav file
-- `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}`, returns the slug and the next prompt
+- `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}` with optional `"kind"`, `"pattern"`, `"safety"` (true or false), and `"look_at"`, returns the slug and the next prompt
 - `POST /plant/bedtime` - Plant the bedtime round (stove, front door, tonight's pills) in walk order, JSON with optional `"after"` and `"gap_minutes"`
 - `POST /guide/start` - Start a guided job, JSON `{"title": "...", "steps": ["Is the water shut off?", ...]}`, returns the first step as a line to speak
 - `POST /guide/skip` - Skip the guide's current step
@@ -49,6 +49,8 @@ The server will:
 - `GET /guide/status` - The guide's state, step, and current step
 - `POST /plant/ref?slug=...&kind=yes|no` - Save a reference look (multipart field "image")
 - `GET /questions` - List the standing questions and their states
+- `GET /alerts` - List the missed-window alerts still waiting to be spoken
+- `POST /alerts/ack` - Confirm one alert was spoken, JSON `{"id": "..."}`; the only way an alert clears
 
 ## Standing questions
 
@@ -215,6 +217,80 @@ Honest limits:
   is livable; the token cost is the price of the bridge.
 - A check never answers an approval card. If an Aman turn pauses for
   one, that check reads cannot-tell.
+
+## Done questions
+
+A state question asks how things are: is the stove off. A done
+question watches for a thing she has to do, inside a time window:
+take the night pills between 9 and 10, feed the dog between 8 and
+10 in the morning. It is planted like any question, with a "done"
+kind and a window pattern (see `questions.py`), and it is checked
+against her own reference looks like any question.
+
+If a check sees her do it, the loop remembers the time and keeps
+the photo as the witness. If she goes back to the same place later
+that day, about to do it again, one reminder is spoken: that is
+already done, and the time she did it. The reminder is spoken
+once, and its photo is kept as evidence like any firing.
+
+If the window closes and the loop never saw it done, that is not
+left as a note in a file. The server raises a missed-window alert
+(see `alerts.py`): the phone app polls for alerts about every 30
+seconds while it runs, speaks the line through the glasses, and
+only then tells the server it was spoken. An alert that could not
+be spoken stays pending and is offered again on the next poll. The
+only thing that ever clears an alert is that confirmation.
+
+An alert never says the thing was not done, because a missed witness
+is not a missed act: she may have done it with the glasses off. It
+says how much of the window was watched, read from the frames that
+were actually checked for that question, never from frames merely
+arriving (`coverage.py`; every check of a done question that returns
+a verdict leaves one line with its time in
+`log/<date>/checks-<slug>.txt`, while the photo itself is still
+deleted when nothing fires). A frame a guide took, a failed check, or
+a frame that arrived while the question rested is not watching. A gap
+of more than ten minutes between checks counts as not watching. A
+done window planted with no gap is checked on every frame inside it,
+since an act takes seconds. The three cases are worded as "I was with
+you the whole window and didn't see it", "I was with you from 9:10 PM to 9:50 PM
+and didn't see it", and "I wasn't with you during that window, so I
+can't say either way."
+
+## Safety questions
+
+A question planted with `"safety": true` (the stove, the pills) is
+one where a wrong word does harm. A done question is a safety
+question unless planted with `"safety": false`. "You didn't take your pills" after
+a missed witness is how Truss would cause the double dose it exists
+to prevent, so a safety alert directs her to look and never tells her
+to act: "Check the Tuesday PM compartment first, before you act on
+this. When I see it, I'll tell you what's there." The thing to look at is
+the optional `"look_at"` phrase given at planting; `{weekday}` in it
+is spoken as the day's name. Every sentence an alert can speak lives
+in one template table, and `test_safety.py` fails if any of them
+holds an action verb such as take, turn, feed, or lock, in any form
+(`wording.py`). The same scan refuses a look-at phrase with one, and a
+safety question's own words, which the alert speaks back, must open
+as a question (is, did, has, and so on), so "Take my night pills" is
+refused at planting.
+
+After a safety miss, a state check is owed for the rest of that day.
+The next frame that shows the thing is checked as it is now, against
+her own reference looks, and the result is spoken once as a
+description ("Here is what I see now: the Tuesday PM compartment is
+empty"), with the frame kept as evidence. A cannot_tell, or a yes or
+no with no description behind it, is silent, and the check waits for
+the next frame, with no gap between checks. The check and its spoken
+line name the look-at phrase for the missed day, so a check owed for
+Tuesday and made at 3 AM Wednesday asks about Tuesday's compartment.
+A miss settled after midnight is checked through the small hours
+(until 4 AM), and only when its look-at phrase names the day as
+`{weekday}`. A look-at phrase that names a day by itself (a weekday
+name, today, tonight, tomorrow, yesterday) or holds any other `{...}`
+is refused at planting, since it would be wrong on other days.
+Every done question, safety or not, must open as a question. The state check never records
+a witness: it says what is there, never when anything was done.
 
 ## The guide
 

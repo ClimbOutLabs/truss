@@ -8,13 +8,16 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from alerts import AlertStore, sweep_missed
 import aman_check
+from coverage import CheckLog
 import endpoint
 import sam_client
 import verdict
@@ -71,6 +74,33 @@ CAPTURES_DIR.mkdir(exist_ok=True)
 
 # The standing-question store (see questions.py)
 STORE = QuestionStore(Path(__file__).parent / "questions")
+
+# Pending missed-window alerts for done questions (see alerts.py).
+# An alert leaves this store only when the phone confirms its line
+# was spoken; nothing else clears it.
+ALERTS = AlertStore(Path(__file__).parent / "alerts")
+
+# The times each done question was actually checked, kept by day
+# next to the answer log (see coverage.py). Only the time is kept; the
+# photo itself still goes when no question fires on it. Alerts read
+# these to say how much of a window was really watched.
+CHECKS = CheckLog(Path(__file__).parent / "log")
+
+
+# The clock the sweep and the check loop read. Always the wall clock
+# in use; tests pin it so they never depend on the time of day.
+CLOCK = datetime.now
+
+
+def run_sweep(now=None):
+    """Raise any missed-window alerts that are due. Idempotent and
+    quiet about failure: a sweep that cannot run loses nothing, the
+    next one a few seconds later sees the same closed windows."""
+    try:
+        return sweep_missed(STORE, ALERTS, now=now or CLOCK(), checks=CHECKS)
+    except Exception as e:
+        print(f"Missed-window sweep failed: {e}")
+        return []
 
 
 # Which checker makes the checks. "endpoint" (the default, and the
@@ -146,8 +176,14 @@ if sam_client.outline_enabled():
 
 # The check loop (see checkloop.py). Spoken answers are returned to the
 # app in the /capture response; speaking them is the app's side.
-LOOP = CheckLoop(STORE, production_check, Path(__file__).parent / "log",
-                 outline_fn=OUTLINER)
+LOOP = CheckLoop(
+    STORE,
+    production_check,
+    Path(__file__).parent / "log",
+    now_fn=lambda: CLOCK(),
+    checks=CHECKS,
+    outline_fn=OUTLINER,
+)
 
 # The over-the-shoulder guide (see guide.py). One session at a time, in
 # memory; while a guide is active, captures go to it instead of the loop.
@@ -178,6 +214,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             print(f"GET / -> 200 OK")
         elif path == "/questions":
             self.handle_questions()
+        elif path == "/alerts":
+            self.handle_alerts()
         elif path == "/guide/status":
             self.handle_guide_status()
         else:
@@ -196,6 +234,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_plant_question()
         elif path == "/plant/bedtime":
             self.handle_plant_bedtime()
+        elif path == "/alerts/ack":
+            self.handle_alerts_ack()
         elif path == "/guide/start":
             self.handle_guide_start()
         elif path == "/guide/skip":
@@ -209,23 +249,72 @@ class TrussHandler(BaseHTTPRequestHandler):
 
     def handle_questions(self):
         """List the standing questions and their states."""
+        today = CLOCK().date().isoformat()
+        pending = {a["slug"] for a in ALERTS.pending() if a.get("date") == today}
         entries = []
         for entry in STORE.list():
-            entries.append({
+            item = {
                 "slug": entry["slug"],
                 "question": entry["question"],
+                "kind": entry["kind"],
+                "safety": entry["safety"],
                 "state": entry["state"],
                 "pattern": entry["pattern"],
                 "has_ref_yes": entry["has_ref_yes"],
                 "has_ref_no": entry["has_ref_no"],
-            })
+            }
+            if entry["kind"] == "done":
+                try:
+                    status = STORE.done_status(entry["slug"], now=CLOCK())
+                except Exception:
+                    status = {"witness_time": None, "redo_spoken": False}
+                item["witness_time"] = status["witness_time"]
+                item["redo_spoken"] = status["redo_spoken"]
+                item["miss_pending"] = entry["slug"] in pending
+            entries.append(item)
         self.send_json({"questions": entries})
         print(f"GET /questions -> {len(entries)} questions")
+
+    def handle_alerts(self):
+        """The missed-window alerts still waiting to be spoken. The
+        sweep runs first, so a window that closed a moment ago is
+        already here on this poll."""
+        run_sweep()
+        alerts = [
+            {"id": a["id"], "line": a["line"]} for a in ALERTS.pending()
+        ]
+        self.send_json({"alerts": alerts})
+        print(f"GET /alerts -> {len(alerts)} pending")
+
+    def handle_alerts_ack(self):
+        """Confirm one alert was spoken: POST JSON {"id": ...}. That
+        confirmation is the only thing that ever clears an alert. An
+        id that names no pending alert is refused, and nothing
+        changes."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode())
+        except Exception:
+            self.send_error(400, "Body must be JSON with an alert id")
+            return
+        alert_id = data.get("id") if isinstance(data, dict) else None
+        if not ALERTS.ack(alert_id):
+            self.send_error(404, "No pending alert with that id.")
+            return
+        self.send_json({"acked": alert_id})
+        print(f"POST /alerts/ack -> {alert_id}")
 
     def handle_plant_question(self):
         """Start planting a question: POST JSON {"text": ..., "pattern": ...}.
 
-        Voice planting uses the same endpoint: the app sends the recording
+        An optional "kind" says whether it is a state question or a
+        done question; without one it is a state question. An optional
+        "safety" (true or false) marks a question where a wrong word
+        does harm (left out, a done question is safety and a state
+        question is not), and an optional "look_at" names the thing to look at
+        in a missed-window alert, like "the {weekday} PM compartment". Voice
+        planting uses the same endpoint: the app sends the recording
         to /stt first, then posts the transcript here as text.
         """
         try:
@@ -236,9 +325,17 @@ class TrussHandler(BaseHTTPRequestHandler):
             if not text:
                 self.send_error(400, "No question text provided")
                 return
-            slug = STORE.create(text, data.get("pattern"))
+            slug = STORE.create(
+                text,
+                data.get("pattern"),
+                kind=data.get("kind") or "state",
+                safety=data.get("safety"),
+                look_at=data.get("look_at"),
+            )
             self.send_json({
                 "slug": slug,
+                "kind": STORE.get(slug)["kind"],
+                "safety": STORE.get(slug)["safety"],
                 "state": "planting",
                 "next": "Show me what yes looks like.",
             })
@@ -435,6 +532,10 @@ class TrussHandler(BaseHTTPRequestHandler):
     
     def handle_capture(self):
         """Handle photo upload."""
+        # A capture starting means the wearer is about; it is also a
+        # deterministic moment to raise any missed-window alerts,
+        # without waiting for the background sweep.
+        run_sweep()
         try:
             content_type = self.headers.get("Content-Type", "")
             if not content_type.startswith("multipart/form-data"):
@@ -658,10 +759,20 @@ class TrussHandler(BaseHTTPRequestHandler):
                     return data
         return None
 
+def _sweep_forever():
+    """The background half of the missed-window alerts: while the
+    server runs, a closed window is noticed within about half a
+    minute, whether or not any photo arrives."""
+    while True:
+        run_sweep()
+        time.sleep(30)
+
+
 def main():
     host = get_wifi_address()
     port = 8792
-    
+
+    threading.Thread(target=_sweep_forever, daemon=True).start()
     server = HTTPServer((host, port), TrussHandler)
     print(f"\nTruss server starting on {host}:{port}")
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")

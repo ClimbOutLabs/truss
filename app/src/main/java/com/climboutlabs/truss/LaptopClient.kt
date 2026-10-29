@@ -24,6 +24,10 @@ data class QuestionInfo(
     val hasRefYes: Boolean,
     val hasRefNo: Boolean,
 )
+
+/** One missed-window alert as GET /alerts reports it: an id and the line to
+ * speak. The alert stays on the laptop until ackAlert confirms it was spoken. */
+data class MissAlert(val id: String, val line: String)
 class LaptopClient(laptopIp: String) {
 
   private val base: String
@@ -105,6 +109,22 @@ class LaptopClient(laptopIp: String) {
           hasRefNo = item.getBoolean("has_ref_no"),
       )
     }
+  }
+
+  /** GET /alerts: the missed-window alerts still waiting to be spoken. */
+  fun getAlerts(): List<MissAlert> {
+    val array = JSONObject(getJson("/alerts")).getJSONArray("alerts")
+    return List(array.length()) { i ->
+      val item = array.getJSONObject(i)
+      MissAlert(id = item.getString("id"), line = item.getString("line"))
+    }
+  }
+
+  /** POST /alerts/ack for one alert, confirming its line was spoken. Throws
+   * on a non-2xx answer, like the other calls here, so the caller knows the
+   * confirmation did not land and the alert will be offered again. */
+  fun ackAlert(id: String) {
+    postJson("/alerts/ack", JSONObject().put("id", id))
   }
 
   /** POST /stt, multipart field "audio" (WAV). Returns the transcript text. */
