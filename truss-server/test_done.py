@@ -11,6 +11,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 from datetime import datetime, timedelta
 from http.server import HTTPServer
@@ -732,6 +733,20 @@ def test_miss_for_a_window_ending_at_midnight():
     check("an act seen yesterday is never called missed after midnight",
           sweep_missed(store, alerts, now=after_midnight) == [])
 
+    early = {"kind": "window", "after": "00:30", "until": "02:00"}
+    tmp, store, alerts = sweep_rig()
+    slug = planted_done(store, pattern=early)
+    store.mark_answered_with_witness(slug, "pills.jpg",
+                                     when=datetime(2026, 10, 27, 0, 40))
+    check("before an early window opens, yesterday's seen act stays seen",
+          sweep_missed(store, alerts, now=datetime(2026, 10, 28, 0, 20)) == [])
+    # Taken again tonight: today's firing replaces yesterday's record.
+    store.mark_answered_with_witness(slug, "pills2.jpg",
+                                     when=datetime(2026, 10, 28, 0, 45))
+    check("once today's early window opens, yesterday is never called missed",
+          sweep_missed(store, alerts, now=datetime(2026, 10, 28, 0, 50)) == []
+          and alerts.pending() == [])
+
     tmp, store, alerts = sweep_rig()
     planted_done(store, pattern=late)
     check("yesterday is left alone after 1 AM",
@@ -936,6 +951,11 @@ def test_http():
         thread.start()
         base = f"http://127.0.0.1:{port}"
         try:
+            # The real clock drives this rig, so the window must have
+            # closed already: run inside 00:00 to 00:01 and it waits.
+            closed = datetime.now().replace(hour=0, minute=1, second=5, microsecond=0)
+            if datetime.now() < closed:
+                time.sleep((closed - datetime.now()).total_seconds())
             window = {"kind": "window", "after": "00:00", "until": "00:01"}
             status, body = post(
                 base + "/plant/question",

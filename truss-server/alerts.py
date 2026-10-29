@@ -226,7 +226,13 @@ def _sweep_one(store, alerts, entry, now, day):
         # a window that does not end after it starts never raises
         # a miss, on any day.
         return None
-    until = times[1]
+    after, until = times
+    if day != now.date() and now.time() >= after:
+        # Today's window has opened, so a firing today may already
+        # have replaced yesterday's answered mark and witness on the
+        # record. Yesterday can no longer be read truthfully, and it
+        # is left alone rather than risk calling a seen act missed.
+        return None
     today = day.isoformat()
     planted = entry.get("planted_at")
     if isinstance(planted, str):
