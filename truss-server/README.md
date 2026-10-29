@@ -64,9 +64,136 @@ day's `answers.txt`, and its spoken answer is returned to the app in the
 deleted: kept photos are only ones a question fired on. When no question
 is standing, `/capture` behaves exactly as it did before the loop.
 
-Checks run through the canonical checker in `eval/checker.py`, in planted
-mode. Without `MODEL_API_KEY` in the environment no real check can be
-made, and every check honestly reports cannot-tell.
+## Checking
+
+Checks go to one OpenAI-compatible `chat/completions` endpoint (see
+`endpoint.py` and `verdict.py`). By default that is Muse Glimmer 30B
+under `llama-server` on the DGX; the Meta Model API is the same code
+with different settings:
+
+| Variable | Default | Meta Model API |
+| --- | --- | --- |
+| `TRUSS_BASE_URL` | `http://127.0.0.1:8080/v1` | `https://api.meta.ai/v1` |
+| `TRUSS_MODEL` | `muse-glimmer-30b` | `muse-spark-1.3` (never the contributor tier) |
+| `TRUSS_API_KEY` | none (falls back to `MODEL_API_KEY`) | the key |
+| `TRUSS_TIMEOUT_S` | `120` (the whole check, retry included) | |
+| `TRUSS_MAX_TOKENS` | `2048` (room to think, then answer) | |
+| `TRUSS_CHECK_MODE` | `single` | |
+
+Any model name containing `contributor` is refused before anything is
+sent: that tier trains on what it is sent. A key is only sent over
+https or to this machine; over plain http to the DGX it is left off
+(llama-server needs none), so an exported `MODEL_API_KEY` never crosses
+the LAN in the clear.
+
+Run `llama-server` with `--reasoning-format deepseek` so Glimmer's
+thinking lands in `reasoning_content`, which is never read. Thinking
+left in the reply is stripped before it is read either way.
+
+Set `TRUSS_BASE_URL` to the DGX's address, for example
+`http://<dgx>:8080/v1`. Set `TRUSS_MODEL` to the name `llama-server`
+reports, if it is not `muse-glimmer-30b` (llama-server serves one model
+and does not check the name, but the answer log records it). The server
+prints the model, address and mode it will use at startup.
+
+Every check asks for this reply, as a strict JSON schema
+(`response_format` json_schema, strict), with the schema also spelled
+out in the prompt:
+
+```json
+{"verdict": "yes | no | cannot_tell",
+ "reason": "one sentence naming what in the frame decides it",
+ "missing": "what would be needed if cannot_tell, else empty"}
+```
+
+The reply is validated against the schema here as well, strictly: after
+thinking is stripped and one code fence allowed, the whole reply must be
+one JSON object with no duplicate keys, so prose around it, or a draft
+inside the thinking, is never read as the answer. A reply cut off by the
+token limit is never read at all, whatever it holds; it is retried once
+with twice the room. A reply that does not validate, or a server that
+refuses `response_format`, gets one retry. A second failure, an
+unreachable endpoint, a refused key or a timeout is a cannot-tell that
+says no check was made, never a verdict, and the result's `failure`
+field names why (`truncated`, `invalid`, `timeout`, ...), so the eval
+can tell a cut-off from the model honestly saying cannot-tell. A yes or
+no with an empty reason, or with something named as missing, is read as
+cannot-tell. Each line in the answer log, and the guide's done line,
+names the model that made the call (`unknown` if a checker does not
+say; Aman's answers are `aman` or `aman:<AMAN_MODEL_NAME>`).
+
+Two modes, set by `TRUSS_CHECK_MODE`:
+
+- `single` (default): the current frame, plus the question's
+  `looks.txt` (the plant-time words for what tells this home's yes-look
+  from its no-look) when the question folder has one, quoted in the
+  user turn as description, never in the system prompt. A question with
+  no `looks.txt` (planted before the compile, or a re-shot look whose
+  recompile has not landed) is checked from the frame and question
+  alone, with no reference at all; the result's `looks` field says
+  `none` when that happened.
+- `multi`: the yes-look, the no-look and the current frame as three
+  images. Stays off until the multi-image test on the DGX passes.
+
+One live check from the command line, for acceptance and bring-up:
+
+```bash
+export TRUSS_BASE_URL=http://<dgx>:8080/v1
+python3 check_once.py photo.jpg "Is the tv on?"
+```
+
+## Checking with Aman for now
+
+Before `llama-server` is up on the DGX, the server can ask your own Aman
+instance to make the checks instead (see `aman_check.py`). This is a
+bridge for now, not a Meta check, and it is never used in the demo: nothing about it counts as a Meta
+model check, and the eval stays Meta-only. Each check is one full Aman
+turn in a dedicated chat, and the verdict comes back in the same shape
+the endpoint checker returns, so the check loop and the guide work
+unchanged.
+
+Setup:
+
+1. In Aman, make a chat on a model that can read images, with vision
+   enabled in that model's settings (Settings, then the model
+   provider, then the model's Vision option). A model without vision
+   enabled only receives text read out of the photo, and most visual
+   questions honestly come back cannot-tell.
+2. Get the sign-in token from the browser by clipboard, never typed
+   into a file: in the browser tab where Aman is signed in, open
+   DevTools, then Application, then Cookies, then the Aman address,
+   and copy the value of the cookie whose name starts with
+   `accessToken`. In the terminal, load it with
+   `export AMAN_TOKEN="$(pbpaste)"`.
+3. Find the chat's session id by running the spike probe,
+   `python3 eval/aman_truss_spike.py probe`, from the repo root. The
+   chat is listed with its id. A chat with no message in it does not
+   appear yet, so send it any first message.
+4. Set the checker and start the server:
+
+   ```bash
+   export AMAN_CHECK_SESSION_ID=<the chat's session id>
+   export TRUSS_CHECKER=aman
+   python3 server.py
+   ```
+
+   `AMAN_BASE` defaults to `http://127.0.0.1:8791`; set it if Aman
+   answers at a different address. At startup the server prints
+   "Checks will be made by Aman" when the setting is on. Any other
+   `TRUSS_CHECKER` value is reported at startup and the endpoint
+   checker is used instead.
+
+Honest limits:
+
+- The token expires. When it does, Aman refuses it and every check
+  reads cannot-tell, never a wrong verdict, until `AMAN_TOKEN` is
+  refreshed the same way and the server is restarted.
+- Each check is a full Aman turn, about 11 seconds and a full persona
+  prompt of tokens on the Aman side (about 15,000 input tokens in the
+  owner's spike runs). Questions are checked on glances, so the wait
+  is livable; the token cost is the price of the bridge.
+- A check never answers an approval card. If an Aman turn pauses for
+  one, that check reads cannot-tell.
 
 ## The guide
 
@@ -90,10 +217,12 @@ hardware, or `python3 test_bedtime.py` for the tested choreography.
 
 ## Notes
 
-- No cloud services are called by the server itself; model checks go to
-  the Meta Model API only when a key is set
+- No cloud services are called by the server itself by default; model
+  checks go to the endpoint in `TRUSS_BASE_URL` (the DGX's
+  `llama-server` unless it points at the Meta Model API), or to your
+  own Aman instance when `TRUSS_CHECKER=aman`
 - Speech, photos, and the question store are handled on this machine;
-  the model check is the only outside call, and only with a key set
+  the model check is the only call off it
 - Photos are saved with timestamps in the captures/ directory
 - If whisper-cli is not installed, STT returns an error
 - The whisper model (ggml-small.en.bin) should be in truss-server/models/
