@@ -8,6 +8,8 @@ Plain files, one folder per question under the store root:
     <slug>/ref-yes.jpg     the reference look for yes, taken at plant time
     <slug>/ref-no.jpg      the reference look for no, taken at plant time
     <slug>/watch.json      the time pattern, the state, and the check history
+    <slug>/prompts.txt     SAM noun phrases, written by plant_compile.py
+    <slug>/looks.txt       the looks in words, written by plant_compile.py
 
 States: planting (still collecting reference looks), standing (live),
 answered (fired; may re-arm if the pattern says so), retired.
@@ -133,6 +135,9 @@ def _clean_pattern(pattern):
 
 
 QUESTION_KINDS = ("state", "done")
+
+# Written by plant_compile.py from the two reference looks.
+COMPILED_FILES = ("looks.txt", "prompts.txt")
 
 
 def _clean_kind(value):
@@ -399,6 +404,12 @@ class QuestionStore:
         # memory only: after a restart no check is running.
         self._in_flight = Counter()
 
+    @property
+    def lock(self):
+        """The store lock, for plant_compile.py: it writes the compiled
+        files under it so a re-shot look and a compile cannot cross."""
+        return self._lock
+
     # -- internal helpers -------------------------------------------------
 
     def _folder(self, slug):
@@ -552,6 +563,18 @@ class QuestionStore:
                 # Refuse before writing anything: a look saved into a
                 # folder reads cannot see would plant a phantom.
                 raise KeyError(f"No question named {slug}.")
+            # The compiled files describe the photos they were made
+            # from. A new look makes them wrong, so they go first,
+            # under the lock, before the new photo is written: a crash
+            # between the two then leaves no description at all
+            # (startup recompiles it), never a stale one beside a new
+            # photo. A compile already in flight on the old photos
+            # sees the change and writes nothing (see plant_compile.py).
+            # Until the recompile lands, the check runs without them.
+            # A file that cannot be deleted stops the save: the old
+            # photo stays, and so does the description that matches it.
+            for name in COMPILED_FILES:
+                (folder / name).unlink(missing_ok=True)
             (folder / f"ref-{kind}.jpg").write_bytes(data)
             if (
                 watch["state"] == "planting"
