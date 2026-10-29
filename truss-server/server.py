@@ -5,6 +5,7 @@ Handles photo uploads, speech-to-text, and text-to-speech for the Truss app.
 """
 
 import json
+import math
 import os
 import subprocess
 import tempfile
@@ -125,6 +126,32 @@ CHECK_MODE = os.environ.get("TRUSS_CHECK_MODE", "single")
 if CHECK_MODE not in verdict.MODES:
     print("The TRUSS_CHECK_MODE value was not understood; single mode is being used.")
     CHECK_MODE = "single"
+
+# For a live test session only. TRUSS_PLANT_MINUTES sets how often a
+# question planted with no pattern of its own (every planting from the
+# app) is checked, instead of every 15 minutes; 0 checks it on every
+# capture until it fires. TRUSS_BEDTIME_AFTER sets when the app's
+# bedtime round starts each night, instead of 20:00. Left unset, both
+# keep their usual values.
+PLANT_PATTERN = None
+_plant_minutes = os.environ.get("TRUSS_PLANT_MINUTES", "").strip()
+if _plant_minutes:
+    try:
+        _minutes = float(_plant_minutes)
+        if not math.isfinite(_minutes) or _minutes < 0:
+            raise ValueError
+        PLANT_PATTERN = {
+            "kind": "interval",
+            "minutes": int(_minutes) if _minutes.is_integer() else _minutes,
+        }
+        print(f"Questions planted from the app are checked every {_plant_minutes} minutes (TRUSS_PLANT_MINUTES).")
+    except ValueError:
+        PLANT_PATTERN = None
+        print("The TRUSS_PLANT_MINUTES value was not understood; app plantings are checked every 15 minutes.")
+
+BEDTIME_AFTER = os.environ.get("TRUSS_BEDTIME_AFTER", "").strip() or "20:00"
+if BEDTIME_AFTER != "20:00":
+    print(f"The bedtime round starts at {BEDTIME_AFTER} (TRUSS_BEDTIME_AFTER).")
 
 if CHECKER == "aman":
     print("Checks will be made by Aman (TRUSS_CHECKER=aman).")
@@ -343,7 +370,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 return
             slug = STORE.create(
                 text,
-                data.get("pattern"),
+                data.get("pattern") or PLANT_PATTERN,
                 kind=data.get("kind") or "state",
                 safety=data.get("safety"),
                 look_at=data.get("look_at"),
@@ -388,7 +415,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         try:
             planted = plant_round(
                 STORE,
-                after=opts.get("after", "20:00"),
+                after=opts.get("after", BEDTIME_AFTER),
                 gap_minutes=opts.get("gap_minutes", 1),
             )
         except ValueError as e:

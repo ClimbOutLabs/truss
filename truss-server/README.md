@@ -52,6 +52,16 @@ The server will:
 - `GET /alerts` - List the missed-window alerts still waiting to be spoken
 - `POST /alerts/ack` - Confirm one alert was spoken, JSON `{"id": "..."}`; the only way an alert clears
 
+## Live test settings
+
+Two settings make a live test session quicker. Leave both unset for
+the demo and for normal use.
+
+| Variable | Default | |
+|---|---|---|
+| `TRUSS_PLANT_MINUTES` | `15` | how often a question planted from the app is checked; `0` checks it on every capture until it fires |
+| `TRUSS_BEDTIME_AFTER` | `20:00` | when the app's bedtime round becomes due each night, like `00:00` |
+
 ## Standing questions
 
 Questions live as plain files under `truss-server/questions/`, one folder
