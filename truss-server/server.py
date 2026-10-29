@@ -261,7 +261,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             }
             if entry["kind"] == "done":
                 try:
-                    status = STORE.done_status(entry["slug"])
+                    status = STORE.done_status(entry["slug"], now=CLOCK())
                 except Exception:
                     status = {"witness_time": None, "redo_spoken": False}
                 item["witness_time"] = status["witness_time"]

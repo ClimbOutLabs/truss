@@ -242,6 +242,12 @@ NOT_A_NAME = {
     "not", "some", "make", "please", "be", "get", "keep", "let", "try",
     "check", "look", "any", "all", "no", "never", "just", "now", "always",
     "also", "then", "so", "more", "another", "one", "two", "both", "each",
+    # Verbs that open a command but are not on the action-verb list.
+    # Title-case imperatives beyond these are an accepted residual risk:
+    # without a dictionary, a capitalized word after a helper opener is
+    # taken as a name.
+    "remind", "got", "help", "bring", "call", "tell", "wait", "see",
+    "show", "have", "need", "want",
 }
 
 
@@ -266,10 +272,34 @@ def _asks_a_question(text):
     )
 
 
-DAY_WORDS = {
-    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
-    "sunday", "today", "tonight", "tomorrow", "yesterday",
+DAY_NAMES = (
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+)
+# Abbreviations as organizers print them (TUE, THURS, MON-FRI).
+DAY_ABBREVIATIONS = {
+    "mon", "tue", "tues", "wed", "weds", "thu", "thur", "thurs", "fri",
+    "sat", "sun",
 }
+RELATIVE_DAY_WORDS = {"today", "tonight", "tomorrow", "yesterday", "morrow"}
+RELATIVE_DAY_PHRASES = (
+    "last night", "this evening", "this morning", "this afternoon",
+    "this night", "next day",
+)
+
+
+def _day_word(word):
+    """The day a word names by itself, or None. Plurals and possessives
+    are stripped first, so "Tuesdays" and "tonight's" are caught."""
+    for suffix in ("'s", "s"):
+        if word.endswith(suffix) and len(word) > len(suffix) + 2:
+            stem = word[: -len(suffix)]
+            if _day_word(stem):
+                return word
+    if word in DAY_ABBREVIATIONS or word in RELATIVE_DAY_WORDS:
+        return word
+    if any(word.startswith(name) for name in DAY_NAMES):
+        return word
+    return None
 
 
 def _look_at_day_problem(look_at):
@@ -284,8 +314,10 @@ def _look_at_day_problem(look_at):
     bare = look_at.replace("{weekday}", " ")
     if "{" in bare or "}" in bare:
         return "The only placeholder a look-at phrase can hold is {weekday}."
-    words = set(re.findall(r"[a-z]+", bare.lower()))
-    named = sorted(words & DAY_WORDS)
+    lowered = bare.lower()
+    words = set(re.findall(r"[a-z']+", lowered))
+    named = sorted({w for w in words if _day_word(w)})
+    named += [p for p in RELATIVE_DAY_PHRASES if re.search(rf"\b{p}\b", lowered)]
     if named:
         return (
             "Name the day as {weekday}, never as a fixed day, so it is "

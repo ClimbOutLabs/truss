@@ -455,7 +455,12 @@ def test_safety_flag_in_the_store():
         for bad in ("x" * 200, "the pills you should take", "the stove, turned off",
                     "tonight's PM compartment", "the Tuesday PM compartment",
                     "the {Weekday} PM compartment", "the {day} compartment",
-                    "the {weekday PM compartment"):
+                    "the {weekday PM compartment", "the Tue PM compartment",
+                    "the TUES slot", "the Weds compartment", "the Thurs PM box",
+                    "the Sat compartment", "the Mon-Fri row", "the Tuesdays row",
+                    "last night's compartment", "this evening's compartment",
+                    "this morning's slot", "the next day compartment",
+                    "the morrow's slot"):
             try:
                 store.create("Is the tap running?", look_at=bad)
                 refused = False
@@ -474,7 +479,8 @@ def test_safety_flag_in_the_store():
         for bad in ("Take my night pills", "Have your pills now",
                     "Do take my night pills", "Did take the pills",
                     "Have Some pills now", "Do Not forget the stove",
-                    "Can Make sure the stove is off"):
+                    "Can Make sure the stove is off", "Do Remind me",
+                    "Have Got my pills"):
             try:
                 store.create(bad, WINDOW, kind="done", safety=False)
                 refused = False
@@ -482,13 +488,18 @@ def test_safety_flag_in_the_store():
                 refused = True
             check(f"a done question not asked as one is refused, safety or not: {bad}",
                   refused)
+        fridge = store.create(PILLS, WINDOW, kind="done",
+                              look_at="the {weekday} night slot by the fridge")
+        check("ordinary words that start like a day are not taken for one",
+              store.get(fridge)["look_at"] == "the {weekday} night slot by the fridge")
+        store.retire(fridge)
         rex = store.create("Has Rex been fed", WINDOW, kind="done", safety=False)
         check("a helper opener followed by a name is a question",
               store.get(rex)["question"] == "Has Rex been fed")
         unasked = store.create("Take a look at the garden", safety=False)
         check("a state question that is not safety is not gated",
               store.get(unasked)["safety"] is False)
-        check("refused questions planted nothing", len(store.list()) == 6)
+        check("refused questions planted nothing", len(store.list()) == 7)
         edit_watch(tmp, dog, safety="false")
         check("a stored flag that is not true or false reads as its kind's default",
               store.get(dog)["safety"] is True)
