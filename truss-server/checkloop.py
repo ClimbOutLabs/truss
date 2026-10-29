@@ -15,6 +15,10 @@ mode with the question's own reference looks.
   a question fired on; that deletion rule is a product feature.
 - When no question is standing, frames are not managed at all and the
   capture path behaves exactly as it did on day 1.
+- With an outline function (the evidence outline, TRUSS_EVIDENCE_OUTLINE
+  in server.py), a firing also asks for a copy of the evidence photo
+  with the object outlined. The evidence photo itself is never
+  changed, and the outline can never hold up or stop an answer.
 
 The check function is injected so the loop can be exercised end to end
 with scripted verdicts, and so the real checker (eval/checker.py) can
@@ -57,12 +61,16 @@ def speak_text(entry, result):
 
 
 class CheckLoop:
-    def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None):
+    def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None,
+                 outline_fn=None):
         self.store = store
         self.check_fn = check_fn
         self.log_dir = Path(log_dir)
         self.speak_fn = speak_fn
         self.now_fn = now_fn or datetime.now
+        # outline_fn(evidence, entries) returns where the outlined copy
+        # will be written, or None; see sam_client.EvidenceOutliner.
+        self.outline_fn = outline_fn
 
     def process_frame(self, frame_path):
         frame_path = Path(frame_path)
@@ -104,6 +112,7 @@ class CheckLoop:
 
         speak = []
         evidence = None
+        outline = None
         if fired:
             try:
                 evidence = self._save_evidence(frame_path, fired[0][0], now)
@@ -132,6 +141,12 @@ class CheckLoop:
                         self.speak_fn(text, entry, evidence)
                     except Exception:
                         errors += 1
+            if self.outline_fn is not None:
+                try:
+                    outline = self.outline_fn(evidence, [entry for entry, _ in fired])
+                except Exception:
+                    errors += 1
+                    outline = None
         else:
             frame_path.unlink(missing_ok=True)
 
@@ -140,6 +155,7 @@ class CheckLoop:
             "fired": [entry["slug"] for entry, _ in fired],
             "speak": speak,
             "evidence": str(evidence) if evidence else None,
+            "outline": str(outline) if outline else None,
             "errors": errors,
         }
 
