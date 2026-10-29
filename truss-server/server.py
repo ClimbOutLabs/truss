@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 import aman_check
 import endpoint
+import sam_client
 import verdict
 from bedtime import plant_round
 from checkloop import CheckLoop
@@ -135,9 +136,18 @@ def guide_check(frame_path, question_text):
     return verdict.check(frame_path, question_text, mode=CHECK_MODE)
 
 
+# The evidence outline (see sam_client.py): with TRUSS_EVIDENCE_OUTLINE=1,
+# each firing also gets a copy of its evidence photo with the object
+# outlined by SAM on the DGX, written beside it in the background.
+OUTLINER = None
+if sam_client.outline_enabled():
+    OUTLINER = sam_client.EvidenceOutliner()
+    print(f"Evidence photos will be outlined by SAM at {sam_client.config_from_env().url}.")
+
 # The check loop (see checkloop.py). Spoken answers are returned to the
 # app in the /capture response; speaking them is the app's side.
-LOOP = CheckLoop(STORE, production_check, Path(__file__).parent / "log")
+LOOP = CheckLoop(STORE, production_check, Path(__file__).parent / "log",
+                 outline_fn=OUTLINER)
 
 # The over-the-shoulder guide (see guide.py). One session at a time, in
 # memory; while a guide is active, captures go to it instead of the loop.
