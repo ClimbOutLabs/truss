@@ -147,6 +147,48 @@ Then the drafter comparison, same set, single mode only:
 
 Paste `summary.md` into the thread; that is the D result.
 
+## On an RTX 5060 instead of the DGX (until Oct 30)
+
+Good enough to get item A's acceptance check (step 4) passing and to
+check the plumbing. It is not good enough for the speed numbers, and
+not for the demo. Glimmer Q4_K_M is 16.8 GB, plus 1.4 GB for the mmproj
+file; the model card sizes it for a 24 GB card. Neither 5060 holds it,
+so some layers run on the CPU, and the speed then depends mostly on
+system RAM bandwidth. These are estimates, not measurements. They
+assume dual-channel DDR5; DDR4 is slower:
+
+| Card | Layers on the GPU | Decode | One verdict |
+|---|---|---|---|
+| RTX 5060 Ti 16 GB | ~70% | ~6 to 9 tok/s | ~20 to 50 s |
+| RTX 5060 8 GB | ~30% | ~3 to 5 tok/s | ~40 to 100 s |
+
+A verdict is the thinking plus the reply, roughly 150 to 350 tokens at
+reasoning strength low. Linux or WSL2 with the CUDA toolkit; the script
+is bash.
+
+    export CUDA_ARCH=120 DRAFT=0 CTX=16384 NGL=40   # 16 GB; try NGL=16 on 8 GB
+    ./dgx/bringup.sh all
+    grep offloaded ~/models/muse-glimmer/run/llama-server.log
+
+Raise `NGL` until the server fails to load with out-of-memory errors,
+then step back by 2. `nvidia-smi` should show about 1 GB free. Leave
+the drafter off (`DRAFT=0`): its 1.6 GB of VRAM is better spent on
+layers. `CTX=16384` still fits a three-image multi check, and its
+cache is smaller. Give the checker more time, because the default 120 s
+can run out on the 8 GB card:
+
+    export TRUSS_TIMEOUT_S=300
+
+The Unsloth mirror also has smaller files. `QUANT=UD-IQ3_XXS` (13.1 GB)
+fits almost entirely on the 16 GB card and runs several times faster.
+But 3-bit weights lose fine visual detail (a knob angle, an empty
+compartment), so use it to test the plumbing, never to judge
+verdicts. On 8 GB nothing fits whole; the smallest file is 10.7 GB.
+
+SAM 3.1 (item E) is a separate, much smaller model (under 1B
+parameters). It runs on either card by itself, but not beside Glimmer
+on the same card.
+
 ## Troubleshooting
 
 - `STOP: ... older than b10353`: `LLAMA_TAG=` unset picks the newest

@@ -26,7 +26,11 @@
 #   LLAMA_TAG    llama.cpp release tag to build; default: the newest
 #                bNNNNN tag, which must be b10353 or later (older builds
 #                do not register the Glimmer architecture at all)
-#   CUDA_ARCH    default 121 (the GB10 is sm_121)
+#   CUDA_ARCH    default 121 (the GB10 is sm_121); 120 for an RTX 50
+#                series card such as the 5060 / 5060 Ti
+#   NGL          layers on the GPU, default 99 (all). On a card smaller
+#                than the model (RTX 5060 8 GB, 5060 Ti 16 GB) set fewer
+#                and the rest run on the CPU; see RUNBOOK "On an RTX 5060"
 #   HOST         default 0.0.0.0, so the laptop can reach it on the LAN;
 #                use 127.0.0.1 to keep it on the DGX only
 #   PORT         default 8080
@@ -59,6 +63,7 @@ PORT="${PORT:-8080}"
 API_KEY="${API_KEY:-}"
 CTX="${CTX:-32768}"
 DRAFT="${DRAFT:-1}"
+NGL="${NGL:-99}"
 REASONING="${REASONING:-low}"
 REASONING_BUDGET="${REASONING_BUDGET:-}"
 
@@ -294,7 +299,7 @@ do_serve() {
     -m "$MODEL_FILE"
     --mmproj "$MMPROJ_FILE"
     -a "$ALIAS"
-    -ngl 99
+    -ngl "$NGL"
     -c "$CTX" -np 1
     --host "$HOST" --port "$PORT"
     --jinja
