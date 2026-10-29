@@ -93,12 +93,17 @@ ALERTS = AlertStore(Path(__file__).parent / "alerts")
 CHECKS = CheckLog(Path(__file__).parent / "log")
 
 
+# The clock the sweep and the check loop read. Always the wall clock
+# in use; tests pin it so they never depend on the time of day.
+CLOCK = datetime.now
+
+
 def run_sweep(now=None):
     """Raise any missed-window alerts that are due. Idempotent and
     quiet about failure: a sweep that cannot run loses nothing, the
     next one a few seconds later sees the same closed windows."""
     try:
-        return sweep_missed(STORE, ALERTS, now=now, checks=CHECKS)
+        return sweep_missed(STORE, ALERTS, now=now or CLOCK(), checks=CHECKS)
     except Exception as e:
         print(f"Missed-window sweep failed: {e}")
         return []
@@ -169,7 +174,11 @@ def guide_check(frame_path, question_text):
 # The check loop (see checkloop.py). Spoken answers are returned to the
 # app in the /capture response; speaking them is the app's side.
 LOOP = CheckLoop(
-    STORE, production_check, Path(__file__).parent / "log", checks=CHECKS
+    STORE,
+    production_check,
+    Path(__file__).parent / "log",
+    now_fn=lambda: CLOCK(),
+    checks=CHECKS,
 )
 
 # The over-the-shoulder guide (see guide.py). One session at a time, in
@@ -236,7 +245,7 @@ class TrussHandler(BaseHTTPRequestHandler):
 
     def handle_questions(self):
         """List the standing questions and their states."""
-        today = datetime.now().date().isoformat()
+        today = CLOCK().date().isoformat()
         pending = {a["slug"] for a in ALERTS.pending() if a.get("date") == today}
         entries = []
         for entry in STORE.list():

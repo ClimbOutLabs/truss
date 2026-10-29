@@ -190,7 +190,10 @@ the next frame, with no gap between checks. The check and its spoken
 line name the look-at phrase for the missed day, so a check owed for
 Tuesday and made at 3 AM Wednesday asks about Tuesday's compartment.
 A miss settled after midnight is checked through the small hours
-(until 4 AM), and only when the question names a thing to look at.
+(until 4 AM), and only when its look-at phrase names the day as
+`{weekday}`. A look-at phrase that names a day by itself (a weekday
+name, today, tonight, tomorrow, yesterday) or holds any other `{...}`
+is refused at planting, since it would be wrong on other days.
 Every done question, safety or not, must open as a question. The state check never records
 a witness: it says what is there, never when anything was done.
 

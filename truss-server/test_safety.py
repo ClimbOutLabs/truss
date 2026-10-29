@@ -452,7 +452,10 @@ def test_safety_flag_in_the_store():
             except ValueError:
                 refused = True
             check(f"a safety flag of {bad!r} is refused", refused)
-        for bad in ("x" * 200, "the pills you should take", "the stove, turned off"):
+        for bad in ("x" * 200, "the pills you should take", "the stove, turned off",
+                    "tonight's PM compartment", "the Tuesday PM compartment",
+                    "the {Weekday} PM compartment", "the {day} compartment",
+                    "the {weekday PM compartment"):
             try:
                 store.create("Is the tap running?", look_at=bad)
                 refused = False
@@ -469,7 +472,9 @@ def test_safety_flag_in_the_store():
             check(f"a safety question that is not asked as one is refused: {bad}",
                   refused)
         for bad in ("Take my night pills", "Have your pills now",
-                    "Do take my night pills", "Did take the pills"):
+                    "Do take my night pills", "Did take the pills",
+                    "Have Some pills now", "Do Not forget the stove",
+                    "Can Make sure the stove is off"):
             try:
                 store.create(bad, WINDOW, kind="done", safety=False)
                 refused = False
@@ -663,6 +668,17 @@ def test_a_miss_settled_after_midnight_is_yesterdays():
     check("overnight, a question naming no thing to look at is not checked",
           loop.check_fn.calls == [] and spoken == [])
 
+    tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
+        [verdict("yes", "The organizer has pills in it.")],
+        start=datetime(2026, 10, 28, 0, 20),
+    )
+    planted(store, pattern=late, look_at="the pill organizer")
+    sweep_missed(store, alerts, now=clock.now, checks=checks)
+    clock.now = datetime(2026, 10, 28, 3, 0)
+    loop.process_frame(frame(captures, "dayless.jpg"))
+    check("overnight, a look-at phrase with no {weekday} is not checked",
+          loop.check_fn.calls == [] and spoken == [])
+
 
 def test_state_check_is_for_today_only():
     tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
@@ -717,10 +733,13 @@ def test_http():
         server_module.STORE = QuestionStore(tmp / "questions")
         server_module.ALERTS = AlertStore(tmp / "alerts")
         server_module.CHECKS = CheckLog(tmp / "log")
+        noon = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        server_module.CLOCK = lambda: noon
         server_module.LOOP = CheckLoop(
             server_module.STORE,
             StateChecker(),
             tmp / "log",
+            now_fn=lambda: noon,
             checks=server_module.CHECKS,
         )
         server_module.GUIDE["session"] = None
@@ -768,7 +787,7 @@ def test_http():
             post(f"{base}/plant/ref?slug={slug}&kind=yes", img, ctype)
             post(f"{base}/plant/ref?slug={slug}&kind=no", img, ctype)
             post(base + "/capture", img, ctype)
-            today = datetime.now().date()
+            today = noon.date()
             check("a capture the loop checks leaves a check time",
                   len(server_module.CHECKS.times(today, slug)) == 1)
 
@@ -783,6 +802,7 @@ def test_http():
             post(base + "/guide/stop", b"{}")
         finally:
             httpd.shutdown()
+            server_module.CLOCK = datetime.now
 
 
 if __name__ == "__main__":

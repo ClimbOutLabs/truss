@@ -11,7 +11,6 @@ import json
 import sys
 import tempfile
 import threading
-import time
 import urllib.request
 from datetime import datetime, timedelta
 from http.server import HTTPServer
@@ -964,11 +963,10 @@ def test_http():
         thread.start()
         base = f"http://127.0.0.1:{port}"
         try:
-            # The real clock drives this rig, so the window must have
-            # closed already: run inside 00:00 to 00:01 and it waits.
-            closed = datetime.now().replace(hour=0, minute=1, second=5, microsecond=0)
-            if datetime.now() < closed:
-                time.sleep((closed - datetime.now()).total_seconds())
+            # The server's clock is pinned to noon today, so the window
+            # has closed whatever the real time of day.
+            noon = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+            server_module.CLOCK = lambda: noon
             window = {"kind": "window", "after": "00:00", "until": "00:01"}
             status, body = post(
                 base + "/plant/question",
@@ -1053,6 +1051,7 @@ def test_http():
                   get_json(base + "/alerts")["alerts"] == [])
         finally:
             httpd.shutdown()
+            server_module.CLOCK = datetime.now
 
 
 if __name__ == "__main__":

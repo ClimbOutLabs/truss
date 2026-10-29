@@ -236,6 +236,15 @@ SUBJECT_WORDS = {
 }
 
 
+# Capitalized words after a helper opener that are never a name:
+# "Do Not forget", "Have Some pills", "Can Make sure".
+NOT_A_NAME = {
+    "not", "some", "make", "please", "be", "get", "keep", "let", "try",
+    "check", "look", "any", "all", "no", "never", "just", "now", "always",
+    "also", "then", "so", "more", "another", "one", "two", "both", "each",
+}
+
+
 def _asks_a_question(text):
     """Whether the words open as a question. A helper-verb opener must
     be followed by a subject: a word from SUBJECT_WORDS, or a name
@@ -250,7 +259,39 @@ def _asks_a_question(text):
     nxt = words[1]
     if nxt.lower() in SUBJECT_WORDS:
         return True
-    return nxt[0].isupper() and not action_verbs_in(nxt)
+    return (
+        nxt[0].isupper()
+        and nxt.lower() not in NOT_A_NAME
+        and not action_verbs_in(nxt)
+    )
+
+
+DAY_WORDS = {
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+    "sunday", "today", "tonight", "tomorrow", "yesterday",
+}
+
+
+def _look_at_day_problem(look_at):
+    """Why a look-at phrase cannot be planted, or None. A phrase that
+    names a day by itself ("the Tuesday PM compartment", "tonight's
+    compartment") is right one day in seven, or wrong after midnight;
+    the only way to name a day is {weekday}, spoken as the missed day.
+    Any other {...} token would be spoken aloud as it is."""
+    tokens = re.findall(r"\{[^}]*\}", look_at)
+    if any(token != "{weekday}" for token in tokens):
+        return "The only placeholder a look-at phrase can hold is {weekday}."
+    bare = look_at.replace("{weekday}", " ")
+    if "{" in bare or "}" in bare:
+        return "The only placeholder a look-at phrase can hold is {weekday}."
+    words = set(re.findall(r"[a-z]+", bare.lower()))
+    named = sorted(words & DAY_WORDS)
+    if named:
+        return (
+            "Name the day as {weekday}, never as a fixed day, so it is "
+            f"always the missed day's. Leave out: {', '.join(named)}."
+        )
+    return None
 
 
 def look_at_for(entry, date_text):
@@ -422,6 +463,9 @@ class QuestionStore:
                         "What to look at names the thing, never the act. "
                         f"Leave out: {', '.join(verbs)}."
                     )
+                problem = _look_at_day_problem(look_at)
+                if problem:
+                    raise ValueError(problem)
             if (
                 kind == "done"
                 and isinstance(pattern, dict)
@@ -900,8 +944,8 @@ class QuestionStore:
         """Safety done questions owed a state check today, with no
         witness today. A miss settled just after midnight is owed for
         yesterday, and is offered through the small hours, until
-        OWED_OVERNIGHT_UNTIL, but only when the question names the
-        thing to look at, so the check can say which day it means. Any older owed check is never offered:
+        OWED_OVERNIGHT_UNTIL, but only when its look-at phrase names
+        the day as {weekday}, so the check can say which day it means. Any older owed check is never offered:
         that day's compartment is not today's. There is no
         gap between state checks: the alert promised to say what is
         there when she looks, and a hallway frame a minute earlier
@@ -926,10 +970,10 @@ class QuestionStore:
                     and self.witness_today(entry["slug"], now=now) is not None
                 ):
                     continue
-                if owed["date"] != today and not entry["look_at"]:
-                    # Overnight, a question that names no thing to look
-                    # at cannot say which day's compartment it means,
-                    # so it is not checked at all.
+                if owed["date"] != today and "{weekday}" not in (entry["look_at"] or ""):
+                    # Overnight, only a look-at phrase that names the
+                    # day as {weekday} can say which day's compartment
+                    # it means; anything else is not checked at all.
                     continue
                 out.append(entry)
             return out
