@@ -126,7 +126,7 @@ def test_no_safety_template_instructs_the_act():
         check(f"the safety direction {name} says check first, before acting",
               text.startswith("Check ") and "first, before you act on this" in text)
     check("there is no bare yes or no line for the state check",
-          set(checkloop_module.MISS_CHECK_TEMPLATES) == {"reason"})
+          set(checkloop_module.MISS_CHECK_TEMPLATES) == {"reason", "reason_look_at"})
 
 
 WINDOW_TIMES = (
@@ -468,11 +468,22 @@ def test_safety_flag_in_the_store():
                 refused = True
             check(f"a safety question that is not asked as one is refused: {bad}",
                   refused)
-        unasked = store.create("Take my night pills", WINDOW, kind="done", safety=False)
-        check("words that are not a question may stand when not safety",
+        for bad in ("Take my night pills", "Have your pills now",
+                    "Do take my night pills", "Did take the pills"):
+            try:
+                store.create(bad, WINDOW, kind="done", safety=False)
+                refused = False
+            except ValueError:
+                refused = True
+            check(f"a done question not asked as one is refused, safety or not: {bad}",
+                  refused)
+        rex = store.create("Has Rex been fed", WINDOW, kind="done", safety=False)
+        check("a helper opener followed by a name is a question",
+              store.get(rex)["question"] == "Has Rex been fed")
+        unasked = store.create("Take a look at the garden", safety=False)
+        check("a state question that is not safety is not gated",
               store.get(unasked)["safety"] is False)
-        store.retire(unasked)
-        check("refused questions planted nothing", len(store.list()) == 5)
+        check("refused questions planted nothing", len(store.list()) == 6)
         edit_watch(tmp, dog, safety="false")
         check("a stored flag that is not true or false reads as its kind's default",
               store.get(dog)["safety"] is True)
@@ -540,7 +551,8 @@ def test_state_check_after_a_miss():
     result = loop.process_frame(first)
     prompt = loop.check_fn.calls[0]["question"]
     check("the owed check is made under a state prompt that asks for description",
-          prompt.startswith("Judge only how things are in this frame right now")
+          prompt.startswith("Look only at the Tuesday PM compartment.")
+          and "Judge only how things are in this frame right now" in prompt
           and "Describe only what is visible" in prompt
           and PILLS in prompt)
     check("the state check carries the question's reference looks",
@@ -558,7 +570,8 @@ def test_state_check_after_a_miss():
     clock.now = AFTER_CLOSE + timedelta(minutes=2)
     result = loop.process_frame(frame(captures, "3.jpg"))
     expected = ("About your question, Did I take my night pills? "
-                "Here is what I see now: The Tuesday PM compartment is empty.")
+                "Here is what I see now at the Tuesday PM compartment: "
+                "The Tuesday PM compartment is empty.")
     check("the next frame showing the thing speaks what is there",
           spoken == [expected] and result["speak"] == [expected])
     check("that frame is kept as evidence",
@@ -596,7 +609,8 @@ def test_a_verdict_with_no_description_is_never_spoken():
     loop.process_frame(frame(captures, "described.jpg"))
     check("a no with a description is spoken as that description",
           spoken == ["About your question, Did I take my night pills? Here is "
-                     "what I see now: The Tuesday PM compartment still holds pills."])
+                     "what I see now at the Tuesday PM compartment: "
+                     "The Tuesday PM compartment still holds pills."])
 
 
 def test_a_miss_settled_after_midnight_is_yesterdays():
@@ -616,11 +630,16 @@ def test_a_miss_settled_after_midnight_is_yesterdays():
           and "the Tuesday PM compartment" in created[0]["line"])
     check("its state check is owed for yesterday",
           store.get(slug)["miss_check"] == {"date": "2026-10-27", "state": "owed"})
-    clock.now = datetime(2026, 10, 28, 0, 30)
+    clock.now = datetime(2026, 10, 28, 3, 0)
     loop.process_frame(frame(captures, "night.jpg"))
-    check("and is offered through the small hours",
+    check("the overnight prompt names the owed day's compartment, not today's",
+          loop.check_fn.calls[0]["question"].startswith(
+              "Look only at the Tuesday PM compartment.")
+          and "Wednesday" not in loop.check_fn.calls[0]["question"])
+    check("and is offered through the small hours, naming Tuesday's compartment",
           spoken == ["About your question, Did I take my night pills? Here is "
-                     "what I see now: The Tuesday PM compartment is empty."])
+                     "what I see now at the Tuesday PM compartment: "
+                     "The Tuesday PM compartment is empty."])
 
     tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
         [verdict("yes", "The compartment is empty.")],
@@ -631,6 +650,17 @@ def test_a_miss_settled_after_midnight_is_yesterdays():
     clock.now = datetime(2026, 10, 28, 7, 0)
     loop.process_frame(frame(captures, "morning.jpg"))
     check("but not the next morning",
+          loop.check_fn.calls == [] and spoken == [])
+
+    tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
+        [verdict("yes", "The compartment is empty.")],
+        start=datetime(2026, 10, 28, 0, 20),
+    )
+    planted(store, pattern=late, look_at=None)
+    sweep_missed(store, alerts, now=clock.now, checks=checks)
+    clock.now = datetime(2026, 10, 28, 0, 30)
+    loop.process_frame(frame(captures, "unnamed.jpg"))
+    check("overnight, a question naming no thing to look at is not checked",
           loop.check_fn.calls == [] and spoken == [])
 
 

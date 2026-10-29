@@ -42,6 +42,8 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from questions import look_at_for
+
 
 def _reason_text(result):
     """The checker's one-sentence reason, as text. A model can return a
@@ -82,15 +84,28 @@ def redo_text(witness):
     return f"That is already done. You did it at {spoken}."
 
 
+def _owed_look_at(entry):
+    owed = entry.get("miss_check") or {}
+    return look_at_for(entry, owed.get("date"))
+
+
 def state_prompt(entry):
     """The check prompt for the state check owed after a missed
     window: how things are in this frame now, judged against the
     question's own reference looks. Built only from the question's
-    own words."""
+    own words and its look-at phrase for the owed day, so a check at
+    3 AM asks about the missed day's compartment, not the new day's."""
+    target = _owed_look_at(entry)
+    focus = (
+        f"Look only at {target}. If {target} is not clearly in view, "
+        "answer cannot_tell. "
+        if target
+        else ""
+    )
     return (
-        "Judge only how things are in this frame right now, not what "
-        "anyone did earlier. Describe only what is visible, and never "
-        "say what anyone should do. "
+        f"{focus}Judge only how things are in this frame right now, not "
+        "what anyone did earlier. Describe only what is visible, and "
+        "never say what anyone should do. "
         f"Does it match the yes look for: {entry['question']}"
     )
 
@@ -101,6 +116,10 @@ def state_prompt(entry):
 # not spoken at all.
 MISS_CHECK_TEMPLATES = {
     "reason": "About your question, {question} Here is what I see now: {reason}",
+    "reason_look_at": (
+        "About your question, {question} Here is what I see now at "
+        "{look_at}: {reason}"
+    ),
 }
 
 
@@ -113,6 +132,11 @@ def miss_check_text(entry, result):
     question = entry["question"].strip()
     if not question.endswith("?"):
         question += "?"
+    target = _owed_look_at(entry)
+    if target:
+        return MISS_CHECK_TEMPLATES["reason_look_at"].format(
+            question=question, look_at=target, reason=reason
+        )
     return MISS_CHECK_TEMPLATES["reason"].format(question=question, reason=reason)
 
 

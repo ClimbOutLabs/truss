@@ -223,9 +223,49 @@ QUESTION_OPENERS = {
 }
 
 
+# Openers that are also helper verbs, and so also open commands: "Have
+# your pills now", "Do take my night pills". After one of these, the
+# next word must be who or what is asked about.
+HELPER_OPENERS = {"have", "has", "had", "do", "does", "did", "can", "could", "will", "would"}
+SUBJECT_WORDS = {
+    # "your" is left out: "Have your pills now" is a command, and she
+    # asks about her own things as "my".
+    "i", "you", "we", "he", "she", "it", "they", "the", "my",
+    "our", "his", "her", "their", "this", "that", "these", "those", "a",
+    "an", "there", "anyone", "someone", "somebody", "tonight's", "today's",
+}
+
+
 def _asks_a_question(text):
-    words = re.findall(r"[a-z']+", text.lower())
-    return bool(words) and words[0] in QUESTION_OPENERS
+    """Whether the words open as a question. A helper-verb opener must
+    be followed by a subject: a word from SUBJECT_WORDS, or a name
+    (capitalized in her words, and not an action verb)."""
+    words = re.findall(r"[A-Za-z']+", text)
+    if not words or words[0].lower() not in QUESTION_OPENERS:
+        return False
+    if words[0].lower() not in HELPER_OPENERS:
+        return True
+    if len(words) < 2:
+        return False
+    nxt = words[1]
+    if nxt.lower() in SUBJECT_WORDS:
+        return True
+    return nxt[0].isupper() and not action_verbs_in(nxt)
+
+
+def look_at_for(entry, date_text):
+    """A question's look-at phrase for one day, with {weekday} spoken as
+    that day's name, or None when it has none. The day is the owed
+    day, never the day it happens to be now: at 3 AM on Wednesday, a
+    check owed for Tuesday is about Tuesday's compartment."""
+    look_at = entry.get("look_at")
+    if not look_at:
+        return None
+    try:
+        day = datetime.fromisoformat(date_text)
+    except (TypeError, ValueError):
+        return None
+    return look_at.replace("{weekday}", day.strftime("%A"))
 
 
 # How long into the night a state check owed for yesterday's miss is
@@ -360,12 +400,12 @@ class QuestionStore:
                 safety = kind == "done"
             if not isinstance(safety, bool):
                 raise ValueError("The safety flag is either true or false.")
-            if safety and not _asks_a_question(text):
-                # A safety question's words are spoken back inside its
-                # alert. Words that do not open as a question ("Take my
-                # night pills") would be an instruction to act.
+            if (safety or kind == "done") and not _asks_a_question(text):
+                # A safety or done question's words are spoken back
+                # inside its alert. Words that do not open as a question
+                # ("Take my night pills") would be an instruction to act.
                 raise ValueError(
-                    "A safety question must be asked as a question, "
+                    "This must be asked as a question, "
                     "like: Did I take my night pills?"
                 )
             if isinstance(look_at, str) and not look_at.strip():
@@ -860,7 +900,8 @@ class QuestionStore:
         """Safety done questions owed a state check today, with no
         witness today. A miss settled just after midnight is owed for
         yesterday, and is offered through the small hours, until
-        OWED_OVERNIGHT_UNTIL. Any older owed check is never offered:
+        OWED_OVERNIGHT_UNTIL, but only when the question names the
+        thing to look at, so the check can say which day it means. Any older owed check is never offered:
         that day's compartment is not today's. There is no
         gap between state checks: the alert promised to say what is
         there when she looks, and a hallway frame a minute earlier
@@ -884,6 +925,11 @@ class QuestionStore:
                     owed["date"] == today
                     and self.witness_today(entry["slug"], now=now) is not None
                 ):
+                    continue
+                if owed["date"] != today and not entry["look_at"]:
+                    # Overnight, a question that names no thing to look
+                    # at cannot say which day's compartment it means,
+                    # so it is not checked at all.
                     continue
                 out.append(entry)
             return out

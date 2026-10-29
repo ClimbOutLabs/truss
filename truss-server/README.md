@@ -186,7 +186,12 @@ her own reference looks, and the result is spoken once as a
 description ("Here is what I see now: the Tuesday PM compartment is
 empty"), with the frame kept as evidence. A cannot_tell, or a yes or
 no with no description behind it, is silent, and the check waits for
-the next frame, with no gap between checks. The state check never records
+the next frame, with no gap between checks. The check and its spoken
+line name the look-at phrase for the missed day, so a check owed for
+Tuesday and made at 3 AM Wednesday asks about Tuesday's compartment.
+A miss settled after midnight is checked through the small hours
+(until 4 AM), and only when the question names a thing to look at.
+Every done question, safety or not, must open as a question. The state check never records
 a witness: it says what is there, never when anything was done.
 
 ## The guide
