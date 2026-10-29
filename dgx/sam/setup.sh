@@ -184,7 +184,10 @@ download_one() {
     local rc=0
     "$VENV/bin/hf" download "$(hf_repo "$version")" "$f" --local-dir "$SAM_MODELS_DIR/$version" 2>&1 | tee "$out" || rc=$?
     if [ "$rc" != 0 ]; then
-      if grep -qiE '401|403|gated|restricted|RepositoryNotFound|Repository Not Found|access to model' "$out"; then
+      # Refusal wording only: a bare 401/403 also matches progress
+      # sizes such as "401M", and would call a dropped connection a
+      # refused license.
+      if grep -qiE 'gated repo|is restricted|RepositoryNotFound|Repository Not Found|access to model|401 Client Error|403 Client Error|Unauthorized|Forbidden' "$out"; then
         echo "$(hf_repo "$version") refused access. Check 'hf auth login' (\"$VENV/bin/hf\" auth whoami) and the approval email."
         return 3
       fi
@@ -220,22 +223,29 @@ local_host() {
 health() { curl -sf -m 5 "http://$(local_host):$PORT/health" 2>/dev/null; }
 
 # start_service VERSION: 0 when up, 4 when the service refused the
-# checkpoint (image-model weights missing), else it stops the script.
+# checkpoint (image-model weights missing), 5 when the checkpoint file
+# is not there, else it stops the script. Each start appends to the
+# log, so a fallback keeps the refusal that caused it.
 start_service() {
-  local version="$1" ckpt
+  local version="$1" ckpt strict=() start_line
   ckpt=$(ckpt_for "$version")
-  [ -f "$ckpt" ] || { echo "No checkpoint at $ckpt."; return 4; }
+  [ -f "$ckpt" ] || { echo "No checkpoint at $ckpt."; return 5; }
+  # sam3.1 is always strict, whatever the environment says, so it can
+  # never serve with random weights under its own name.
+  [ "$version" = sam3.1 ] && strict=(SAM_STRICT=1)
   say "Starting the SAM service ($version, $SAM_DTYPE) on $HOST:$PORT (log: $LOG_FILE)"
+  start_line=$(( $(wc -l < "$LOG_FILE" 2>/dev/null || echo 0) + 1 ))
+  echo "---- $(date '+%F %T') starting $version" >> "$LOG_FILE"
   env PYTHONNOUSERSITE=1 SAM_VERSION="$version" SAM_CHECKPOINT="$ckpt" SAM_DTYPE="$SAM_DTYPE" \
-    "${key_env[@]}" nohup "$PY" "$HERE/sam_service.py" --host "$HOST" --port "$PORT" \
-    >"$LOG_FILE" 2>&1 &
+    "${strict[@]}" "${key_env[@]}" nohup "$PY" "$HERE/sam_service.py" --host "$HOST" --port "$PORT" \
+    >>"$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
 
   local waited=0
   until health >/dev/null; do
     if ! running; then
-      tail -n 20 "$LOG_FILE"
-      grep -q 'weights of the image model are not in' "$LOG_FILE" && return 4
+      tail -n +"$start_line" "$LOG_FILE" | tail -n 20
+      tail -n +"$start_line" "$LOG_FILE" | grep -q 'weights of the image model are not in' && return 4
       die "The SAM service exited during load (log above)."
     fi
     sleep 2; waited=$((waited + 2))
@@ -262,13 +272,16 @@ do_serve() {
     fi
   fi
 
-  local rc=0
+  # One log per serve; each start within it appends.
+  : > "$LOG_FILE"
+  local rc=0 why
   start_service "$SAM_VERSION" || rc=$?
-  if [ "$rc" = 4 ]; then
+  if [ "$rc" = 4 ] || [ "$rc" = 5 ]; then
     rm -f "$PID_FILE"
+    if [ "$rc" = 4 ]; then why="could not be served as an image model (above)"; else why="has no checkpoint downloaded"; fi
     if [ "$SAM_VERSION" = sam3.1 ] && [ "$SAM_FALLBACK" = 1 ]; then
       echo
-      echo "FALLBACK: sam3.1 could not be served as an image model (above); serving sam3 instead."
+      echo "FALLBACK: sam3.1 $why; serving sam3 instead."
       echo "          Still-image detection is SAM 3 accuracy either way."
       rc=0
       start_service sam3 || rc=$?

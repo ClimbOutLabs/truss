@@ -52,8 +52,9 @@ instead`, and `serving sam3`: that is fine, say which one served when
 you paste the result. If sam3 itself reports more than 0 missing, it
 starts anyway with a WARNING line: paste that into the thread before
 trusting the acceptance numbers. The service
-listens on all interfaces, port 8090, with no key by default (it warns).
-On a network you do not trust:
+listens on all interfaces, port 8090, with **no key by default**: it
+only prints a WARNING, and anyone on the same network can send it
+photos. That is fine on the home LAN. On a network you do not trust:
 
     ./dgx/sam/setup.sh stop
     SAM_API_KEY=some-long-secret ./dgx/sam/setup.sh serve
@@ -86,9 +87,11 @@ Pass, per the brief:
 
 - three photos, each with a time per frame (expect well under a second
   of SAM time once warm; the first request after a start is slower);
-- masks inside their boxes: `yes` on every row. A summary line about
-  masks "under 90% inside their boxes before the cut" means SAM's
-  masks and boxes disagree: the checkpoint did not load right;
+- masks inside their boxes: `yes` on every row. The service cuts each
+  mask to its box, so the run checks SAM's own mask before the cut: at
+  least 90% of it inside its box, or the run FAILs with a list of the
+  masks that were not (SAM's masks and boxes disagree: the checkpoint
+  did not load right);
 - **open the outlined photos**: the yellow line must follow the
   object's edge, not a box around it. That one is by eye.
 
@@ -114,7 +117,10 @@ check answers yes to). The server prints `Outlined stove in
 ..._outline.jpg (N ms on SAM)`, and the copy sits next to the evidence
 photo in `truss-server/log/<day>/`. The evidence photo itself is
 unchanged. If SAM is down or finds nothing, the answer is spoken as
-always and the server says why there is no outline.
+always and the server says why there is no outline. The line names the
+SAM model that made the outline. At most two outlines wait on SAM at
+once; a third firing while SAM is that slow gets no outline (said in
+the output) rather than a growing pile of waiting threads.
 
 ## 4. Choosing the model by hand
 

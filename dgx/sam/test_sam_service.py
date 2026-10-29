@@ -62,6 +62,12 @@ class FakeSam:
             # The box is a pixel short on the left, so one column of the
             # disc lies outside it until the cut.
             return np.array([[35, 74, 46, 86]], float), np.array([0.7]), m[None]
+        if phrase == "spill":
+            # A mask mostly outside its box: what a badly loaded
+            # checkpoint looks like. The cut hides it; the raw check must not.
+            m = np.zeros((h, w), bool)
+            m[10:50, 10:50] = True
+            return np.array([[40, 40, 50, 50]], float), np.array([0.8]), m[None]
         if phrase == "explode":
             raise RuntimeError("CUDA out of memory")
         return np.zeros((0, 4)), np.zeros(0), np.zeros((0, h, w), bool)
@@ -266,6 +272,13 @@ def test_acceptance_script():
              "--out", str(tmp / "out2")],
             env=env, capture_output=True, text=True, timeout=60)
         summary = (tmp / "out2" / "summary.md").read_text()
+        run3 = subprocess.run(
+            [sys.executable, str(HERE / "sam_accept.py"), *photos, "--phrases", "spill",
+             "--out", str(tmp / "out3")],
+            env=env, capture_output=True, text=True, timeout=60)
+        summary3 = (tmp / "out3" / "summary.md").read_text()
+        check("masks that spill out of their boxes before the cut fail the run",
+              run3.returncode == 1 and "FAIL: before the cut" in summary3 and "**FAIL**" in summary3)
         check("two photos with no match fail, saying why", run.returncode == 1
               and "needs three" in summary and "no photo got an outline" in summary)
     finally:

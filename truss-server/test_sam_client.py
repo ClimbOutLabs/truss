@@ -46,6 +46,9 @@ class Stub(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         Stub.seen.append({"path": self.path, "auth": self.headers.get("Authorization"), "body": body})
+        if "slow" in body["phrases"]:
+            import time
+            time.sleep(1.0)
         if "boom" in body["phrases"]:
             return self._send(500, {"error": "SAM failed: RuntimeError"})
         if Stub.status:
@@ -238,6 +241,68 @@ def test_check_loop_outline():
     check("no outline function, no outline", result["outline"] is None and len(spoken) == 1)
 
 
+def test_outliner_caps_and_names(cfg):
+    tmp = Path(tempfile.mkdtemp())
+    entries = []
+    for i in range(4):
+        f = tmp / f"q{i}"
+        f.mkdir()
+        (f / "prompts.txt").write_text(f"stove{i}\nknob{i}\nlid{i}\n")
+        entries.append({"ref_yes_path": str(f / "ref-yes.jpg")})
+    logs = []
+    out = sam_client.EvidenceOutliner(config=cfg, log_fn=logs.append, background=False)
+    phrases = out.phrases_for(entries)
+    check("phrases from many questions are capped at the service's limit, first-fired first",
+          len(phrases) == sam_client.MAX_PHRASES and phrases[:3] == ["stove0", "knob0", "lid0"])
+    Stub.seen.clear()
+    out(photo(tmp, "ev.jpg"), entries)
+    check("so four questions firing together still get their outline",
+          len(Stub.seen[-1]["body"]["phrases"]) == sam_client.MAX_PHRASES
+          and (tmp / "ev_outline.jpg").exists())
+    check("the outline log line names the SAM model", "model: sam3" in logs[-1])
+
+
+def test_slow_sam_never_piles_up(cfg):
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "q").mkdir()
+    (tmp / "q" / "prompts.txt").write_text("slow\nstove\n")
+    entries = [{"ref_yes_path": str(tmp / "q" / "ref-yes.jpg")}]
+    logs = []
+    out = sam_client.EvidenceOutliner(config=cfg, log_fn=logs.append, max_in_flight=1)
+    import time
+    t = time.perf_counter()
+    first = out(photo(tmp, "a.jpg"), entries)
+    second = out(photo(tmp, "b.jpg"), entries)
+    check("the outline call returns at once even with a slow SAM", time.perf_counter() - t < 0.5)
+    check("one outline runs; the next is skipped while SAM is busy",
+          first is not None and second is None and "busy" in logs[-1])
+    for _ in range(50):
+        if (tmp / "a_outline.jpg").exists():
+            break
+        time.sleep(0.1)
+    time.sleep(0.1)
+    check("the running one finishes", (tmp / "a_outline.jpg").exists())
+    check("and frees its slot", out(photo(tmp, "c.jpg"), entries) is not None)
+
+
+def test_stale_temp_files_are_swept(cfg):
+    import os
+    import time
+    tmp = Path(tempfile.mkdtemp())
+    stale = tmp / ".old_outline.jpg.1.2.tmp"
+    fresh = tmp / ".new_outline.jpg.1.3.tmp"
+    stale.write_bytes(b"x")
+    fresh.write_bytes(b"x")
+    old = time.time() - 3600
+    os.utime(stale, (old, old))
+    (tmp / "q").mkdir()
+    (tmp / "q" / "prompts.txt").write_text("stove\n")
+    out = sam_client.EvidenceOutliner(config=cfg, log_fn=lambda m: None, background=False)
+    out(photo(tmp, "e.jpg"), [{"ref_yes_path": str(tmp / "q" / "ref-yes.jpg")}])
+    check("a temp file left by a stopped server is swept", not stale.exists())
+    check("one still being written is left alone", fresh.exists())
+
+
 def test_flag():
     import os
     old = os.environ.pop("TRUSS_EVIDENCE_OUTLINE", None)
@@ -266,6 +331,9 @@ if __name__ == "__main__":
     test_rle_helpers()
     test_outliner_phrases_and_failures(cfg)
     test_check_loop_outline()
+    test_outliner_caps_and_names(cfg)
+    test_slow_sam_never_piles_up(cfg)
+    test_stale_temp_files_are_swept(cfg)
     test_flag()
     server.shutdown()
     print("ALL PASS")

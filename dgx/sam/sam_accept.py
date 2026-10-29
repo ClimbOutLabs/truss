@@ -6,13 +6,17 @@ The item E acceptance run: glasses photos through the SAM service.
     python3 dgx/sam/sam_accept.py PHOTO... --folder truss-server/questions/<slug>
 
 For each photo: the time per frame (the round trip as the laptop sees
-it, and SAM's own share), every mask checked to lie inside its box by
-decoding it here, and the photo saved with the union of the matches
-outlined. Results go under dgx/sam/results/<time>/: one outlined JPEG
+it, and SAM's own share), every mask checked against its box, and the
+photo saved with the union of the matches outlined. The service cuts
+each mask to its box, so the check that means something is SAM's own
+mask before the cut (inside_box_raw): at least 90% of it must lie
+inside its box. The cut masks are also decoded here and must lie fully
+inside, which checks the plumbing. Results go under dgx/sam/results/<time>/: one outlined JPEG
 per photo that matched, rows.jsonl, and summary.md.
 
 Passes when there are at least three photos, every call answered,
-every mask is inside its box, and at least one photo has its outline.
+every mask is inside its box (raw at least 90%, cut fully), and at
+least one photo has its outline.
 Open the outlined photos and look: that last check is by eye.
 
 Standard library only (it is the laptop's own client,
@@ -32,7 +36,7 @@ sys.path.insert(0, str(HERE.parent.parent / "truss-server"))
 
 import sam_client  # noqa: E402
 
-RAW_INSIDE_WARN = 0.9
+RAW_INSIDE_MIN = 0.9
 
 
 def main():
@@ -81,7 +85,9 @@ def main():
                  "mask_area_ok": sam_client.rle_area(d["mask"]) == d["area"]}
                 for ph, d in dets
             ]
-            row["masks_inside"] = all(d["outside_px"] == 0 and d["mask_area_ok"] for d in row["detections"])
+            row["masks_inside"] = all(
+                d["outside_px"] == 0 and d["mask_area_ok"] and d["inside_box_raw"] >= RAW_INSIDE_MIN
+                for d in row["detections"])
             row["matched"] = reply["union"].get("phrases_matched", [])
 
             dest = out / f"{photo.stem}_outline.jpg"
@@ -122,10 +128,10 @@ def summarize(rows, phrases, url):
     if len(good) < len(rows):
         failures.append(f"{len(rows) - len(good)} photos got no answer")
     if not all(r["masks_inside"] for r in good):
-        failures.append("a mask lies outside its box (see rows.jsonl, outside_px)")
+        failures.append("a mask lies outside its box (see below, and rows.jsonl)")
     if not any(r.get("outline") for r in good):
         failures.append("no photo got an outline (nothing matched)")
-    warn = [(r["photo"], d) for r in good for d in r["detections"] if d["inside_box_raw"] < RAW_INSIDE_WARN]
+    warn = [(r["photo"], d) for r in good for d in r["detections"] if d["inside_box_raw"] < RAW_INSIDE_MIN]
 
     lines = [f"# SAM acceptance, {datetime.now().strftime('%Y-%m-%d %H:%M')}", ""]
     model = next((r["model"] for r in good), "?")
@@ -143,8 +149,8 @@ def summarize(rows, phrases, url):
     if times:
         lines += ["", f"Per frame: median {times[len(times) // 2]} ms, worst {times[-1]} ms (round trip)."]
     if warn:
-        lines += ["", f"Before the cut, {len(warn)} masks were under {RAW_INSIDE_WARN:.0%} inside their "
-                  "boxes (a sign of a checkpoint that did not load right):"]
+        lines += ["", f"FAIL: before the cut, {len(warn)} masks were under {RAW_INSIDE_MIN:.0%} inside their "
+                  "boxes (SAM's masks and boxes disagree: a checkpoint that did not load right?):"]
         lines += [f"- {p}: {d['phrase']} {d['inside_box_raw']:.2f}" for p, d in warn]
     lines += [""]
     if failures:

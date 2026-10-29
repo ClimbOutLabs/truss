@@ -33,10 +33,11 @@ Settings (environment variables, all optional):
     SAM_MODELS_DIR    default ~/models/sam
     SAM_DTYPE         bf16 (default) or fp32
     SAM_API_KEY_FILE  when set, POSTs need "Authorization: Bearer <key>"
-    SAM_STRICT        1: refuse to start when the checkpoint leaves
-                      image-model weights unloaded; 0: warn and start.
-                      Default 1 for sam3.1 (a video checkpoint), 0 for
-                      sam3 (the upstream loader only warns there too).
+    SAM_STRICT        sam3 only. 1: refuse to start when the checkpoint
+                      leaves image-model weights unloaded; 0 (default):
+                      warn and start, as the upstream loader does.
+                      sam3.1 (a video checkpoint) is always strict, so
+                      it never serves random weights under its name.
 
 Run it through setup.sh (serve, stop, status), not by hand.
 """
@@ -413,10 +414,10 @@ class Sam3Segmenter:
                 print("  WARNING: starting anyway (SAM_STRICT=0); those weights are random. "
                       "Run the acceptance and read inside_box_raw.", flush=True)
             else:
+                hint = ("Serve SAM_VERSION=sam3 instead (setup.sh does so by itself)."
+                        if version == "sam3.1" else "Unset SAM_STRICT to start anyway, with those weights random.")
                 raise SystemExit(
-                    f"STOP: {self.missing} weights of the image model are not in {checkpoint}. "
-                    "If this is the sam3.1 checkpoint, serve SAM_VERSION=sam3 instead (setup.sh does so by itself) "
-                    "(SAM_STRICT=0 starts anyway, with those weights random)."
+                    f"STOP: {self.missing} weights of the image model are not in {checkpoint}. {hint}"
                 )
         model.eval()
         self.processor = Sam3Processor(model, device="cuda", confidence_threshold=DEFAULT_THRESHOLD)
@@ -474,7 +475,7 @@ def main():
     dtype = os.environ.get("SAM_DTYPE", "bf16")
     if dtype not in ("bf16", "fp32"):
         raise SystemExit("STOP: SAM_DTYPE must be bf16 or fp32.")
-    strict = os.environ.get("SAM_STRICT", "1" if version == "sam3.1" else "0") != "0"
+    strict = version == "sam3.1" or os.environ.get("SAM_STRICT", "0") != "0"
 
     api_key = None
     key_file = os.environ.get("SAM_API_KEY_FILE")

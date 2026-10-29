@@ -37,6 +37,10 @@ from pathlib import Path
 
 DEFAULT_URL = "http://127.0.0.1:8090"
 DEFAULT_TIMEOUT_S = 15.0
+MAX_PHRASES = 8  # the service's own limit per request
+MAX_REPLY_BYTES = 64 * 1024 * 1024
+MAX_IN_FLIGHT = 2  # outline calls at once; more are skipped, not queued
+STALE_TMP_S = 600
 
 SamConfig = namedtuple("SamConfig", ["url", "key", "timeout_s"])
 
@@ -94,7 +98,10 @@ def _post(path, payload, config):
     )
     try:
         with _OPENER.open(req, timeout=config.timeout_s) as resp:
-            text = resp.read().decode("utf-8", "replace")
+            raw = resp.read(MAX_REPLY_BYTES + 1)
+        if len(raw) > MAX_REPLY_BYTES:
+            raise SamError("The SAM service's reply was too large.")
+        text = raw.decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         try:
             detail = json.loads(e.read().decode("utf-8", "replace")).get("error", "")
@@ -103,6 +110,8 @@ def _post(path, payload, config):
         if e.code in (401, 403):
             raise SamError("The SAM service refused the key (TRUSS_SAM_KEY).")
         raise SamError(f"The SAM service answered with an error (status {e.code}). {detail}".strip())
+    except SamError:
+        raise
     except Exception:
         raise SamError("The SAM service did not answer in time, or at all.")
     try:
@@ -221,14 +230,18 @@ def rle_outside_box(rle, box):
 class EvidenceOutliner:
     """The check loop's outline step. Called with the kept evidence
     photo and the questions that fired on it; the phrases are the union
-    of those questions' prompts.txt. The SAM call runs on a background
-    thread, so the call returns at once with where the outline will be
-    written, or None when no fired question has phrases."""
+    of those questions' prompts.txt, first-fired question first, at
+    most MAX_PHRASES. The SAM call runs on a background thread, so the
+    call returns at once with where the outline will be written, or
+    None when there is none to make: no fired question has phrases, or
+    MAX_IN_FLIGHT outlines are already waiting on a slow SAM (threads
+    never pile up behind it)."""
 
-    def __init__(self, config=None, log_fn=print, background=True):
+    def __init__(self, config=None, log_fn=print, background=True, max_in_flight=MAX_IN_FLIGHT):
         self.config = config
         self.log_fn = log_fn
         self.background = background
+        self._slots = threading.BoundedSemaphore(max_in_flight)
 
     def phrases_for(self, entries):
         phrases = []
@@ -240,29 +253,53 @@ class EvidenceOutliner:
             for p in read_prompts(folder):
                 if p not in phrases:
                     phrases.append(p)
-        return phrases
+        return phrases[:MAX_PHRASES]
 
     def __call__(self, evidence, entries):
         phrases = self.phrases_for(entries)
         if not phrases:
             self.log_fn(f"No outline for {Path(evidence).name}: no prompts.txt for the questions that fired.")
             return None
+        if not self._slots.acquire(blocking=False):
+            self.log_fn(f"No outline for {Path(evidence).name}: SAM is still busy with earlier outlines.")
+            return None
         dest = outline_path(evidence)
-        if self.background:
-            threading.Thread(target=self._run, args=(evidence, phrases, dest), daemon=True).start()
-        else:
-            self._run(evidence, phrases, dest)
+        try:
+            if self.background:
+                threading.Thread(target=self._run, args=(evidence, phrases, dest), daemon=True).start()
+            else:
+                self._run(evidence, phrases, dest)
+        except Exception:
+            self._slots.release()
+            raise
         return str(dest)
 
     def _run(self, evidence, phrases, dest):
         try:
+            self._sweep(Path(dest).parent)
             reply = outline(evidence, phrases, dest, config=self.config or config_from_env())
         except (SamError, OSError) as e:
             self.log_fn(f"No outline for {Path(evidence).name}: {e}")
             return
+        finally:
+            self._slots.release()
         ms = reply.get("timing_ms", {}).get("total")
+        model = reply.get("model")
+        model = " ".join(model.split()) if isinstance(model, str) and model.strip() else "unknown"
         if reply["written"]:
             self.log_fn(f"Outlined {', '.join(reply['union'].get('phrases_matched', []))} "
-                        f"in {Path(dest).name} ({ms} ms on SAM).")
+                        f"in {Path(dest).name} ({ms} ms on SAM, model: {model}).")
         else:
-            self.log_fn(f"No outline for {Path(evidence).name}: SAM found none of {', '.join(phrases)}.")
+            self.log_fn(f"No outline for {Path(evidence).name}: SAM found none of "
+                        f"{', '.join(phrases)} (model: {model}).")
+
+    @staticmethod
+    def _sweep(folder):
+        """Remove outline temp files a stopped server left behind."""
+        import time
+        for tmp in folder.glob(".*_outline.jpg.*.tmp"):
+            try:
+                if time.time() - tmp.stat().st_mtime > STALE_TMP_S:
+                    tmp.unlink()
+            except OSError:
+                pass
