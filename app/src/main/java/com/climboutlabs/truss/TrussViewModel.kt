@@ -32,6 +32,7 @@ import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -319,10 +320,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     val activeSession = session
     check(activeSession != null) { sessionError ?: "Could not start a session with the glasses." }
     var camera: com.meta.wearable.dat.camera.Camera? = null
+    var errorWatch: Job? = null
     try {
-      viewModelScope.launch {
-        activeSession.errors.collect { error -> photoLog("Session error: ${error.description}") }
-      }
+      errorWatch =
+          viewModelScope.launch {
+            activeSession.errors.collect { error -> photoLog("Session error: ${error.description}") }
+          }
       activeSession.start()
       val started =
           withTimeoutOrNull(STEP_TIMEOUT_MS) {
@@ -489,6 +492,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       }
       photoLog("Done in ${SystemClock.elapsedRealtime() - startedAt} ms.")
     } finally {
+      errorWatch?.cancel()
       runCatching { camera?.close() }
       runCatching { session?.stop() }
     }
@@ -615,6 +619,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         state.recordBusy ||
         state.speakBusy ||
         state.plantBusy) return
+    // Claimed in the same main-thread step as the check above, so a capture
+    // (the watch loop's included) refuses to start until the alert is done.
+    _uiState.update { it.copy(speakBusy = true) }
     try {
       val alerts = withContext(Dispatchers.IO) { laptopClient().getAlerts() }
       for (alert in alerts) {
@@ -636,6 +643,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       // The laptop being unreachable between polls is ordinary. Nothing
       // here is a user-facing error, and no other flow waits on this.
       Log.i(TAG, "Missed alert poll failed: ${e.message ?: e.toString()}")
+    } finally {
+      _uiState.update { it.copy(speakBusy = false) }
     }
   }
 
@@ -868,6 +877,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   // MARK: - Hands-free watching
 
   private var watchJob: Job? = null
+  private var watchCapturing = false
+  private var watchStopAsked = false
   private var lastSentSignature: IntArray? = null
   private var lastSentAt = 0L
 
@@ -879,7 +890,15 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
    * moment ago is not sent again. Three failed photos in a row stop watching.
    */
   fun startWatching(requestPermission: suspend (Permission) -> PermissionStatus) {
-    if (watchJob?.isActive == true) return
+    if (watchJob?.isActive == true) {
+      // Switched back on while a last photo was still finishing: keep going.
+      if (watchStopAsked) {
+        watchStopAsked = false
+        _uiState.update { it.copy(watching = true) }
+      }
+      return
+    }
+    watchStopAsked = false
     val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
     lastSentSignature = null
     _uiState.update {
@@ -895,7 +914,18 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
               // the planting flow.
               val ready = _uiState.value.glassesReady && _uiState.value.plantSlug == null
               if (ready && beginCapture(quiet = true)) {
-                val ok = performCapture(requestPermission, fromWatch = true)
+                watchCapturing = true
+                // A capture runs to its end even if watching is switched off
+                // meanwhile: once the laptop fired, its answer must be spoken.
+                val ok =
+                    try {
+                      withContext(NonCancellable) {
+                        performCapture(requestPermission, fromWatch = true)
+                      }
+                    } finally {
+                      watchCapturing = false
+                    }
+                if (watchStopAsked) break
                 if (!ok) watchRecord("failed")
                 failures = if (ok) 0 else failures + 1
                 if (failures >= WATCH_MAX_FAILURES) {
@@ -918,9 +948,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         }
   }
 
+  /** Stop watching. A photo already being taken finishes first, answer and all. */
   fun stopWatching() {
-    watchJob?.cancel()
-    watchJob = null
+    watchStopAsked = true
+    _uiState.update { it.copy(watching = false) }
+    if (!watchCapturing) watchJob?.cancel()
   }
 
   fun setWatchEverySeconds(seconds: Int) {
