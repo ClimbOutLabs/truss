@@ -213,8 +213,42 @@ def test_nightly_regressions():
         )
 
 
+def test_retired_stays_retired():
+    """A question removed while its check was in flight stays removed when
+    the firing lands, for every pattern and for a done question's witness."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        evening = datetime.now().replace(hour=21, minute=0, second=0, microsecond=0)
+        for text, pattern in (
+            ("Is the front door locked?", {"kind": "nightly", "after": "20:00"}),
+            ("Is the stove off?", {"kind": "interval", "minutes": 0}),
+        ):
+            slug = store.create(text, pattern)
+            store.save_ref(slug, "yes", JPEG)
+            store.save_ref(slug, "no", JPEG)
+            store.retire(slug)
+            store.mark_answered(slug, when=evening)
+            check(f"retired {pattern['kind']} question stays retired after a firing",
+                  store.get(slug)["state"] == "retired")
+            check(f"retired {pattern['kind']} question is never due again",
+                  not any(e["slug"] == slug
+                          for e in store.due(now=evening + timedelta(days=1))))
+        slug = store.create(
+            "Did I take my night pills?",
+            {"kind": "window", "after": "21:00", "until": "22:00"},
+            kind="done",
+        )
+        store.save_ref(slug, "yes", JPEG)
+        store.save_ref(slug, "no", JPEG)
+        store.retire(slug)
+        store.mark_answered_with_witness(slug, "x.jpg", when=evening)
+        check("retired done question stays retired after a witness",
+              store.get(slug)["state"] == "retired")
+
+
 if __name__ == "__main__":
     test_store()
     test_nightly_regressions()
+    test_retired_stays_retired()
     test_http()
     print("ALL PASS")

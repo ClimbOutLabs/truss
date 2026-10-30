@@ -7,6 +7,7 @@ Handles photo uploads, speech-to-text, and text-to-speech for the Truss app.
 import json
 import math
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -25,6 +26,7 @@ import verdict
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
+import history
 from plant_compile import Compiler, compile_question, needs_compile
 from questions import QuestionStore
 
@@ -86,7 +88,9 @@ ALERTS = AlertStore(Path(__file__).parent / "alerts")
 # next to the answer log (see coverage.py). Only the time is kept; the
 # photo itself still goes when no question fires on it. Alerts read
 # these to say how much of a window was really watched.
-CHECKS = CheckLog(Path(__file__).parent / "log")
+# The day folders the check loop keeps answers and evidence in.
+LOG_DIR = Path(__file__).parent / "log"
+CHECKS = CheckLog(LOG_DIR)
 
 
 # The clock the sweep and the check loop read. Always the wall clock
@@ -261,6 +265,10 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_alerts()
         elif path == "/guide/status":
             self.handle_guide_status()
+        elif path == "/answers":
+            self.handle_answers()
+        elif path == "/evidence":
+            self.handle_evidence()
         else:
             self.send_error(404, "Not Found")
 
@@ -279,6 +287,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_plant_bedtime()
         elif path == "/alerts/ack":
             self.handle_alerts_ack()
+        elif path == "/questions/retire":
+            self.handle_questions_retire()
         elif path == "/guide/start":
             self.handle_guide_start()
         elif path == "/guide/skip":
@@ -305,6 +315,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 "pattern": entry["pattern"],
                 "has_ref_yes": entry["has_ref_yes"],
                 "has_ref_no": entry["has_ref_no"],
+                "answered_at": entry["answered_at"],
             }
             if entry["kind"] == "done":
                 try:
@@ -317,6 +328,62 @@ class TrussHandler(BaseHTTPRequestHandler):
             entries.append(item)
         self.send_json({"questions": entries})
         print(f"GET /questions -> {len(entries)} questions")
+
+    def handle_answers(self):
+        """The answers logged on one day, newest first: GET
+        /answers?day=YYYY-MM-DD, today when no day is given. Read-only;
+        each answer names its evidence photo for GET /evidence."""
+        query = parse_qs(urlparse(self.path).query)
+        day = (query.get("day") or [CLOCK().date().isoformat()])[0]
+        try:
+            items = history.answers(LOG_DIR, day)
+        except ValueError as e:
+            self.send_error(400, str(e))
+            return
+        self.send_json({"day": day, "answers": items})
+        print(f"GET /answers -> {day}: {len(items)} answers")
+
+    def handle_evidence(self):
+        """One kept photo from a day's log folder: GET
+        /evidence?day=YYYY-MM-DD&name=<file>.jpg. Only a plain photo
+        name inside that day's folder is ever served."""
+        query = parse_qs(urlparse(self.path).query)
+        day = (query.get("day") or [""])[0]
+        name = (query.get("name") or [""])[0]
+        path = history.photo_path(LOG_DIR, day, name)
+        if path is None:
+            self.send_error(404, "No such photo.")
+            return
+        data = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+        print(f"GET /evidence -> {day}/{name} ({len(data)} bytes)")
+
+    def handle_questions_retire(self):
+        """Stop watching a question: POST JSON {"slug": ...}. Its folder,
+        looks and history stay on disk; it is only never checked again."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(content_length).decode())
+        except Exception:
+            self.send_error(400, "Body must be JSON with a question slug")
+            return
+        slug = data.get("slug") if isinstance(data, dict) else None
+        # Slugs are the store's own: plain letters, digits and dashes.
+        # Anything else could name a folder outside the store.
+        if (
+            not isinstance(slug, str)
+            or not re.fullmatch(r"[a-z0-9-]+", slug)
+            or STORE.get(slug) is None
+        ):
+            self.send_error(404, "No question with that slug.")
+            return
+        STORE.retire(slug)
+        self.send_json({"slug": slug, "state": "retired"})
+        print(f"POST /questions/retire -> {slug}")
 
     def handle_alerts(self):
         """The missed-window alerts still waiting to be spoken. The

@@ -1,27 +1,35 @@
-# Truss, day 1 test harness
+# Truss companion app
 
-A small Android app that connects Oakley Meta Vanguard glasses to a server on the
-owner's home network. Three screens, three gates. It is a test harness, not a product.
+An Android app that connects Oakley Meta Vanguard glasses to a server on the
+owner's home network. Four screens:
 
-- Screen 1, Connect: laptop address field (saved in SharedPreferences), Connect glasses,
-  toolkit version, phone SDK level, glasses connection state, last error, Ping laptop.
-- Screen 2, Photo (Gate 2): one glasses photo, then leave the glasses session, confirm the
-  laptop is reachable again (15 second poll), upload, show server byte count and elapsed ms.
-  Every step is logged on screen and to Logcat tag `Truss`.
-- Screen 3, Voice (Gate 3): record 5 seconds through the glasses as a Bluetooth
-  communication device, upload for transcription, show the text and the speech-end to
-  transcript time; fetch the test sentence from the laptop and play it through the
-  glasses, showing the request to audio-start time. If the phone mic or speaker is used
-  instead of the glasses, the screen says so in red and that is a fail.
-- Screen 4, Plant (added with the standing-questions build): type a question or record
-  it through the glasses, plant it, then capture its yes and no reference looks with
-  the Screen 2 photo flow; plant the bedtime round in one tap and walk its questions
-  in order; read the standing list. When an ordinary Screen 2 capture fires a standing
-  question, the spoken answers play through the glasses and show on the Photo screen.
+- Home: whether the glasses and the laptop are connected, how many questions
+  Mannie is watching, a Look now button for one glasses photo, the Watch
+  hands-free switch, and the last thing Mannie said with the photo it was seen in.
+- Questions: plant a question by typing or saying it, then take its yes look and
+  its no look through the glasses, step by step; plant the bedtime round in one
+  tap; see every question's state and remove one.
+- History: the day's answers from the laptop's log, each with its evidence photo
+  (the outlined copy when SAM made one).
+- Settings: the laptop address (saved in SharedPreferences) and connecting the
+  glasses. Diagnostics underneath keeps the day 1 gates: toolkit and phone
+  versions, ping, one capture with its step-by-step log (also to Logcat tag
+  `Truss`), and the voice in and out tests through the glasses.
+
+Watch hands-free takes a glasses photo every 15, 30 or 60 seconds and sends it
+to the laptop, which checks it against whatever questions are due. Each photo is
+the ordinary capture flow, so the camera session always ends before an answer is
+spoken, and no photo is taken while Mannie speaks, records, or a question's looks
+are being taken. A photo whose 16 by 16 grey thumbnail is within 8 levels of the
+last one sent, less than two minutes ago, is not sent. Three failed photos in a
+row stop watching. The screen stays on while watching. Every start, stop, sent,
+skipped and failed photo goes into `watch-log.txt` in the app's files folder with
+the battery percent, so a one-hour wear gives the battery cost per hour.
 
 The only network destination the app can call is `http://LAPTOP_IP:8792`
 (`GET /`, `POST /capture`, `POST /stt`, `POST /tts`, `POST /plant/question`,
-`POST /plant/bedtime`, `POST /plant/ref`, `GET /questions`). No cloud SDKs, no
+`POST /plant/bedtime`, `POST /plant/ref`, `GET /questions`, `POST /questions/retire`,
+`GET /answers`, `GET /evidence`, `GET /alerts`, `POST /alerts/ack`). No cloud SDKs, no
 analytics, no crash reporters; the toolkit's own analytics and crash reporting are
 opted out in the manifest, per the toolkit README.
 

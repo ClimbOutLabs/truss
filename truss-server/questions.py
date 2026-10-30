@@ -824,7 +824,11 @@ class QuestionStore:
             watch["answered_at"] = when.isoformat(timespec="seconds")
             pattern = watch.get("pattern")
             pattern_kind = pattern.get("kind") if isinstance(pattern, dict) else None
-            if pattern_kind in ("nightly", "window"):
+            if watch.get("state") == "retired":
+                # Removed while its check was in flight: the firing is
+                # recorded, but a removed question never comes back.
+                pass
+            elif pattern_kind in ("nightly", "window"):
                 watch["state"] = "standing"
                 watch["last_checked_at"] = when.isoformat(timespec="seconds")
             else:
@@ -870,7 +874,11 @@ class QuestionStore:
             when = when or datetime.now()
             watch["answered_at"] = when.isoformat(timespec="seconds")
             pattern = watch.get("pattern")
-            if isinstance(pattern, dict) and pattern.get("kind") in (
+            if watch.get("state") == "retired":
+                # Removed while its check was in flight: the firing and
+                # its witness are recorded, but it never comes back.
+                pass
+            elif isinstance(pattern, dict) and pattern.get("kind") in (
                 "nightly",
                 "window",
             ):

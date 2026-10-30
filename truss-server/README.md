@@ -49,6 +49,9 @@ The server will:
 - `GET /guide/status` - The guide's state, step, and current step
 - `POST /plant/ref?slug=...&kind=yes|no` - Save a reference look (multipart field "image")
 - `GET /questions` - List the standing questions and their states
+- `POST /questions/retire` - Stop watching a question, JSON `{"slug": "..."}`; its folder and history stay
+- `GET /answers?day=YYYY-MM-DD` - The day's answers from its `answers.txt`, newest first (today when no day is given), each naming its evidence photo
+- `GET /evidence?day=YYYY-MM-DD&name=<photo>.jpg` - One kept photo from that day's log folder; only a plain photo name is served
 - `GET /alerts` - List the missed-window alerts still waiting to be spoken
 - `POST /alerts/ack` - Confirm one alert was spoken, JSON `{"id": "..."}`; the only way an alert clears
 
