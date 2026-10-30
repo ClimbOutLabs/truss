@@ -5,6 +5,7 @@ import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.os.BatteryManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
@@ -30,6 +31,7 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,7 +72,30 @@ data class TrussUiState(
     val plantPrompt: String? = null,
     val plantLog: List<String> = emptyList(),
     val questionsList: List<QuestionInfo> = emptyList(),
+    // Companion screens. laptopReachable is null until the first check.
+    val laptopReachable: Boolean? = null,
+    val lastSpoken: List<String> = emptyList(),
+    val lastSpokenAt: String? = null,
+    val lastSpokenPhoto: Bitmap? = null,
+    val historyDay: String? = null,
+    val history: List<AnswerItem> = emptyList(),
+    val historyBusy: Boolean = false,
+    val historyPhotos: Map<String, Bitmap> = emptyMap(),
+    // Hands-free watching: a glasses photo every watchEverySeconds while on.
+    val watching: Boolean = false,
+    val watchEverySeconds: Int = 30,
+    val watchSent: Int = 0,
+    val watchSkipped: Int = 0,
+    val watchStartedAt: String? = null,
 ) {
+  /** True while any glasses camera or audio work is running. */
+  val busy: Boolean
+    get() = photoBusy || recordBusy || speakBusy || plantBusy
+
+  /** True once the glasses are registered with this app and one is in range. */
+  val glassesReady: Boolean
+    get() = registrationState == RegistrationState.REGISTERED && deviceNames.isNotEmpty()
+
   /** The glasses link in the brief's three words, derived from toolkit state. */
   val linkState: String
     get() =
@@ -85,6 +110,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   private val _uiState = MutableStateFlow(TrussUiState(laptopIp = loadLaptopIp(application)))
   val uiState: StateFlow<TrussUiState> = _uiState.asStateFlow()
+
+  init {
+    startLaptopWatch()
+  }
 
   // AutoDeviceSelector automatically selects the first available wearable device,
   // exactly as the CameraAccess sample does.
@@ -105,7 +134,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private var plantQueue: List<String> = emptyList()
 
   fun setLaptopIp(value: String) {
-    _uiState.update { it.copy(laptopIp = value) }
+    _uiState.update { it.copy(laptopIp = value, laptopReachable = null) }
     getApplication<Application>()
         .getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
         .edit()
@@ -187,9 +216,20 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   // MARK: - Screen 2, photo (Gate 2)
 
   fun captureAndUpload(requestPermission: suspend (Permission) -> PermissionStatus) {
-    if (_uiState.value.photoBusy) return
+    if (!beginCapture(quiet = false)) return
+    viewModelScope.launch { performCapture(requestPermission, fromWatch = false) }
+  }
+
+  /**
+   * Claim the camera for one capture, or refuse. A refusal is said on screen unless
+   * quiet (the watch loop just tries again later). Returns true when claimed; the
+   * caller must then run performCapture, which releases it.
+   */
+  private fun beginCapture(quiet: Boolean): Boolean {
+    if (_uiState.value.photoBusy) return false
     val now = _uiState.value
     if (now.recordBusy || now.speakBusy || now.plantBusy) {
+      if (quiet) return false
       // A camera session must never open while Bluetooth audio is open or
       // about to open: the two are never held together (see the Voice screen).
       // A refused capture also disarms any reference routing a caller set
@@ -197,7 +237,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       pendingRefSlug = null
       pendingRefKind = null
       _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
-      return
+      return false
     }
     _uiState.update {
       it.copy(
@@ -210,21 +250,30 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           lastError = null,
       )
     }
-    viewModelScope.launch {
-      val startedAt = SystemClock.elapsedRealtime()
-      try {
-        runCapture(requestPermission, startedAt)
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        photoLog("FAILED: ${e.message ?: e.toString()}")
-        showError(e)
-      } finally {
-        pendingRefSlug = null
-        pendingRefKind = null
-        _uiState.update {
-          it.copy(photoBusy = false, photoElapsedMs = SystemClock.elapsedRealtime() - startedAt, streamActive = false)
-        }
+    return true
+  }
+
+  /** One capture after beginCapture claimed the camera. Returns what happened:
+   * true when it ran to the end (sent, or skipped as the same view), false on a failure. */
+  private suspend fun performCapture(
+      requestPermission: suspend (Permission) -> PermissionStatus,
+      fromWatch: Boolean,
+  ): Boolean {
+    val startedAt = SystemClock.elapsedRealtime()
+    try {
+      runCapture(requestPermission, startedAt, fromWatch)
+      return true
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      photoLog("FAILED: ${e.message ?: e.toString()}")
+      showError(e)
+      return false
+    } finally {
+      pendingRefSlug = null
+      pendingRefKind = null
+      _uiState.update {
+        it.copy(photoBusy = false, photoElapsedMs = SystemClock.elapsedRealtime() - startedAt, streamActive = false)
       }
     }
   }
@@ -232,6 +281,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private suspend fun runCapture(
       requestPermission: suspend (Permission) -> PermissionStatus,
       startedAt: Long,
+      fromWatch: Boolean = false,
   ) {
     val state = _uiState.value
     check(state.sdkReady) { "The toolkit is not ready yet. Allow the Bluetooth permission first." }
@@ -329,6 +379,24 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       _uiState.update { it.copy(photo = bitmap) }
       photoLog("Photo saved on the phone (${jpegFile.length()} bytes).")
 
+      // Watching: a view the laptop already saw a moment ago is not sent again.
+      // The camera and session are closed by the finally below either way.
+      var signature: IntArray? = null
+      if (fromWatch) {
+        val current = withContext(Dispatchers.Default) { viewSignature(bitmap) }
+        val previous = lastSentSignature
+        if (previous != null &&
+            SystemClock.elapsedRealtime() - lastSentAt < SAME_VIEW_WINDOW_MS &&
+            signatureDistance(previous, current) < SAME_VIEW_THRESHOLD) {
+          withContext(Dispatchers.IO) { jpegFile.delete() }
+          photoLog("Same view as the last one sent, so it was not sent.")
+          watchRecord("skipped")
+          _uiState.update { it.copy(watchSkipped = it.watchSkipped + 1) }
+          return
+        }
+        signature = current
+      }
+
       // Step 3: is the laptop already reachable again, or must we leave explicitly?
       val client = laptopClient()
       val reachableBeforeLeave = withContext(Dispatchers.IO) { client.canReach() }
@@ -389,12 +457,32 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         // current question keeps its prompt and its place.
         plantLog(next)
         photoLog("Reference look saved. $next")
+        runCatching { fetchQuestions() }.onSuccess { list ->
+          _uiState.update { it.copy(questionsList = list) }
+        }
       } else {
         val result = withContext(Dispatchers.IO) { client.postCapture(jpegFile) }
         _uiState.update { it.copy(serverBytes = result.bytes) }
+        if (signature != null) {
+          // Only a view the laptop really received counts as seen.
+          lastSentSignature = signature
+          lastSentAt = SystemClock.elapsedRealtime()
+        }
+        if (fromWatch) {
+          watchRecord("sent", fired = result.fired.size)
+          _uiState.update { it.copy(watchSent = it.watchSent + 1) }
+        }
         photoLog("Uploaded. The laptop says it received ${result.bytes} bytes.")
         if (result.speak.isNotEmpty()) {
-          _uiState.update { it.copy(spokenLines = result.speak) }
+          val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
+          _uiState.update {
+            it.copy(
+                spokenLines = result.speak,
+                lastSpoken = result.speak,
+                lastSpokenAt = at,
+                lastSpokenPhoto = bitmap,
+            )
+          }
           result.speak.forEach { line -> photoLog("Mannie says: $line") }
           speakViaGlasses(result.speak)
         }
@@ -777,6 +865,261 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     captureAndUpload(requestPermission)
   }
 
+  // MARK: - Hands-free watching
+
+  private var watchJob: Job? = null
+  private var lastSentSignature: IntArray? = null
+  private var lastSentAt = 0L
+
+  /**
+   * Start taking a glasses photo every watchEverySeconds and sending it to the laptop,
+   * which checks it against whatever questions are due. Each photo is the ordinary
+   * capture flow, so its camera session always ends before any answer is spoken and
+   * nothing is taken while Mannie speaks, records, or plants. A view the laptop saw a
+   * moment ago is not sent again. Three failed photos in a row stop watching.
+   */
+  fun startWatching(requestPermission: suspend (Permission) -> PermissionStatus) {
+    if (watchJob?.isActive == true) return
+    val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
+    lastSentSignature = null
+    _uiState.update {
+      it.copy(watching = true, watchSent = 0, watchSkipped = 0, watchStartedAt = at, lastError = null)
+    }
+    watchRecord("start")
+    watchJob =
+        viewModelScope.launch {
+          var failures = 0
+          try {
+            while (true) {
+              // While a question's looks are being taken, the camera is left to
+              // the planting flow.
+              val ready = _uiState.value.glassesReady && _uiState.value.plantSlug == null
+              if (ready && beginCapture(quiet = true)) {
+                val ok = performCapture(requestPermission, fromWatch = true)
+                if (!ok) watchRecord("failed")
+                failures = if (ok) 0 else failures + 1
+                if (failures >= WATCH_MAX_FAILURES) {
+                  _uiState.update {
+                    it.copy(
+                        lastError =
+                            "Watching stopped after $WATCH_MAX_FAILURES photos in a row failed. " +
+                                (it.lastError ?: ""),
+                    )
+                  }
+                  break
+                }
+              }
+              delay(_uiState.value.watchEverySeconds * 1000L)
+            }
+          } finally {
+            watchRecord("stop")
+            _uiState.update { it.copy(watching = false) }
+          }
+        }
+  }
+
+  fun stopWatching() {
+    watchJob?.cancel()
+    watchJob = null
+  }
+
+  fun setWatchEverySeconds(seconds: Int) {
+    _uiState.update { it.copy(watchEverySeconds = seconds.coerceIn(10, 300)) }
+  }
+
+  /**
+   * A tiny picture of the view: the photo shrunk to 16 by 16 and turned to grey. Two
+   * photos of the same view, taken a moment apart, differ in it by only a few levels;
+   * turning the head or the scene changing moves it far more.
+   */
+  private fun viewSignature(bitmap: Bitmap): IntArray {
+    val small = Bitmap.createScaledBitmap(bitmap, SIGNATURE_SIDE, SIGNATURE_SIDE, true)
+    val pixels = IntArray(SIGNATURE_SIDE * SIGNATURE_SIDE)
+    small.getPixels(pixels, 0, SIGNATURE_SIDE, 0, 0, SIGNATURE_SIDE, SIGNATURE_SIDE)
+    if (small != bitmap) small.recycle()
+    return IntArray(pixels.size) { i ->
+      val c = pixels[i]
+      (((c shr 16) and 0xFF) * 299 + ((c shr 8) and 0xFF) * 587 + (c and 0xFF) * 114) / 1000
+    }
+  }
+
+  /** Mean absolute difference between two signatures, in grey levels (0 to 255). */
+  private fun signatureDistance(a: IntArray, b: IntArray): Int {
+    var total = 0
+    for (i in a.indices) total += kotlin.math.abs(a[i] - b[i])
+    return total / a.size
+  }
+
+  /**
+   * One line per watching event in watch-log.txt on the phone: time, event, battery
+   * percent. A one-hour wear at a set cadence then gives the battery cost per hour.
+   */
+  private fun watchRecord(event: String, fired: Int? = null) {
+    val app = getApplication<Application>()
+    val battery =
+        (app.getSystemService(android.content.Context.BATTERY_SERVICE) as? BatteryManager)
+            ?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+    val every = _uiState.value.watchEverySeconds
+    val line =
+        "$stamp | $event" +
+            (fired?.let { " | fired $it" } ?: "") +
+            " | every ${every}s | battery ${battery ?: "?"}%\n"
+    viewModelScope.launch(Dispatchers.IO) {
+      runCatching { File(app.filesDir, "watch-log.txt").appendText(line) }
+    }
+  }
+
+  // MARK: - Companion screens
+
+  /**
+   * Check the laptop now and then, so Home can say whether it is reachable. Skipped
+   * while a capture holds the glasses session: the phone may be on the glasses'
+   * network then, and the capture flow checks the laptop itself.
+   */
+  private fun startLaptopWatch() {
+    viewModelScope.launch {
+      while (true) {
+        checkLaptopOnce()
+        delay(LAPTOP_CHECK_MS)
+      }
+    }
+  }
+
+  private suspend fun checkLaptopOnce() {
+    val state = _uiState.value
+    if (state.laptopIp.isBlank()) {
+      _uiState.update { it.copy(laptopReachable = null) }
+      return
+    }
+    if (state.photoBusy || state.streamActive) return
+    val reachable =
+        try {
+          withContext(Dispatchers.IO) { laptopClient().canReach() }
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          false
+        }
+    _uiState.update { it.copy(laptopReachable = reachable) }
+    if (reachable) {
+      // Keeps Home's count of watched questions current.
+      try {
+        val list = withContext(Dispatchers.IO) { laptopClient().getQuestions() }
+        _uiState.update { it.copy(questionsList = list) }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.i(TAG, "Question list refresh failed: ${e.message ?: e.toString()}")
+      }
+    }
+  }
+
+  fun clearError() {
+    _uiState.update { it.copy(lastError = null) }
+  }
+
+  fun checkLaptopNow() {
+    viewModelScope.launch { checkLaptopOnce() }
+  }
+
+  /** Stop watching one question. Its files and history stay on the laptop. */
+  fun retireQuestion(slug: String) {
+    viewModelScope.launch {
+      try {
+        withContext(Dispatchers.IO) { laptopClient().retireQuestion(slug) }
+        if (slug in plantQueue) {
+          plantQueue = plantQueue - slug
+          if (_uiState.value.plantSlug == slug) {
+            val nextSlug = plantQueue.firstOrNull()
+            _uiState.update {
+              it.copy(
+                  plantSlug = nextSlug,
+                  plantPrompt = if (nextSlug != null) "Show me what yes looks like." else null,
+              )
+            }
+          }
+        }
+        val list = fetchQuestions()
+        _uiState.update { it.copy(questionsList = list) }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      }
+    }
+  }
+
+  /** Abandon the planting in progress: questions still waiting for their looks are
+   * retired on the laptop, so none is left half planted. */
+  fun cancelPlanting() {
+    val waiting = plantQueue
+    plantQueue = emptyList()
+    pendingRefSlug = null
+    pendingRefKind = null
+    _uiState.update { it.copy(plantSlug = null, plantPrompt = null, plantText = "") }
+    viewModelScope.launch {
+      try {
+        val list = fetchQuestions()
+        val stillPlanting = list.filter { it.slug in waiting && it.state == "planting" }
+        for (item in stillPlanting) {
+          withContext(Dispatchers.IO) { laptopClient().retireQuestion(item.slug) }
+        }
+        val refreshed = fetchQuestions()
+        _uiState.update { it.copy(questionsList = refreshed) }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      }
+    }
+  }
+
+  /** Load today's answers and their evidence photos for the History screen. */
+  fun loadHistory() {
+    if (_uiState.value.historyBusy) return
+    _uiState.update { it.copy(historyBusy = true) }
+    viewModelScope.launch {
+      try {
+        val client = laptopClient()
+        val day = withContext(Dispatchers.IO) { client.getAnswers() }
+        _uiState.update { it.copy(historyDay = day.day, history = day.answers) }
+        for (item in day.answers) {
+          val name = item.outline ?: item.evidence ?: continue
+          val key = "${day.day}/$name"
+          if (_uiState.value.historyPhotos.containsKey(key)) continue
+          val photo =
+              try {
+                withContext(Dispatchers.IO) {
+                  decodeThumbnail(client.getEvidence(day.day, name))
+                }
+              } catch (e: CancellationException) {
+                throw e
+              } catch (e: Exception) {
+                Log.i(TAG, "Evidence photo $key could not be loaded: ${e.message}")
+                null
+              }
+          if (photo != null) {
+            _uiState.update { it.copy(historyPhotos = it.historyPhotos + (key to photo)) }
+          }
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      } finally {
+        _uiState.update { it.copy(historyBusy = false) }
+      }
+    }
+  }
+
+  /** Decode a kept photo at a quarter of its size: enough for a card, and a day of
+   * them stays small in memory. */
+  private fun decodeThumbnail(bytes: ByteArray): Bitmap? {
+    val options = BitmapFactory.Options().apply { inSampleSize = 4 }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+  }
+
   private fun showError(e: Exception) {
     val message = e.message ?: e.toString()
     Log.e(TAG, message, e)
@@ -792,5 +1135,13 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val RETURN_TIMEOUT_MS = 15_000L
     private const val POLL_MS = 500L
     private const val ALERT_POLL_MS = 30_000L
+    private const val LAPTOP_CHECK_MS = 20_000L
+    private const val WATCH_MAX_FAILURES = 3
+    private const val SIGNATURE_SIDE = 16
+    // Mean grey-level difference below which two photos count as the same view.
+    private const val SAME_VIEW_THRESHOLD = 8
+    // A same view is sent again after this long anyway, so a question that has
+    // just come due still gets its look.
+    private const val SAME_VIEW_WINDOW_MS = 120_000L
   }
 }

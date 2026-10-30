@@ -3,6 +3,7 @@ package com.climboutlabs.truss
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import org.json.JSONObject
 
 /**
@@ -16,14 +17,31 @@ import org.json.JSONObject
  * question fired. */
 data class CaptureResult(val bytes: Long, val fired: List<String>, val speak: List<String>)
 
-/** One standing question as GET /questions reports it. */
+/** One standing question as GET /questions reports it. answeredAt is the laptop's
+ * local time of its last firing, or null. */
 data class QuestionInfo(
     val slug: String,
     val question: String,
     val state: String,
     val hasRefYes: Boolean,
     val hasRefNo: Boolean,
+    val kind: String = "state",
+    val answeredAt: String? = null,
 )
+
+/** One logged answer as GET /answers reports it. kind is "answer", "redo",
+ * "state_check" or "other"; evidence and outline are photo names for GET /evidence. */
+data class AnswerItem(
+    val time: String,
+    val question: String,
+    val kind: String,
+    val text: String,
+    val evidence: String?,
+    val outline: String?,
+)
+
+/** One day's answers, newest first. */
+data class DayAnswers(val day: String, val answers: List<AnswerItem>)
 
 /** One missed-window alert as GET /alerts reports it: an id and the line to
  * speak. The alert stays on the laptop until ackAlert confirms it was spoken. */
@@ -113,9 +131,57 @@ class LaptopClient(laptopIp: String) {
           state = item.getString("state"),
           hasRefYes = item.getBoolean("has_ref_yes"),
           hasRefNo = item.getBoolean("has_ref_no"),
+          kind = item.optString("kind", "state"),
+          answeredAt = item.optNullableString("answered_at"),
       )
     }
   }
+
+  /** POST /questions/retire: stop watching one question. Its files stay on the laptop. */
+  fun retireQuestion(slug: String) {
+    postJson("/questions/retire", JSONObject().put("slug", slug))
+  }
+
+  /** GET /answers: today's answers on the laptop's clock, newest first. */
+  fun getAnswers(): DayAnswers {
+    val json = JSONObject(getJson("/answers"))
+    val array = json.getJSONArray("answers")
+    val items =
+        List(array.length()) { i ->
+          val item = array.getJSONObject(i)
+          AnswerItem(
+              time = item.getString("time"),
+              question = item.getString("question"),
+              kind = item.optString("kind", "answer"),
+              text = item.optString("text", ""),
+              evidence = item.optNullableString("evidence"),
+              outline = item.optNullableString("outline"),
+          )
+        }
+    return DayAnswers(json.getString("day"), items)
+  }
+
+  /** GET /evidence: one kept photo's JPEG bytes. The day and name come from
+   * GET /answers, and the laptop only serves plain photo names. */
+  fun getEvidence(day: String, name: String): ByteArray {
+    val query =
+        "?day=" + URLEncoder.encode(day, "UTF-8") + "&name=" + URLEncoder.encode(name, "UTF-8")
+    val connection = open("/evidence$query")
+    try {
+      connection.requestMethod = "GET"
+      val code = connection.responseCode
+      if (code !in 200..299) {
+        throw IllegalStateException("Laptop answered HTTP $code for /evidence")
+      }
+      return connection.inputStream.use { it.readBytes() }
+    } finally {
+      connection.disconnect()
+    }
+  }
+
+  /** A JSON string field, or null when it is missing or JSON null. */
+  private fun JSONObject.optNullableString(key: String): String? =
+      if (isNull(key)) null else optString(key)
 
   /** GET /alerts: the missed-window alerts still waiting to be spoken. */
   fun getAlerts(): List<MissAlert> {
