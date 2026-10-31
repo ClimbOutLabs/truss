@@ -16,3 +16,6 @@ truss-server/alerts/
 # Eval scratch output and staged photos stay on the owner's machine
 eval/dummy/
 eval/dataset/
+
+# Eval runs (results and per-run scorecards); eval/SCORECARD.md is the shared copy
+eval/runs/

@@ -8,9 +8,21 @@ Terms, exactly as defined in questions.yaml:
   false-fire  = verdict yes, label no.
   miss        = verdict no, label yes.
   cannot_tell = reported as its own rate, neither right nor wrong,
-                except on q20 (the cannot_tell probe question), where
-                cannot_tell is the correct verdict and a confident yes
-                or no is wrong.
+                except on q20 (the cannot_tell probe question) and on
+                frames labelled cannot_tell (the deciding detail is not
+                in view), where cannot_tell is the correct verdict and
+                a confident yes or no is wrong.
+  false all-clear = on a safety question, verdict yes while the true
+                answer is no or cannot be seen. The expensive error;
+                its own headline number.
+  failed check = no answer came back from the model (timeout,
+                unreachable, cut-off reply). It reads cannot_tell, as
+                it does in the server, but it is counted apart: a
+                failure is not the model saying it cannot see.
+
+With --sam-results (the sam.jsonl first_numbers.py writes), the
+scorecard also says how often SAM on the DGX found the question's
+objects in the frame.
 
 Run with --self-test to check the arithmetic against a synthetic,
 hand-computable results set before trusting this on a real run.
@@ -35,7 +47,7 @@ SPARK_INPUT_RATE_USD = Fraction(125, 100) / 1_000_000  # $1.25 per 1,000,000 tok
 SPARK_OUTPUT_RATE_USD = Fraction(425, 100) / 1_000_000  # $4.25 per 1,000,000 tokens
 SAM_RATE_USD = Fraction(250, 100) / 1_000  # $2.50 per 1,000 images
 
-MODE_ORDER = ["generic", "planted", "mock"]
+MODE_ORDER = ["generic", "planted", "planted-photos", "mock"]
 SPLIT_ORDER = ["tuning", "heldout"]
 
 
@@ -77,10 +89,25 @@ def read_results(path):
 
 
 def is_probe(row):
-    """True for the cannot_tell probe question (q20), where the correct
-    verdict is cannot_tell and any confident yes or no is wrong, per
-    questions.yaml."""
-    return row.get("kind") == "cannot_tell_probe"
+    """True where the correct verdict is cannot_tell and any confident
+    yes or no is wrong: the probe question (q20), per questions.yaml,
+    and any frame labelled cannot_tell."""
+    return row.get("kind") == "cannot_tell_probe" or row.get("label") == "cannot_tell"
+
+
+def is_failed(row):
+    return bool(row.get("failure") or row.get("error"))
+
+
+def is_false_all_clear(row):
+    """A yes where the truth is no, or where the deciding detail is not
+    in view."""
+    return row["verdict"] == "yes" and row.get("label") in ("no", "cannot_tell")
+
+
+def is_guess(row):
+    """A confident yes or no on a frame labelled cannot_tell."""
+    return row.get("label") == "cannot_tell" and row["verdict"] in ("yes", "no")
 
 
 def is_correct(row):
@@ -116,6 +143,10 @@ def rate_block(rows):
         "false_fire": Fraction(sum(1 for r in rows if is_false_fire(r)), n),
         "miss": Fraction(sum(1 for r in rows if is_miss(r)), n),
         "cannot_tell": Fraction(sum(1 for r in rows if is_cannot_tell(r)), n),
+        "false_all_clear": Fraction(sum(1 for r in rows if is_false_all_clear(r)), n),
+        "unseen_n": sum(1 for r in rows if r.get("label") == "cannot_tell"),
+        "guesses": sum(1 for r in rows if is_guess(r)),
+        "failed": sum(1 for r in rows if is_failed(r)),
     }
 
 
@@ -168,18 +199,36 @@ def build_report(rows, questions, checks_per_day):
                 per_question[qid] = {
                     "n": len(q_rows),
                     "accuracy": Fraction(sum(1 for r in q_rows if is_correct(r)), len(q_rows)),
+                    "cannot_tell": sum(1 for r in q_rows if is_cannot_tell(r)),
+                    "wrong_yes": sum(1 for r in q_rows if is_false_all_clear(r)),
                 }
             else:
                 per_question[qid] = {"n": 0, "accuracy": None}
 
-        latencies = [r["latency_ms"] for r in group_rows if r.get("latency_ms") is not None]
+        latencies = [
+            r["latency_ms"] for r in group_rows
+            if r.get("latency_ms") is not None and not is_failed(r)
+        ]
         latency = None
         if latencies:
             latency = {"p50": percentile(latencies, 50), "p95": percentile(latencies, 95)}
 
         avg_cost = average_cost_usd(group_rows)
         cost = None
-        if avg_cost is not None:
+        local = bool(group_rows) and all(r.get("local") for r in group_rows)
+        answered = [r for r in group_rows if not is_failed(r)]
+        tokens = None
+        if answered:
+            tokens = {
+                "input": Fraction(sum((r.get("usage") or {}).get("spark_input_tokens", 0) or 0
+                                      for r in answered), len(answered)),
+                "output": Fraction(sum((r.get("usage") or {}).get("spark_output_tokens", 0) or 0
+                                       for r in answered), len(answered)),
+            }
+        models = sorted({r.get("model") for r in group_rows if r.get("model")})
+        # A local model has no per-call price; the Meta Model API rates
+        # above apply only to rows that went to a remote endpoint.
+        if avg_cost is not None and not local:
             cost = {
                 "avg_per_check_usd": avg_cost,
                 "checks_per_day": checks_per_day,
@@ -195,10 +244,86 @@ def build_report(rows, questions, checks_per_day):
             "per_question": per_question,
             "latency": latency,
             "cost": cost,
+            "local": local,
+            "tokens": tokens,
+            "models": models,
             "errors": errors,
+            "failures": failure_kinds(group_rows),
         }
 
-    return {"groups": groups, "checks_per_day": checks_per_day}
+    every = OrderedDict()
+    for mode in sorted({r.get("mode") for r in rows}, key=sort_key(MODE_ORDER)):
+        mode_rows = [r for r in rows if r.get("mode") == mode]
+        every[mode] = {
+            "overall": rate_block(mode_rows),
+            "safety": rate_block([r for r in mode_rows if r.get("question_id") in safety_ids]),
+        }
+
+    return {
+        "groups": groups,
+        "checks_per_day": checks_per_day,
+        "gap": paired_gap(rows),
+        "every": every,
+        "gap_all": paired_gap(rows, split=None),
+        "safety_count": len(safety_ids),
+    }
+
+
+def failure_kinds(rows):
+    kinds = OrderedDict()
+    for r in rows:
+        if is_failed(r):
+            kind = r.get("failure") or "not run"
+            kinds[kind] = kinds.get(kind, 0) + 1
+    return kinds
+
+
+def paired_gap(rows, split="heldout", a="planted", b="generic"):
+    """Accuracy of mode a minus mode b on the frames both modes ran
+    (in one split, or every split when split is None), or None. Pairing keeps a question with no reference photos (so no
+    planted row) from tilting the comparison."""
+    by_mode = {a: {}, b: {}}
+    for r in rows:
+        if (split is None or r.get("split") == split) and r.get("mode") in by_mode:
+            by_mode[r["mode"]][r.get("frame_id")] = r
+    shared = sorted(set(by_mode[a]) & set(by_mode[b]))
+    if not shared:
+        return None
+    acc_a = Fraction(sum(1 for f in shared if is_correct(by_mode[a][f])), len(shared))
+    acc_b = Fraction(sum(1 for f in shared if is_correct(by_mode[b][f])), len(shared))
+    return {"n": len(shared), a: acc_a, b: acc_b, "gap": acc_a - acc_b}
+
+
+def sam_report(sam_rows, questions):
+    """How often SAM found the question's objects, by true answer and by
+    question, with its time per photo."""
+    if not sam_rows:
+        return None
+    ok = [r for r in sam_rows if not r.get("error")]
+    by_label = OrderedDict()
+    for label in ("yes", "no", "cannot_tell"):
+        rows = [r for r in ok if r.get("label") == label]
+        if rows:
+            by_label[label] = {"n": len(rows), "found": Fraction(sum(1 for r in rows if r.get("found")), len(rows))}
+    per_question = OrderedDict()
+    for qid in questions:
+        rows = [r for r in ok if r.get("question_id") == qid]
+        if rows:
+            per_question[qid] = {
+                "n": len(rows),
+                "found": Fraction(sum(1 for r in rows if r.get("found")), len(rows)),
+                "phrases": rows[0].get("prompts") or [],
+            }
+    latencies = [r["latency_ms"] for r in ok if r.get("latency_ms") is not None]
+    return {
+        "n": len(sam_rows),
+        "errors": len(sam_rows) - len(ok),
+        "models": sorted({r.get("sam_model") for r in ok if r.get("sam_model")}),
+        "overall": Fraction(sum(1 for r in ok if r.get("found")), len(ok)) if ok else None,
+        "by_label": by_label,
+        "per_question": per_question,
+        "latency": {"p50": percentile(latencies, 50), "p95": percentile(latencies, 95)} if latencies else None,
+    }
 
 
 def pct(fraction):
@@ -229,6 +354,13 @@ def render_rate_table(block, label):
     lines.append(f"  false-fire rate = {pct(block['false_fire'])}")
     lines.append(f"  miss rate = {pct(block['miss'])}")
     lines.append(f"  cannot-tell rate = {pct(block['cannot_tell'])}")
+    if block.get("unseen_n"):
+        lines.append(
+            f"  frames whose answer is not in view: {block['unseen_n']}, "
+            f"answered yes or no anyway (a guess): {block['guesses']}"
+        )
+    if block.get("failed"):
+        lines.append(f"  failed checks (no answer from the model): {block['failed']}")
     return lines
 
 
@@ -240,16 +372,56 @@ def render_markdown(report, questions):
     out.append("yes while the true answer was no. Miss means the check said no while")
     out.append("the true answer was yes. Cannot-tell is its own rate, not counted as")
     out.append("right or wrong, except on q20, the cannot-tell probe, where saying")
-    out.append("cannot-tell is the correct answer and a confident yes or no is wrong.")
+    out.append("cannot-tell is the correct answer and a confident yes or no is wrong;")
+    out.append("the same holds on frames labelled cannot_tell (the deciding detail is")
+    out.append("not in view). A false all-clear is a yes on a safety question while")
+    out.append("the truth is no or cannot be seen. A failed check (no answer came back)")
+    out.append("reads cannot_tell, as in the server, and is counted apart.")
     out.append("")
 
     groups = report["groups"]
+    models = sorted({m for data in groups.values() for m in data.get("models", [])})
+    if models:
+        out.append("Model: " + ", ".join(models) + ".")
+        out.append("")
 
     heldout_by_mode = {
         mode: data
         for (mode, split), data in groups.items()
         if split == "heldout"
     }
+    every = report.get("every") or {}
+    if every:
+        out.append("## Headline: every frame")
+        out.append("")
+        out.append(
+            "Every frame checked, tuning and held-out together. With only a few "
+            "frames per question this is the number to read; the held-out split "
+            "below is the one to quote once there are more than three frames per state."
+        )
+        out.append("")
+        for mode, data in every.items():
+            o = data["overall"]
+            line = (
+                f"- {mode}: n = {o['n']}, accuracy {pct(o['accuracy'])}, "
+                f"cannot tell {pct(o['cannot_tell'])}"
+            )
+            if data["safety"] is not None:
+                line += (
+                    f"; **safety false all-clear {pct(data['safety']['false_all_clear'])}** "
+                    f"of {data['safety']['n']} safety frames"
+                )
+            if o["failed"]:
+                line += f"; {o['failed']} failed checks"
+            out.append(line)
+        pair = report.get("gap_all")
+        if pair:
+            out.append(
+                f"- planted minus generic, on the {pair['n']} frames both ran: "
+                f"{pct(pair['gap'])} ({pct(pair['planted'])} minus {pct(pair['generic'])})"
+            )
+        out.append("")
+
     out.append("## Headline: held-out results")
     out.append("")
     if not heldout_by_mode:
@@ -258,15 +430,19 @@ def render_markdown(report, questions):
         for mode, data in sorted(heldout_by_mode.items(), key=lambda kv: sort_key(MODE_ORDER)(kv[0])):
             out.append(f"Mode {mode}, held-out split, n = {data['n']}:")
             out.extend("  " + line for line in render_rate_table(data["overall"], "overall")[1:])
+            if data["safety"] is not None:
+                out.append(
+                    f"  **safety false all-clear rate: {pct(data['safety']['false_all_clear'])}** "
+                    f"(n = {data['safety']['n']} safety frames)"
+                )
             out.append("")
         if "generic" in heldout_by_mode and "planted" in heldout_by_mode:
-            g = heldout_by_mode["generic"]["overall"]
-            p = heldout_by_mode["planted"]["overall"]
-            if g and p:
-                gap = p["accuracy"] - g["accuracy"]
+            pair = report.get("gap")
+            if pair:
                 out.append(
-                    f"Accuracy gap (planted minus generic), held-out: "
-                    f"{pct(gap)} ({pct(p['accuracy'])} planted minus {pct(g['accuracy'])} generic)"
+                    f"Accuracy gap (planted minus generic), held-out, on the {pair['n']} "
+                    f"frames both ran: {pct(pair['gap'])} ({pct(pair['planted'])} planted "
+                    f"minus {pct(pair['generic'])} generic)"
                 )
         else:
             out.append(
@@ -288,13 +464,14 @@ def render_markdown(report, questions):
         for line in render_rate_table(data["overall"], "overall")[1:]:
             out.append("- " + line.strip())
         out.append("")
-        out.append("Safety questions only (the 5 questions marked safety: true; a")
+        out.append(f"Safety questions only (the {report.get('safety_count', 5)} questions marked safety: true; a")
         out.append("false-fire here is a false all-clear, the expensive error):")
         for line in render_rate_table(data["safety"], "safety")[1:]:
             out.append("- " + line.strip())
         if data["safety"] is not None:
             out.append(
-                f"- **safety false-fire rate (false all-clear): {pct(data['safety']['false_fire'])}**"
+                f"- **safety false all-clear rate (yes while the truth is no or not in "
+                f"view): {pct(data['safety']['false_all_clear'])}**"
             )
         out.append("")
         if data["latency"]:
@@ -305,7 +482,14 @@ def render_markdown(report, questions):
         else:
             out.append("Latency per check: no data")
         out.append("")
-        if data["cost"]:
+        if data.get("tokens"):
+            out.append(
+                f"Tokens per answered check: {float(data['tokens']['input']):.0f} in, "
+                f"{float(data['tokens']['output']):.0f} out (thinking included)"
+            )
+        if data.get("local"):
+            out.append("Cost per check: none per call; the model runs locally on the DGX.")
+        elif data["cost"]:
             c = data["cost"]
             out.append(f"Cost per check: {usd(c['avg_per_check_usd'])}")
             out.append(
@@ -316,31 +500,75 @@ def render_markdown(report, questions):
         else:
             out.append("Cost per check: no data")
         if data["errors"]:
-            out.append(f"Frames with a recorded error: {data['errors']}")
+            out.append(f"Frames not checked (setup error, such as missing looks.txt): {data['errors']}")
+        if data.get("failures"):
+            out.append(
+                "Failed checks by kind: "
+                + ", ".join(f"{k} {v}" for k, v in data["failures"].items())
+            )
         out.append("")
         out.append("Per-question accuracy:")
         out.append("")
-        out.append("| question | n | accuracy |")
-        out.append("|---|---|---|")
+        out.append("| question | n | accuracy | cannot tell | wrong yes |")
+        out.append("|---|---|---|---|---|")
+        empty = [qid for qid, qdata in data["per_question"].items() if qdata["n"] == 0]
         for qid, qdata in data["per_question"].items():
             slug = questions.get(qid, {}).get("slug", qid)
+            if questions.get(qid, {}).get("safety"):
+                slug += " (safety)"
             if qdata["n"] == 0:
-                out.append(f"| {qid} {slug} | 0 | no data |")
+                continue
             else:
-                out.append(f"| {qid} {slug} | {qdata['n']} | {pct(qdata['accuracy'])} |")
+                out.append(
+                    f"| {qid} {slug} | {qdata['n']} | {pct(qdata['accuracy'])} | "
+                    f"{qdata['cannot_tell']} | {qdata['wrong_yes']} |"
+                )
+        if empty:
+            out.append("")
+            out.append("No frames in this group for: " + ", ".join(empty) + ".")
+        out.append("")
+
+    sam = report.get("sam")
+    if sam:
+        out.append("## SAM on the DGX: did it find the question's objects?")
+        out.append("")
+        out.append(
+            "One SAM call per frame with the question's object names (prompts.txt "
+            "from the compile, else sam_prompts in questions.yaml). SAM is not in "
+            "the verdict path; this says whether it could outline the evidence."
+        )
+        out.append("")
+        if sam["models"]:
+            out.append("SAM model: " + ", ".join(sam["models"]) + ".")
+        out.append(f"- frames = {sam['n']}, found anything = {pct(sam['overall'])}")
+        for label, block in sam["by_label"].items():
+            out.append(f"- true answer {label}: found on {pct(block['found'])} of {block['n']}")
+        if sam["errors"]:
+            out.append(f"- SAM calls that failed: {sam['errors']}")
+        if sam["latency"]:
+            out.append(f"- time per photo: p50 = {sam['latency']['p50']} ms, p95 = {sam['latency']['p95']} ms")
+        out.append("")
+        out.append("| question | n | found | object names |")
+        out.append("|---|---|---|---|")
+        for qid, block in sam["per_question"].items():
+            slug = questions.get(qid, {}).get("slug", qid)
+            out.append(f"| {qid} {slug} | {block['n']} | {pct(block['found'])} | {', '.join(block['phrases'])} |")
         out.append("")
 
     return "\n".join(out) + "\n"
 
 
-def run_score(results_path, questions_path, out_path, checks_per_day):
+def run_score(results_path, questions_path, out_path, checks_per_day, sam_path=None, quiet=False):
     questions = load_questions(questions_path)
     rows = read_results(results_path)
     report = build_report(rows, questions, checks_per_day)
+    if sam_path and Path(sam_path).exists():
+        report["sam"] = sam_report(read_results(sam_path), questions)
     text = render_markdown(report, questions)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(text)
-    print(text)
+    if not quiet:
+        print(text)
     return report
 
 
@@ -534,6 +762,11 @@ def main():
         help="Path to write the scorecard (default: eval/SCORECARD.md).",
     )
     parser.add_argument(
+        "--sam-results",
+        default=None,
+        help="Optional sam.jsonl from first_numbers.py, for the SAM section.",
+    )
+    parser.add_argument(
         "--checks-per-day",
         type=int,
         default=30,
@@ -553,7 +786,7 @@ def main():
     if not args.results:
         parser.error("--results is required unless --self-test is given")
 
-    run_score(args.results, args.questions, args.out, args.checks_per_day)
+    run_score(args.results, args.questions, args.out, args.checks_per_day, args.sam_results)
 
 
 if __name__ == "__main__":

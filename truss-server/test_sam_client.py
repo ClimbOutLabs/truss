@@ -12,7 +12,7 @@ import json
 import sys
 import tempfile
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -207,7 +207,7 @@ def loop_rig(outline_fn):
 
     loop = CheckLoop(store, check_fn, tmp / "log",
                      speak_fn=lambda text, entry, evidence: spoken.append(text),
-                     now_fn=lambda: datetime(2026, 10, 30, 21, 0, 0),
+                     now_fn=lambda: datetime.now() + timedelta(minutes=1),
                      outline_fn=outline_fn)
     return tmp, store, slug, loop, spoken
 
