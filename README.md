@@ -12,10 +12,9 @@ first, without being asked, and the photo that answered it is kept on your
 own laptop as evidence. Photos that answer nothing are deleted.
 
 Built for the Meta Global AI Developer Hackathon (Indie track, "Build for
-Your World"). Every check and every plant-time compile goes to a Meta
-model, and in the demo every one of them runs on hardware in the home. The
-one non-Meta model is Whisper, for speech to text on the laptop; it never
-sees a photo.
+Your World"). Truss uses Meta models only: every check, every plant-time
+compile and every evidence outline goes to a Meta model, and in the demo
+all of them run on hardware in the home.
 
 ## Who it is for
 
@@ -79,17 +78,18 @@ stove.
  Meta glasses            Android phone                 Laptop (home)                  The DGX (home)
  (Oakley Meta    BT  ┌──────────────────┐  LAN  ┌──────────────────────────┐  LAN  ┌──────────────────────────┐
   Vanguard)  ──────► │ Truss app        │ ────► │ truss-server             │ ────► │ llama-server             │
-  photo + mic        │ Wearables toolkit│ HTTP  │ Python standard library  │ HTTP  │ Muse Glimmer 30B (GGUF)  │
+  photo              │ Wearables toolkit│ HTTP  │ Python standard library  │ HTTP  │ Muse Glimmer 30B (GGUF)  │
              ◄────── │ capture, diff,   │ ◄──── │ question store (files)   │ ◄──── │ OpenAI-compatible API    │
   speaker            │ speak, alerts    │       │ check loop, done windows │       ├──────────────────────────┤
                      └──────────────────┘       │ alerts, evidence, log    │ ────► │ SAM 3.1 service          │
-                                                │ Whisper STT, local TTS   │       │ (evidence outline)       │
+                                                │ text to speech (macOS)   │       │ (evidence outline)       │
                                                 └──────────────────────────┘       └──────────────────────────┘
 ```
 
 - **Glasses and phone (`app/`).** An Android app on Meta's Wearables Device
-  Access Toolkit takes photos and voice from the glasses over Bluetooth and
-  sends them to the laptop. The camera session always ends before any
+  Access Toolkit takes photos from the glasses and sends them to the laptop,
+  and plays Mannie's spoken answers back through the glasses. Questions are
+  planted by typing them in the app. The camera session always ends before any
   answer is spoken, because the toolkit session and the Bluetooth audio
   channel cannot be held open together. Watch hands-free takes a photo every
   15, 30 or 60 seconds and skips one that is nearly identical to the last
@@ -116,8 +116,9 @@ stove.
   the object by those phrases and save a copy of the evidence photo with
   the object outlined. It runs in the background and can never delay or
   stop a spoken answer.
-- **Voice.** Whisper (whisper.cpp) on the laptop for speech to text, the
-  laptop's own text to speech back through the phone to the glasses.
+- **Voice out.** Mannie's lines are spoken by the Mac's built-in text to
+  speech (`say`) and played through the phone to the glasses. There is no
+  speech to text: nothing she says is recorded.
 
 ### Where your data goes
 
@@ -136,9 +137,8 @@ service in the demo configuration.
 
 Rules Truss holds itself to:
 
-- No non-Meta model makes any check in the demo or the eval. Whisper
-  (whisper.cpp, local) turns her spoken words into text and never sees a
-  photo.
+- No non-Meta model makes any check, compile or outline, in the demo or
+  the eval.
 - Never the Muse Spark contributor tier, which trains on what it is sent.
   Any model name containing `contributor` is refused in code before
   anything is sent.
@@ -223,7 +223,7 @@ seconds from arriving at the laptop to Glimmer's verdict, and about
 | Path | What |
 |---|---|
 | `app/` | Android companion app (Kotlin, Compose, Meta Wearables toolkit) |
-| `truss-server/` | Laptop server: question store, check loop, done windows, alerts, voice, evidence |
+| `truss-server/` | Laptop server: question store, check loop, done windows, alerts, spoken answers, evidence |
 | `dgx/` | Bring-up and bench scripts for Muse Glimmer 30B under `llama-server` |
 | `dgx/sam/` | Local SAM 3.1 service, its setup script and acceptance run |
 | `eval/` | Eval harness: question set, capture tool, runner, scorer |
@@ -247,8 +247,6 @@ Glimmer 30B (an NVIDIA DGX Spark here).
    python3 truss-server/server.py
    ```
 
-   For speech to text, `brew install whisper-cpp` and the model file in
-   [`truss-server/README.md`](truss-server/README.md).
 4. Build and install the app ([`app/README.md`](app/README.md)), enter
    the laptop's address under Settings, connect the glasses, and plant a
    question.
@@ -275,7 +273,7 @@ October 26, 2026; the first commit is from October 27. Pre-existing pieces it re
 
 - Meta's Wearables Device Access Toolkit; the app's registration and
   permission flow follows its CameraAccess sample.
-- llama.cpp, Whisper (whisper.cpp), and the SAM 3 code from
+- llama.cpp and the SAM 3 code from
   `facebookresearch/sam3`, installed by the scripts, not vendored.
 - Hanken Grotesk, under the SIL Open Font License
   ([`third_party/fonts/`](third_party/fonts/)).
@@ -285,3 +283,8 @@ October 26, 2026; the first commit is from October 27. Pre-existing pieces it re
   and the spike script `eval/aman_truss_spike.py`).
   It is off by default, never used in the demo or the eval, and nothing it
   answered counts as a Truss result.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE). The Hanken Grotesk font files keep their own
+SIL Open Font License.

@@ -96,7 +96,6 @@ fun TrussApp(
     viewModel: TrussViewModel,
     onConnectGlasses: () -> Unit,
     onRequestWearablesPermission: suspend (Permission) -> PermissionStatus,
-    onRequestRecordAudioPermission: suspend () -> Boolean,
 ) {
   val state by viewModel.uiState.collectAsState()
   var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -154,7 +153,6 @@ fun TrussApp(
               QuestionsScreen(
                   state = state,
                   viewModel = viewModel,
-                  onRecordQuestion = { viewModel.recordPlantQuestion(onRequestRecordAudioPermission) },
                   onCaptureRef = { kind ->
                     viewModel.captureReference(kind, onRequestWearablesPermission)
                   },
@@ -171,7 +169,6 @@ fun TrussApp(
                   viewModel = viewModel,
                   onConnectGlasses = onConnectGlasses,
                   onCapture = { viewModel.captureAndUpload(onRequestWearablesPermission) },
-                  onRecord = { viewModel.recordAndTranscribe(onRequestRecordAudioPermission) },
               )
         }
       }
@@ -722,11 +719,9 @@ private fun QuestionTiles(state: TrussUiState, onOpenQuestions: () -> Unit) {
 private fun QuestionsScreen(
     state: TrussUiState,
     viewModel: TrussViewModel,
-    onRecordQuestion: () -> Unit,
     onCaptureRef: (String) -> Unit,
 ) {
   LaunchedEffect(Unit) { viewModel.refreshQuestions() }
-  var typing by rememberSaveable { mutableStateOf(false) }
   val planting = state.plantSlug?.let { slug -> state.questionsList.firstOrNull { it.slug == slug } }
 
   ScreenBody {
@@ -734,56 +729,37 @@ private fun QuestionsScreen(
     ScreenTitle("Questions")
 
     if (state.plantSlug == null) {
-      Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        BigButton(
-            text = if (state.plantBusy && !typing) "Listening..." else "Say it",
-            icon = TrussIcons.Mic,
-            onClick = onRecordQuestion,
-            enabled = !state.busy,
-            busy = state.plantBusy && !typing,
-            container = Truss.forest,
-            modifier = Modifier.weight(1f),
-        )
-        OutlineBigButton(
-            text = "Type it",
-            icon = TrussIcons.Keyboard,
-            onClick = { typing = !typing },
-            modifier = Modifier.weight(1f),
-        )
-      }
-      if (typing) {
-        OutlinedTextField(
-            value = state.plantText,
-            onValueChange = viewModel::setPlantText,
-            placeholder = { Text("Is the stove off?") },
-            singleLine = true,
-            shape = Pill,
-            textStyle = MaterialTheme.typography.bodyLarge,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { viewModel.plantQuestionFromText() }),
-            trailingIcon = {
-              IconButton(
-                  onClick = viewModel::plantQuestionFromText,
-                  enabled = !state.plantBusy && state.plantText.isNotBlank(),
+      OutlinedTextField(
+          value = state.plantText,
+          onValueChange = viewModel::setPlantText,
+          placeholder = { Text("Is the stove off?") },
+          singleLine = true,
+          shape = Pill,
+          textStyle = MaterialTheme.typography.bodyLarge,
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+          keyboardActions = KeyboardActions(onSend = { viewModel.plantQuestionFromText() }),
+          trailingIcon = {
+            IconButton(
+                onClick = viewModel::plantQuestionFromText,
+                enabled = !state.plantBusy && state.plantText.isNotBlank(),
+            ) {
+              Box(
+                  modifier = Modifier.size(44.dp).clip(CircleShape).background(Truss.forest),
+                  contentAlignment = Alignment.Center,
               ) {
-                Box(
-                    modifier = Modifier.size(44.dp).clip(CircleShape).background(Truss.forest),
-                    contentAlignment = Alignment.Center,
-                ) {
-                  Icon(TrussIcons.Arrow, contentDescription = "Next: show the looks", tint = Color.White)
-                }
+                Icon(TrussIcons.Arrow, contentDescription = "Next: show the looks", tint = Color.White)
               }
-            },
-            colors =
-                OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Truss.card,
-                    unfocusedContainerColor = Truss.card,
-                    focusedBorderColor = Truss.forest,
-                    unfocusedBorderColor = Color.Transparent,
-                ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-      }
+            }
+          },
+          colors =
+              OutlinedTextFieldDefaults.colors(
+                  focusedContainerColor = Truss.card,
+                  unfocusedContainerColor = Truss.card,
+                  focusedBorderColor = Truss.forest,
+                  unfocusedBorderColor = Color.Transparent,
+              ),
+          modifier = Modifier.fillMaxWidth(),
+      )
       Text(
           "Next, you show Mannie what yes looks like and what no looks like, through the glasses.",
           style = MaterialTheme.typography.bodySmall,
@@ -1009,7 +985,6 @@ private fun SettingsScreen(
     viewModel: TrussViewModel,
     onConnectGlasses: () -> Unit,
     onCapture: () -> Unit,
-    onRecord: () -> Unit,
 ) {
   var showDiagnostics by remember { mutableStateOf(false) }
 
@@ -1095,7 +1070,7 @@ private fun SettingsScreen(
       IconTile(TrussIcons.Pulse, Truss.sage, Truss.ink, size = 40.dp, shape = RoundedCornerShape(12.dp))
       Column(Modifier.weight(1f)) {
         Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
-        Text("Connection, last capture, voice tests", style = MaterialTheme.typography.bodySmall, color = Truss.muted)
+        Text("Connection, last capture, speaker test", style = MaterialTheme.typography.bodySmall, color = Truss.muted)
       }
       Icon(
           TrussIcons.Chevron,
@@ -1105,7 +1080,7 @@ private fun SettingsScreen(
       )
     }
     if (showDiagnostics) {
-      Diagnostics(state, viewModel, onCapture, onRecord)
+      Diagnostics(state, viewModel, onCapture)
     }
   }
 }
@@ -1135,7 +1110,6 @@ private fun Diagnostics(
     state: TrussUiState,
     viewModel: TrussViewModel,
     onCapture: () -> Unit,
-    onRecord: () -> Unit,
 ) {
   val small = MaterialTheme.typography.bodySmall
   DiagCard("Connection") {
@@ -1157,8 +1131,7 @@ private fun Diagnostics(
     LogLines(state.photoLog)
   }
 
-  DiagCard("Voice through the glasses") {
-    Text(stringResource(R.string.why_record_audio), style = small, color = Truss.muted)
+  DiagCard("Mannie's voice through the glasses") {
     Text(
         "Any glasses camera session is ended before Bluetooth audio opens: opening Bluetooth " +
             "SCO can end a toolkit session (a known upstream issue), so the two are never held " +
@@ -1170,16 +1143,6 @@ private fun Diagnostics(
     viewModel.getAvailableCommunicationDevices().forEach { device ->
       Text("  • $device", style = small, fontFamily = FontFamily.Monospace)
     }
-    DiagButton(if (state.recordBusy) "Recording..." else "Record 5 s via glasses", onRecord, !state.recordBusy && !state.photoBusy)
-    state.inputDevice?.let { device ->
-      if (device.isBluetooth) {
-        Text("Recorded from: ${device.describe()}", style = small)
-      } else {
-        Text("FAIL: recorded from ${device.describe()}, not the glasses.", style = small, color = Color.Red)
-      }
-    }
-    state.transcript?.let { Text("Transcript: $it", style = small) }
-    state.sttMs?.let { Text("Speech end to transcript: $it ms", style = small) }
     DiagButton(
         if (state.speakBusy) "Playing..." else "Speak test sentence via glasses",
         viewModel::speakTestSentence,

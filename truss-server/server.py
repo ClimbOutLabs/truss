@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Truss local server.
-Handles photo uploads, speech-to-text, and text-to-speech for the Truss app.
+Handles photo uploads and text-to-speech for the Truss app.
 """
 
 import json
@@ -43,34 +43,6 @@ def get_wifi_address():
     except subprocess.CalledProcessError:
         print("Warning: Could not get en0 address, falling back to 0.0.0.0")
         return "0.0.0.0"
-
-# Check if whisper-cli is available
-def check_whisper_cli():
-    try:
-        # Check for whisper-cli from Homebrew
-        result = subprocess.run(
-            ["which", "whisper-cli"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        whisper_path = result.stdout.strip()
-        # Check for the model
-        model_path = Path(__file__).parent / "models" / "ggml-small.en.bin"
-        if model_path.exists():
-            return whisper_path, str(model_path)
-        else:
-            print(f"Warning: Model not found at {model_path}")
-            return None, None
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None, None
-
-WHISPER_CMD, WHISPER_MODEL = check_whisper_cli()
-if WHISPER_CMD and WHISPER_MODEL:
-    print(f"whisper-cli found: {WHISPER_CMD}")
-    print(f"Model: {WHISPER_MODEL}")
-else:
-    print("Warning: whisper-cli or model not found. STT will fail with an error.")
 
 # Ensure captures directory exists
 CAPTURES_DIR = Path(__file__).parent / "captures"
@@ -342,8 +314,6 @@ class TrussHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/capture":
             self.handle_capture()
-        elif path == "/stt":
-            self.handle_stt()
         elif path == "/tts":
             self.handle_tts()
         elif path == "/plant/question":
@@ -488,9 +458,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         "safety" (true or false) marks a question where a wrong word
         does harm (left out, a done question is safety and a state
         question is not), and an optional "look_at" names the thing to look at
-        in a missed-window alert, like "the {weekday} PM compartment". Voice
-        planting uses the same endpoint: the app sends the recording
-        to /stt first, then posts the transcript here as text.
+        in a missed-window alert, like "the {weekday} PM compartment".
         """
         try:
             content_length = int(self.headers.get("Content-Length", 0))
@@ -804,71 +772,6 @@ class TrussHandler(BaseHTTPRequestHandler):
         
         except Exception as e:
             print(f"POST /capture -> ERROR: {e}")
-            self.send_error(500, str(e))
-    
-    def handle_stt(self):
-        """Handle speech-to-text."""
-        try:
-            content_type = self.headers.get("Content-Type", "")
-            if not content_type.startswith("multipart/form-data"):
-                self.send_error(400, "Expected multipart/form-data")
-                return
-            
-            # Parse boundary
-            boundary = content_type.split("boundary=")[-1].encode()
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length)
-            
-            # Extract audio data
-            audio_data = self.extract_multipart_field(body, boundary, b"audio")
-            if not audio_data:
-                self.send_error(400, "No audio field found")
-                return
-            
-            # Transcribe with whisper-cli
-            if not WHISPER_CMD or not WHISPER_MODEL:
-                self.send_error(500, "whisper-cli or model not found. Install with: brew install whisper-cpp")
-                return
-            
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                tmp.write(audio_data)
-                tmp_path = tmp.name
-            
-            try:
-                # whisper-cli with no timestamps (-nt flag)
-                result = subprocess.run(
-                    [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", tmp_path, "-l", "en", "-nt"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                
-                if result.returncode != 0:
-                    raise RuntimeError(f"whisper-cli failed: {result.stderr}")
-                
-                # Parse the output - whisper-cli with -nt outputs just the text
-                lines = result.stdout.strip().split('\n')
-                # Filter out empty lines and any remaining metadata
-                text_lines = [line.strip() for line in lines 
-                             if line.strip() and not line.strip().startswith('[')]
-                text = ' '.join(text_lines) if text_lines else ""
-                
-                if not text:
-                    text = "(no speech detected)"
-            finally:
-                os.unlink(tmp_path)
-            
-            response = {"text": text}
-            
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(response).encode())
-            
-            print(f"POST /stt -> transcribed: {text[:50]}...")
-        
-        except Exception as e:
-            print(f"POST /stt -> ERROR: {e}")
             self.send_error(500, str(e))
     
     def handle_tts(self):
