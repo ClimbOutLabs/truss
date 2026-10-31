@@ -18,8 +18,8 @@ import kotlin.math.sin
 
 /**
  * The "Paper and ink" look: near-white surfaces, black type and buttons, and one
- * muted slate accent, so colour is kept for meaning. Titles are set in Instrument
- * Serif and everything else in Inter (both bundled under res/font, SIL OFL 1.1).
+ * muted slate accent, so colour is kept for meaning. Set in Hanken Grotesk
+ * throughout (bundled under res/font, SIL OFL 1.1).
  *
  * The token names describe roles: forest is the dark primary (ink), lime and sky
  * are the soft accent fill, apricot is the soft attention fill.
@@ -46,13 +46,11 @@ object Truss {
   val onError = Color(0xFF410002)
 }
 
-val InstrumentSerif = FontFamily(Font(R.font.instrument_serif_regular, FontWeight.Normal))
-
-val Inter =
+val HankenGrotesk =
     FontFamily(
-        Font(R.font.inter_regular, FontWeight.Normal),
-        Font(R.font.inter_medium, FontWeight.Medium),
-        Font(R.font.inter_semibold, FontWeight.SemiBold),
+        Font(R.font.hanken_grotesk_regular, FontWeight.Normal),
+        Font(R.font.hanken_grotesk_medium, FontWeight.Medium),
+        Font(R.font.hanken_grotesk_semibold, FontWeight.SemiBold),
     )
 
 private val TrussColors =
@@ -80,7 +78,7 @@ private fun style(
     line: Int,
     weight: FontWeight,
     tracking: Double = 0.0,
-    family: FontFamily = Inter,
+    family: FontFamily = HankenGrotesk,
 ) =
     TextStyle(
         fontFamily = family,
@@ -90,12 +88,12 @@ private fun style(
         letterSpacing = tracking.sp,
     )
 
-/** A calm scale: serif titles, 16 sp semibold item titles, 13 sp secondary text. */
+/** A calm scale: 28 sp titles, 16 sp semibold item titles, 13 sp secondary text. */
 private val TrussType =
     Typography(
-        displaySmall = style(36, 40, FontWeight.Normal, -0.2, InstrumentSerif),
-        headlineMedium = style(28, 32, FontWeight.Normal, -0.2, InstrumentSerif),
-        headlineSmall = style(26, 30, FontWeight.Normal, -0.2, InstrumentSerif),
+        displaySmall = style(28, 34, FontWeight.SemiBold, -0.4),
+        headlineMedium = style(22, 28, FontWeight.SemiBold, -0.3),
+        headlineSmall = style(22, 28, FontWeight.SemiBold, -0.3),
         titleLarge = style(18, 24, FontWeight.SemiBold),
         titleMedium = style(16, 22, FontWeight.SemiBold),
         titleSmall = style(15, 20, FontWeight.SemiBold),
