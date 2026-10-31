@@ -12,8 +12,10 @@ first, without being asked, and the photo that answered it is kept on your
 own laptop as evidence. Photos that answer nothing are deleted.
 
 Built for the Meta Global AI Developer Hackathon (Indie track, "Build for
-Your World"). Every model call in Truss goes to a Meta model, and in the
-demo every one of them runs on hardware in the home.
+Your World"). Every check and every plant-time compile goes to a Meta
+model, and in the demo every one of them runs on hardware in the home. The
+one non-Meta model is Whisper, for speech to text on the laptop; it never
+sees a photo.
 
 ## Who it is for
 
@@ -130,11 +132,13 @@ service in the demo configuration.
 |---|---|---|---|
 | **Muse Glimmer 30B** (open weights, `meta-models/Muse-Glimmer-30B-GGUF`, Q4_K_M with its mmproj and dflash drafter) | Locally, llama.cpp `llama-server` on an NVIDIA DGX Spark | Every check, and the plant-time compile | Running; answers real glasses photos end to end |
 | **SAM 3.1** (open weights, `facebook/sam3.1`; SAM 3 as fallback) | Locally, a small HTTP service on the same DGX (`dgx/sam/`) | Outlines the object in kept evidence photos | <!-- TODO: SAM acceptance result --> _Kit built; live result pending_ |
-| **Muse Spark 1.3** (Meta Model API, standard tier `muse-spark-1.3`) | Meta's API | Optional: the same checker code with different settings; the eval harness's API mode | <!-- TODO: used or not --> _Not used in the demo_ |
+| **Muse Spark 1.3** (Meta Model API, standard tier `muse-spark-1.3`) | Meta's API | Optional: the same checker code with different settings; the eval harness's default checker on main | <!-- TODO: used or not --> _Not used in the demo_ |
 
 Rules Truss holds itself to:
 
-- No non-Meta model makes any check in the demo or the eval.
+- No non-Meta model makes any check in the demo or the eval. Whisper
+  (whisper.cpp, local) turns her spoken words into text and never sees a
+  photo.
 - Never the Muse Spark contributor tier, which trains on what it is sent.
   Any model name containing `contributor` is refused in code before
   anything is sent.
@@ -158,9 +162,9 @@ a cannot-tell probe, where a confident answer is wrong.
 The headline comparison is generic questions (the question alone) against
 planted questions (with the home's own reference looks).
 
-<!-- TODO: fill from the F v0/v1 run. Mock numbers in eval/SCORECARD.md only validate the harness. -->
+<!-- TODO: fill from the F v0/v1 run. Mock numbers in eval/SCORECARD.md only validate the harness. On main, eval/checker.py calls muse-spark-1.3 at the Meta Model API (plus a mock mode); set the header below to the model F v0 actually runs. -->
 
-| Held-out, Muse Glimmer 30B | Generic | Planted |
+| Held-out, _model TBD_ | Generic | Planted |
 |---|---|---|
 | Accuracy | _TBD_ | _TBD_ |
 | Safety false all-clear rate | _TBD_ | _TBD_ |
@@ -261,8 +265,8 @@ Tests are plain Python, standard library only: run any
 
 ## Built during the event
 
-All code in this repository was written during the hackathon, starting
-October 26, 2026. Pre-existing pieces it relies on:
+All code in this repository was written during the hackathon, which began
+October 26, 2026; the first commit is from October 27. Pre-existing pieces it relies on:
 
 - Meta's Wearables Device Access Toolkit; the app's registration and
   permission flow follows its CameraAccess sample.
@@ -272,6 +276,7 @@ October 26, 2026. Pre-existing pieces it relies on:
   ([`third_party/fonts/`](third_party/fonts/)).
 - Before Glimmer was running locally, early end-to-end checks went through
   a bridge to the author's own local assistant, a separate project from
-  before the event that runs a non-Meta model (`truss-server/aman_check.py`).
+  before the event that runs a non-Meta model (`truss-server/aman_check.py`,
+  and the spike script `eval/aman_truss_spike.py`).
   It is off by default, never used in the demo or the eval, and nothing it
   answered counts as a Truss result.
