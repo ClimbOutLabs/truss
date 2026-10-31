@@ -1082,6 +1082,17 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  /** Pick up a question that was left without one of its looks, so its planting
+   * screen shows again. Does nothing while another planting is open. */
+  fun resumePlanting(slug: String) {
+    val now = _uiState.value
+    if (now.plantSlug != null || now.plantBusy) return
+    val item = now.questionsList.firstOrNull { it.slug == slug && it.state == "planting" } ?: return
+    plantQueue = listOf(slug)
+    val prompt = if (!item.hasRefYes) "Show me what yes looks like." else "Show me what no looks like."
+    _uiState.update { it.copy(plantSlug = slug, plantPrompt = prompt, lastError = null) }
+  }
+
   /** Abandon the planting in progress: questions still waiting for their looks are
    * retired on the laptop, so none is left half planted. */
   fun cancelPlanting() {
