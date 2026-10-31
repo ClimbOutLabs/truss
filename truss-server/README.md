@@ -387,7 +387,8 @@ Every sentence the check loop speaks lives in a template table in
   own words said back to her, when, and that it was seen: "You took
   your night pills at 1:02 PM. I saw you." A done question that does
   not open "Did I ..." gets "That is already done. You did it at
-  1:02 PM. I saw you." In History the reminder shows the witness
+  1:02 PM. I saw you." So does one whose next word is not a known
+  verb ("Did I already take ..."). In History the reminder shows the witness
   photo, the one of her doing it.
 - The refusal, below.
 
@@ -401,11 +402,14 @@ from here." It is spoken when all of these hold:
 - the question is a safety state question (the bedtime round plants
   the stove and the pills compartment that way), with a compiled
   `prompts.txt`;
-- the model itself answered cannot_tell and named what it lacked
-  (a check that failed or timed out is never spoken as a refusal);
+- the model itself answered cannot_tell and named what it lacked, or
+  the stove check refused a yes its own knob report did not back
+  (failure `inconsistent`); a check that failed or timed out is never
+  spoken as a refusal;
 - one more plain check, "Is any part of the stove itself in this
   photo?", says yes, so a hallway frame where the stove is not stays
-  silent;
+  silent (after a no, that question gets no presence check for a
+  minute);
 - no refusal was spoken for that question in the last ten minutes.
 
 The frame is kept as evidence and the answer log marks it "cannot

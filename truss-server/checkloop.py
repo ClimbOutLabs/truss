@@ -124,6 +124,19 @@ _TO_YOU = {
 }
 
 
+# Regular verbs a done question is likely to open with. Only these
+# and the verbs in _PAST are said back as an act: the word after
+# "Did I" is not always the verb ("Did I already take my pills?"), and
+# a guessed past tense ("You alreadied take ...") is worse than the
+# plain reminder.
+_REGULAR = {
+    "lock", "unlock", "close", "turn", "switch", "check", "clean", "wash",
+    "brush", "walk", "charge", "pack", "fill", "empty", "dry", "bolt",
+    "latch", "load", "unload", "shave", "floss", "measure", "apply",
+    "inject", "use", "finish", "start", "remove", "replace", "change",
+}
+
+
 def _past(verb):
     if verb in _PAST:
         return _PAST[verb]
@@ -142,6 +155,8 @@ def done_act(question):
     if not match:
         return None
     verb = match.group(1).lower()
+    if verb not in _PAST and verb not in _REGULAR:
+        return None
     rest = match.group(2).strip().rstrip("?.! ").strip()
     words = [
         _TO_YOU.get(word.lower(), word) for word in rest.split()
@@ -257,6 +272,10 @@ REFUSAL_TEMPLATES = {
 # the stove she hears it once, not on every frame.
 REFUSAL_REST_MINUTES = 10
 
+# After a presence check finds the thing not in view, the next one for
+# that question waits this long.
+ABSENT_REST = timedelta(minutes=1)
+
 # Words that mark the checker's "missing" as a sentence about the
 # photo ("The knobs need to be in view") rather than the thing itself
 # ("the knobs on the front of the stove"). Only a plain noun phrase is
@@ -319,18 +338,33 @@ def presence_question(thing):
 
 
 def _thing_for(entry):
-    """The first SAM phrase compiled for the question, which names the
-    thing itself ("stove"), or None when there is none."""
+    """The SAM phrase that names the thing itself ("stove"), or None
+    when there is none. A phrase naming a part ("stove knob") would
+    make the presence check ask about the very detail that is out of
+    view, so a whole-thing phrase is preferred; a part is used only
+    when nothing else was compiled."""
     try:
         folder = Path(entry["ref_yes_path"]).parent
         lines = (folder / "prompts.txt").read_text(encoding="utf-8").splitlines()
     except (KeyError, TypeError, OSError, UnicodeDecodeError):
         return None
-    for line in lines:
-        phrase = line.strip()
-        if re.fullmatch(r"[a-z][a-z -]{0,40}", phrase):
+    phrases = [
+        line.strip() for line in lines
+        if re.fullmatch(r"[a-z][a-z -]{0,40}", line.strip())
+    ]
+    for phrase in phrases:
+        if not _PART_WORDS.intersection(re.findall(r"[a-z]+", phrase)):
             return phrase
-    return None
+    return phrases[0] if phrases else None
+
+
+# Words that name a part of a thing rather than the thing.
+_PART_WORDS = {
+    "knob", "knobs", "dial", "dials", "button", "buttons", "switch",
+    "switches", "handle", "handles", "burner", "burners", "control",
+    "controls", "compartment", "compartments", "lid", "lids", "latch",
+    "bolt", "lock", "lever", "flame",
+}
 
 
 def _refusable(entry, result):
@@ -342,7 +376,10 @@ def _refusable(entry, result):
         and entry.get("safety") is True
         and isinstance(result, dict)
         and result.get("verdict") == "cannot_tell"
-        and not result.get("failure")
+        # "inconsistent" is the stove check catching a yes its own knob
+        # report does not back (the knobs out of view): exactly the case
+        # to say out loud. Any other failure means no answer was made.
+        and result.get("failure") in (None, "", "inconsistent")
         and isinstance(result.get("missing"), str)
         and result["missing"].strip() != ""
     )
@@ -362,6 +399,8 @@ class CheckLoop:
         # When each question's last refusal was spoken. In memory: a
         # restart can only mean one more refusal, never a missed answer.
         self._refused = {}
+        # When each question's thing was last checked and not in view.
+        self._absent = {}
         # The check log (a coverage.CheckLog). Without one, no check
         # is counted as watching, and alerts claim nothing was watched.
         self.checks = checks
@@ -644,6 +683,9 @@ class CheckLoop:
         last = self._refused.get(entry["slug"])
         if last is not None and timedelta(0) <= now - last < self.refusal_rest:
             return None
+        absent = self._absent.get(entry["slug"])
+        if absent is not None and timedelta(0) <= now - absent < ABSENT_REST:
+            return None
         thing = _thing_for(entry)
         if thing is None:
             return None
@@ -652,6 +694,10 @@ class CheckLoop:
         except Exception:
             return None
         if not isinstance(seen, dict) or seen.get("verdict") != "yes":
+            # Not in view: no presence check for this question for a
+            # minute, so frames away from the stove cost one extra
+            # model call a minute at most.
+            self._absent[entry["slug"]] = now
             return None
         return entry, result, refusal_text(entry, result)
 

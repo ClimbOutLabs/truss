@@ -78,6 +78,12 @@ def test_done_act():
     check("a verb ending in e", checkloop.done_act("Did I close my window?") == "closed your window")
     check("a verb ending in consonant y", checkloop.done_act("Did I dry the dishes?") == "dried the dishes")
     check("not a Did I question: no act", checkloop.done_act("Has the dog been fed?") is None)
+    for q in ("Did I already take my pills?", "Did I just feed the dog?",
+              "Did I really lock the door?", "Did I not take my pills?"):
+        check(f"no guessed verb: {q}", checkloop.done_act(q) is None)
+        check(f"plain reminder: {q}",
+              checkloop.redo_text({"at": "2026-11-03T13:02:00"}, {"question": q})
+              == "That is already done. You did it at 1:02 PM. I saw you.")
 
 
 def test_redo_lines():
@@ -211,6 +217,22 @@ def test_no_refusal_when_the_stove_is_not_there():
     result = loop.process_frame(f)
     check("a hallway frame stays silent", spoken == [] and result["refused"] == [])
     check("and is deleted like any frame nothing fired on", not f.exists())
+    clock[0] += timedelta(seconds=30)
+    loop.check_fn.answers.append(cannot)
+    loop.process_frame(frame(captures, "hall2.jpg"))
+    check("a minute after a no, no presence check is spent", len(loop.presence_fn.calls) == 1)
+
+
+def test_thing_prefers_the_whole_thing():
+    tmp = Path(tempfile.mkdtemp())
+    store = QuestionStore(tmp / "questions")
+    slug = plant(store, STOVE, {"kind": "nightly", "after": "20:00"}, safety=True,
+                 prompts=["stove knob", "stove", "range"])
+    check("a part phrase is passed over for the thing itself",
+          checkloop._thing_for(store.get(slug)) == "stove")
+    (store.root / slug / "prompts.txt").write_text("stove knob\n")
+    check("a part is used when nothing else was compiled",
+          checkloop._thing_for(store.get(slug)) == "stove knob")
 
 
 def test_refusal_needs_every_condition():
@@ -233,6 +255,13 @@ def test_refusal_needs_every_condition():
         tmp, store, slug, loop, spoken, clock, captures = refusal_rig([answer], [seen])
         loop.process_frame(frame(captures, "a.jpg"))
         check(f"{name}: silent", spoken == [] and loop.presence_fn.calls == [])
+    knobs_out = verdict_of("cannot_tell", "The knobs are not all in clear view.",
+                           verdict.KNOBS_MISSING, failure="inconsistent")
+    tmp, store, slug, loop, spoken, clock, captures = refusal_rig([knobs_out], [seen])
+    loop.process_frame(frame(captures, "a.jpg"))
+    check("the knob check's inconsistent catch is spoken as a refusal",
+          spoken == ["Is the stove off? I can't tell. I can't see all of the stove's "
+                     "control knobs from here."])
     tmp, store, slug, loop, spoken, clock, captures = refusal_rig([cannot], [seen])
     loop.presence_fn = None
     loop.process_frame(frame(captures, "a.jpg"))
@@ -573,6 +602,7 @@ if __name__ == "__main__":
     test_refusal_detail()
     test_refusal_in_the_loop()
     test_no_refusal_when_the_stove_is_not_there()
+    test_thing_prefers_the_whole_thing()
     test_refusal_needs_every_condition()
     test_bedtime_round_marks_safety()
     test_safety_instruction()
