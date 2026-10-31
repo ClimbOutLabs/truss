@@ -7,7 +7,7 @@ Port 8791 is Aman's, port 8792 is Mannie's day-1 server. This stays on
 
 It exists so the staging session is button presses, not file shuffling:
 
-POST /frame?question=<slug>&label=<yes|no>&lighting=<day|evening>
+POST /frame?question=<slug>&label=<yes|no|cannot_tell>&lighting=<day|evening>
      &kind=<normal|hard_negative|cannot_tell_probe>
   Body: a JPEG. Saves it into the dataset tree under the next free
   sequence name and appends one manifest row with the correct split.
@@ -40,7 +40,8 @@ DATASET_DIR = EVAL_DIR / "dataset"
 MANIFEST_PATH = DATASET_DIR / "manifest.jsonl"
 
 PORT = 8793
-VALID_LABELS = {"yes", "no"}
+VALID_LABELS = {"yes", "no", "cannot_tell"}
+REF_LABELS = {"yes", "no"}
 VALID_LIGHTINGS = {"day", "evening"}
 VALID_KINDS = {"normal", "hard_negative", "cannot_tell_probe"}
 TUNING_FRAMES_PER_STATE = 3
@@ -199,7 +200,7 @@ class Handler(BaseHTTPRequestHandler):
         if question_slug not in slugs:
             self._send_error_line(400, f"Unknown question slug: {question_slug}")
             return
-        if which not in VALID_LABELS:
+        if which not in REF_LABELS:
             self._send_error_line(400, "which must be one of ['no', 'yes']")
             return
 
@@ -231,6 +232,7 @@ class Handler(BaseHTTPRequestHandler):
                 "slug": slug,
                 "yes": {"tuning": 0, "heldout": 0},
                 "no": {"tuning": 0, "heldout": 0},
+                "cannot_tell": {"tuning": 0, "heldout": 0},
                 "ref_yes": question_dir(qid, slug).joinpath("ref-yes.jpg").exists(),
                 "ref_no": question_dir(qid, slug).joinpath("ref-no.jpg").exists(),
             }
@@ -238,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             qid = row.get("question_id")
             label = row.get("label")
             split = row.get("split")
-            if qid in counts and label in ("yes", "no") and split in ("tuning", "heldout"):
+            if qid in counts and label in VALID_LABELS and split in ("tuning", "heldout"):
                 counts[qid][label][split] += 1
         self._send_json(200, {"questions": counts, "total_frames": len(rows)})
 
@@ -247,7 +249,7 @@ def main():
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"Capture server listening on port {PORT}.")
     print(f"Dataset tree: {DATASET_DIR}")
-    print("POST /frame?question=...&label=yes|no&lighting=day|evening&kind=normal (JPEG body)")
+    print("POST /frame?question=...&label=yes|no|cannot_tell&lighting=day|evening&kind=normal (JPEG body)")
     print("POST /ref?question=...&which=yes|no (JPEG body)")
     print("GET /status")
     try:

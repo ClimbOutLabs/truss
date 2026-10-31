@@ -132,7 +132,7 @@ service in the demo configuration.
 |---|---|---|---|
 | **Muse Glimmer 30B** (open weights, `meta-models/Muse-Glimmer-30B-GGUF`, Q4_K_M with its mmproj and dflash drafter) | Locally, llama.cpp `llama-server` on an NVIDIA DGX Spark | Every check, and the plant-time compile | Running; answers real glasses photos end to end |
 | **SAM 3.1** (open weights, `facebook/sam3.1`; SAM 3 as fallback) | Locally, a small HTTP service on the same DGX (`dgx/sam/`) | Outlines the object in kept evidence photos | <!-- TODO: SAM acceptance result --> _Kit built; live result pending_ |
-| **Muse Spark 1.3** (Meta Model API, standard tier `muse-spark-1.3`) | Meta's API | Optional: the same checker code with different settings; the eval harness's default checker on main | <!-- TODO: used or not --> _Not used in the demo_ |
+| **Muse Spark 1.3** (Meta Model API, standard tier `muse-spark-1.3`) | Meta's API | Optional: the same checker code with different settings | <!-- TODO: used or not --> _Not used in the demo_ |
 
 Rules Truss holds itself to:
 
@@ -157,12 +157,17 @@ where a false yes is a false all-clear. Frames are split into tuning and
 held-out; prompts are tuned on tuning only, and numbers are reported on
 held-out. The false all-clear rate on safety questions is reported as its
 own headline number, never averaged into overall accuracy. One question is
-a cannot-tell probe, where a confident answer is wrong.
+a cannot-tell probe, where a confident answer is wrong, and so is any
+frame staged with the deciding detail out of view.
+
+The eval runs through the product's own checker against Muse Glimmer on
+the DGX, and asks SAM whether it finds each question's objects:
+`python3 eval/first_numbers.py` ([`eval/RUNBOOK.md`](eval/RUNBOOK.md)).
 
 The headline comparison is generic questions (the question alone) against
 planted questions (with the home's own reference looks).
 
-<!-- TODO: fill from the F v0/v1 run. Mock numbers in eval/SCORECARD.md only validate the harness. On main, eval/checker.py calls muse-spark-1.3 at the Meta Model API (plus a mock mode); set the header below to the model F v0 actually runs. -->
+<!-- TODO: fill from the F v0/v1 run (eval/first_numbers.py, Muse Glimmer 30B). Mock numbers in eval/SCORECARD.md only validate the harness. -->
 
 | Held-out, _model TBD_ | Generic | Planted |
 |---|---|---|
