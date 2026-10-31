@@ -78,6 +78,8 @@ data class TrussUiState(
     val lastSpoken: List<String> = emptyList(),
     val lastSpokenAt: String? = null,
     val lastSpokenPhoto: Bitmap? = null,
+    // False when the answer could not be played through the glasses.
+    val lastSpokenAloud: Boolean = true,
     val historyDay: String? = null,
     val history: List<AnswerItem> = emptyList(),
     val historyBusy: Boolean = false,
@@ -133,6 +135,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   // A single planting holds one; the bedtime round holds three, and the Plant
   // screen walks them in order as each one completes.
   private var plantQueue: List<String> = emptyList()
+  // True while the open planting was resumed from a question's row: closing it
+  // then only closes the card, and the question keeps the look it already has.
+  private var plantResumed = false
 
   fun setLaptopIp(value: String) {
     _uiState.update { it.copy(laptopIp = value, laptopReachable = null) }
@@ -803,6 +808,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         val reply = withContext(Dispatchers.IO) { laptopClient().plantQuestion(text) }
         val next = reply.getString("next")
         plantQueue = listOf(reply.getString("slug"))
+        plantResumed = false
         _uiState.update { it.copy(plantSlug = reply.getString("slug"), plantPrompt = next) }
         plantLog("Planted: $text")
         plantLog(next)
@@ -830,6 +836,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           plantLog("Round: ${questions.getString(i)}")
         }
         plantQueue = List(slugs.length()) { i -> slugs.getString(i) }
+        plantResumed = false
         if (slugs.length() > 0) {
           _uiState.update {
             it.copy(plantSlug = slugs.getString(0), plantPrompt = "Show me what yes looks like.")
@@ -1089,6 +1096,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     if (now.plantSlug != null || now.plantBusy) return
     val item = now.questionsList.firstOrNull { it.slug == slug && it.state == "planting" } ?: return
     plantQueue = listOf(slug)
+    plantResumed = true
     val prompt = if (!item.hasRefYes) "Show me what yes looks like." else "Show me what no looks like."
     _uiState.update { it.copy(plantSlug = slug, plantPrompt = prompt, lastError = null) }
   }
@@ -1096,7 +1104,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** Abandon the planting in progress: questions still waiting for their looks are
    * retired on the laptop, so none is left half planted. */
   fun cancelPlanting() {
-    val waiting = plantQueue
+    val waiting = if (plantResumed) emptyList() else plantQueue
+    plantResumed = false
     plantQueue = emptyList()
     pendingRefSlug = null
     pendingRefKind = null

@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.sp
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -385,6 +386,19 @@ private fun clock12(value: String?): String? {
   }
 }
 
+/** An ISO answered_at stamp as "at 8:28 PM" today, otherwise "Thu Oct 29, 8:28 PM". */
+private fun answeredWhen(iso: String?): String? {
+  if (iso.isNullOrBlank()) return null
+  return try {
+    val at = LocalDateTime.parse(iso.take(16))
+    val time = at.format(DateTimeFormatter.ofPattern("h:mm a", Locale.US))
+    if (at.toLocalDate() == LocalDate.now()) "at $time"
+    else at.format(DateTimeFormatter.ofPattern("EEE MMM d", Locale.US)) + ", $time"
+  } catch (e: Exception) {
+    null
+  }
+}
+
 private fun workingLine(line: String?): String =
     line?.substringAfter("  ")?.ifBlank { null } ?: "Working..."
 
@@ -398,12 +412,13 @@ private data class QuestionLook(
 
 private fun lookFor(item: QuestionInfo): QuestionLook =
     when (item.state) {
+      // A past yes is history, not a current all-clear: say when it was, on a neutral tile.
       "answered" ->
           QuestionLook(
-              item.answeredAt?.let { "Yes · ${clock12(it.substringAfter('T').take(5))}" } ?: "Answered yes",
-              Truss.lime,
-              Truss.onLime,
-              Truss.onLime,
+              answeredWhen(item.answeredAt)?.let { "Last yes $it" } ?: "Answered yes",
+              Truss.sage,
+              Truss.ink,
+              Truss.muted,
           )
       "planting" ->
           QuestionLook(
@@ -595,7 +610,8 @@ private fun LastAnswer(state: TrussUiState) {
     }
     return
   }
-  val when_ = clock12(state.lastSpokenAt)?.let { "$it · told you in your glasses" } ?: "Told you in your glasses"
+  val how = if (state.lastSpokenAloud) "told you in your glasses" else "on screen only, not spoken"
+  val when_ = clock12(state.lastSpokenAt)?.let { "$it · $how" } ?: how.replaceFirstChar { it.uppercase() }
   val answer: @Composable () -> Unit = {
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Truss.card).padding(14.dp, 12.dp),
