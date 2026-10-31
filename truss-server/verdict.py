@@ -114,6 +114,9 @@ MULTI_INSTRUCTION = (
 STOVE_WORDS = re.compile(r"\b(stoves?|stovetops?|stove top|cooktops?|cook top|hobs?|burners?)\b", re.I)
 OFF_WORD = re.compile(r"\boff\b", re.I)
 ON_WORD = re.compile(r"\bon\b", re.I)
+# A negated phrasing ("Is the stove not on?", "Did I forget to turn the
+# stove off?") flips what a yes means; it is not guessed at.
+NEGATION = re.compile(r"\b(not|never|without|forg[eo]t\w*)\b|n't\b|n’t\b", re.I)
 
 KNOB_POSITIONS = ("off", "on", "unclear")
 KNOBS_IN_VIEW = ("all", "some", "none")
@@ -163,9 +166,11 @@ KNOBS_MISSING = "All of the stove's control knobs, in clear view."
 def stove_polarity(question):
     """For a stove question, the state a yes means: "off" ("Is the
     stove off?") or "on" ("Did I leave the stove on?"). None for any
-    other question, and for a stove question that names both or
-    neither, which is checked the ordinary way."""
+    other question, for a stove question that names both or neither,
+    and for a negated one, which are checked the ordinary way."""
     if not isinstance(question, str) or not STOVE_WORDS.search(question):
+        return None
+    if NEGATION.search(question):
         return None
     off, on = bool(OFF_WORD.search(question)), bool(ON_WORD.search(question))
     if off == on:

@@ -259,7 +259,10 @@ missing. A dark burner or a cold pan never stands in for the knobs,
 and a verdict that disagrees with the model's own knob report is not
 used (failure `inconsistent`). The report rides in the result's
 `knobs` field. A stove with touch controls and no knobs always reads
-`cannot_tell` under this rule.
+`cannot_tell` under this rule. A negated phrasing ("Is the stove not
+on?", "Did I forget to turn the stove off?") is not held to the knobs,
+because what its yes means is not guessed; plant it as "Is the stove
+off?" instead.
 
 The compile runs in the background, so planting answers at once. A
 re-shot look deletes both files at once, before anything else can

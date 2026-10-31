@@ -59,6 +59,12 @@ def test_which_questions_are_stove_questions():
     check("polarity: both words is not guessed", p("Is the stove on or off?") is None)
     check("polarity: stovepipe is not a stove", p("Is the stovepipe off?") is None)
     check("polarity: not text", p(None) is None)
+    check("polarity: negated, not on", p("Is the stove not on?") is None)
+    check("polarity: forget to turn off", p("Did I forget to turn the stove off?") is None)
+    check("polarity: forgot to turn off", p("Did I forget to turn off the stove?") is None)
+    check("polarity: isn't", p("Isn't the stove off?") is None)
+    check("polarity: never", p("Did I never turn the stove off?") is None)
+    check("polarity: without", p("Did I leave without turning the stove off?") is None)
 
 
 def test_request_asks_for_the_knobs_first():
