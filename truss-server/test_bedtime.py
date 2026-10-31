@@ -436,7 +436,7 @@ def test_the_round():
         check("first pass fires only the stove", first["fired"] == [stove])
         check(
             "the miss and the no stay silent on the first pass",
-            spoken == ["Is the stove off? Yes. All four burners are dark."],
+            spoken == ["Is the stove off? Yes, as of 9:00 PM. All four burners are dark."],
         )
 
         calls_after_first = len(checker.calls)
@@ -457,9 +457,10 @@ def test_the_round():
             "answers spoken in the order the wearer meets them",
             spoken
             == [
-                "Is the stove off? Yes. All four burners are dark.",
-                "Is the front door locked? Yes. The deadbolt is thrown.",
-                "Is tonight's pill compartment empty? Yes. Tonight's compartment is empty.",
+                "Is the stove off? Yes, as of 9:00 PM. All four burners are dark.",
+                "Is the front door locked? Yes, as of 9:01 PM. The deadbolt is thrown.",
+                "Is tonight's pill compartment empty? Yes, as of 9:01 PM. "
+                "Tonight's compartment is empty.",
             ],
         )
         check(

@@ -375,7 +375,7 @@ def test_done_fire_records_witness():
     result = loop.process_frame(frame(captures, "1.jpg"))
     check("done question fires like any question", result["fired"] == [slug])
     check("the firing is spoken as before",
-          spoken == ["Did I take my night pills? Yes. "
+          spoken == ["Did I take my night pills? Yes. I saw it at 9:05 PM. "
                      "Tonight's compartment is empty."])
     witness = store.witness_today(slug, now=clock.now)
     check("the firing leaves a witness with the evidence photo's name",
@@ -401,7 +401,7 @@ def test_redo_reminder_speaks_once():
           loop.check_fn.redo_calls[0]["ref_yes_path"]
           == store.get(slug)["ref_yes_path"])
     check("the reminder names the witnessed time",
-          spoken[-1] == "That is already done. You did it at 9:05 PM.")
+          spoken[-1] == "You took your night pills at 9:05 PM. I saw you.")
     check("the return frame is kept as evidence",
           result["evidence"] is not None and Path(result["evidence"]).exists())
     log_text = Path(result["evidence"]).parent.joinpath("answers.txt").read_text()
@@ -410,7 +410,7 @@ def test_redo_reminder_speaks_once():
     clock.now = datetime(2026, 10, 27, 21, 25)
     loop.process_frame(frame(captures, "3.jpg"))
     check("the reminder is spoken exactly once",
-          spoken.count("That is already done. You did it at 9:05 PM.") == 1)
+          spoken.count("You took your night pills at 9:05 PM. I saw you.") == 1)
     check("after the reminder the question is not return-checked again",
           len(loop.check_fn.redo_calls) == 1)
 
@@ -473,7 +473,7 @@ def test_state_window_question_is_unchanged():
     result = loop.process_frame(frame(captures, "1.jpg"))
     check("a state question in a window fires as before",
           result["fired"] == [slug]
-          and spoken == ["Is the stove off? Yes. All four burners are dark."])
+          and spoken == ["Is the stove off? Yes, as of 9:05 PM. All four burners are dark."])
     check("a state firing leaves no witness",
           store.get(slug)["witness"] is None)
     loop.process_frame(frame(captures, "2.jpg"))
@@ -560,7 +560,7 @@ def test_redo_checks_obey_the_check_gap():
     check("a return check is allowed again after the gap",
           len(loop.check_fn.redo_calls) == 2)
     check("the allowed return check can speak the reminder",
-          spoken[-1] == "That is already done. You did it at 8:50 PM.")
+          spoken[-1] == "You took your night pills at 8:50 PM. I saw you.")
 
 
 def test_retired_witnessed_question_never_reminds():
@@ -699,7 +699,7 @@ def test_no_miss_while_a_check_is_in_flight():
             check("yes: the witnessed act is never called missed",
                   after == [] and alerts.pending() == [])
             check("yes: the answer was spoken",
-                  spoken == ["Did I take my night pills? Yes. "
+                  spoken == ["Did I take my night pills? Yes. I saw it at 9:59 PM. "
                              "Tonight's compartment is empty."])
         check(f"{answer}: the claim is released after the check",
               not store.check_in_flight(slug))

@@ -6,8 +6,9 @@ The check loop writes one plain-text line per answer into
 log/<YYYY-MM-DD>/answers.txt, fields separated by " | ":
 
     20:28:31 | Is the stove off? | yes | <reason> | evidence: 202831_x.jpg | model: m
-    21:40:02 | Did I take my pills? | redo reminder | <line> | evidence: ...
+    21:40:02 | Did I take my pills? | redo reminder | <line> | evidence: <witness photo> | now: ...
     22:05:10 | ... | state check after a missed window | no | <line> | evidence: ...
+    21:38:12 | Is the stove off? | cannot tell | <line> | evidence: ... | model: m
 
 This module only reads those files; it never writes or deletes. A line
 that does not parse is skipped, never fatal. Evidence photos are served
@@ -51,6 +52,9 @@ def parse_line(line):
             evidence = field[len("evidence: "):].strip()
         elif field.startswith("model: ") and model is None:
             model = field[len("model: "):].strip()
+        elif field.startswith("now: "):
+            # A redo line's return frame; its evidence is the witness.
+            continue
         else:
             rest.append(field)
     if not rest:
@@ -61,6 +65,9 @@ def parse_line(line):
         said = " | ".join(rest[1:])
     elif kind == "redo reminder":
         sort = "redo"
+        said = " | ".join(rest[1:])
+    elif kind == "cannot tell":
+        sort = "cannot_tell"
         said = " | ".join(rest[1:])
     elif kind == "state check after a missed window":
         sort = "state_check"

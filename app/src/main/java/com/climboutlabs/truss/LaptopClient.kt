@@ -30,7 +30,7 @@ data class QuestionInfo(
 )
 
 /** One logged answer as GET /answers reports it. kind is "answer", "redo",
- * "state_check" or "other"; evidence and outline are photo names for GET /evidence. */
+ * "state_check", "cannot_tell" (a spoken refusal) or "other"; evidence and outline are photo names for GET /evidence. */
 data class AnswerItem(
     val time: String,
     val question: String,

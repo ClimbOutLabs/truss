@@ -48,7 +48,7 @@ import re
 import threading
 import uuid
 from collections import Counter
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 from wording import action_verbs_in
@@ -184,6 +184,31 @@ def _gap_seconds(pattern):
     if minutes < 0:
         return 15 * 60
     return minutes * 60
+
+
+def _gap_passed(now, last, seconds):
+    """Whether at least this many seconds of real time have passed
+    since a stored check time.
+
+    Stored times are plain local clock times. On the night the clocks
+    go back (2 AM to 1 AM, the first Sunday of November in the US) the
+    clock reads 1:05 after 1:55, and plain subtraction says minus fifty
+    minutes, so a question checked every fifteen minutes would rest
+    for over an hour. Both times are read as absolute moments instead:
+    now keeps the fold the system clock gives it, so the second 1:05
+    is the later one. A stored time loses its fold and reads as the
+    first pass, which can only make the gap look longer, so a check
+    comes early rather than late. A clock that still reads earlier
+    than the stored time (set back by hand, or a stamp from the
+    future) counts as the gap having passed: one extra check is cheap,
+    an hour of silence on a due question is not."""
+    try:
+        elapsed = (
+            now.astimezone(timezone.utc) - last.astimezone(timezone.utc)
+        ).total_seconds()
+    except (OverflowError, OSError, ValueError):
+        elapsed = (now - last).total_seconds()
+    return elapsed < 0 or elapsed >= seconds
 
 
 def _clean_witness(value):
@@ -756,7 +781,7 @@ class QuestionStore:
                 if kind == "interval":
                     last = entry["last_checked_at"] or entry["planted_at"]
                     last_dt = datetime.fromisoformat(last)
-                    if (now - last_dt).total_seconds() >= pattern["minutes"] * 60:
+                    if _gap_passed(now, last_dt, pattern["minutes"] * 60):
                         out.append(entry)
                 elif kind == "nightly":
                     after = time.fromisoformat(pattern.get("after", "20:00"))
@@ -768,7 +793,7 @@ class QuestionStore:
                     last = entry["last_checked_at"]
                     if last:
                         gap = pattern.get("minutes", 15) * 60
-                        if (now - datetime.fromisoformat(last)).total_seconds() < gap:
+                        if not _gap_passed(now, datetime.fromisoformat(last), gap):
                             continue
                     out.append(entry)
                 elif kind == "window":
@@ -794,9 +819,8 @@ class QuestionStore:
                             last_dt = datetime.fromisoformat(last)
                         except ValueError:
                             last_dt = None
-                        if (
-                            last_dt is not None
-                            and (now - last_dt).total_seconds() < _gap_seconds(pattern)
+                        if last_dt is not None and not _gap_passed(
+                            now, last_dt, _gap_seconds(pattern)
                         ):
                             continue
                     out.append(entry)
@@ -964,10 +988,8 @@ class QuestionStore:
                         last_dt = datetime.fromisoformat(last)
                     except (TypeError, ValueError):
                         last_dt = None
-                    if (
-                        last_dt is not None
-                        and (now - last_dt).total_seconds()
-                        < _gap_seconds(entry["pattern"])
+                    if last_dt is not None and not _gap_passed(
+                        now, last_dt, _gap_seconds(entry["pattern"])
                     ):
                         continue
                 out.append(entry)

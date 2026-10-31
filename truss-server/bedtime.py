@@ -39,6 +39,11 @@ ROUND = [
     "Is tonight's pill compartment empty?",
 ]
 
+# The round's safety questions: a wrong word on these does harm, so a
+# yes is held to the deciding detail (the knobs, the compartment) and
+# a cannot-tell with the thing in view is spoken as a refusal.
+SAFETY = {"Is the stove off?", "Is tonight's pill compartment empty?"}
+
 _STATE_RANK = {"standing": 0, "planting": 1, "retired": 2}
 
 
@@ -89,12 +94,18 @@ def plant_round(store, after="20:00", gap_minutes=1):
     for text in ROUND:
         entry = chosen.get(text)
         if entry is None:
-            slugs.append(store.create(text, pattern))
+            slugs.append(store.create(text, pattern, safety=text in SAFETY))
         else:
             if entry["pattern"] != pattern:
                 notes.append(
                     f"{entry['question']} was already planted on different "
                     "terms, so it was left as it is."
+                )
+            elif entry.get("safety") is not (text in SAFETY):
+                notes.append(
+                    f"{entry['question']} was already planted "
+                    + ("without" if text in SAFETY else "with")
+                    + " the safety flag, so it was left as it is."
                 )
             slugs.append(entry["slug"])
 

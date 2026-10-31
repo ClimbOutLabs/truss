@@ -52,6 +52,7 @@ The server will:
 - `POST /questions/retire` - Stop watching a question, JSON `{"slug": "..."}`; its folder and history stay
 - `GET /answers?day=YYYY-MM-DD` - The day's answers from its `answers.txt`, newest first (today when no day is given), each naming its evidence photo
 - `GET /evidence?day=YYYY-MM-DD&name=<photo>.jpg` - One kept photo from that day's log folder; only a plain photo name is served
+- `GET /status` - The server's clock and zone, how checks will be made, the live-test settings in force, and when the phone app last polled and last sent a photo (read by `preflight.py`)
 - `GET /alerts` - List the missed-window alerts still waiting to be spoken
 - `POST /alerts/ack` - Confirm one alert was spoken, JSON `{"id": "..."}`; the only way an alert clears
 
@@ -374,11 +375,86 @@ in a row speak the step again, and the wearer can skip a step or stop
 at any moment. The guide keeps no photos; a finished job leaves one
 line in the day's answer log, a stopped one leaves nothing.
 
+## What Mannie says
+
+Every sentence the check loop speaks lives in a template table in
+`checkloop.py`:
+
+- A firing names the time it was seen and what was seen: "Is the
+  stove off? Yes, as of 9:41 PM. All four knobs point to off." A done
+  question's firing says "I saw it at 1:02 PM".
+- The redo reminder (the stopped reach) says what she did, in her
+  own words said back to her, when, and that it was seen: "You took
+  your night pills at 1:02 PM. I saw you." A done question that does
+  not open "Did I ..." gets "That is already done. You did it at
+  1:02 PM. I saw you." In History the reminder shows the witness
+  photo, the one of her doing it.
+- The refusal, below.
+
+## The refusal
+
+A safety question (the stove) that cannot be read from where she is
+says so out loud, instead of staying silent: "Is the stove off? I
+can't tell. I can't see the four knobs on the front of the stove
+from here." It is spoken when all of these hold:
+
+- the question is a safety state question (the bedtime round plants
+  the stove and the pills compartment that way), with a compiled
+  `prompts.txt`;
+- the model itself answered cannot_tell and named what it lacked
+  (a check that failed or timed out is never spoken as a refusal);
+- one more plain check, "Is any part of the stove itself in this
+  photo?", says yes, so a hallway frame where the stove is not stays
+  silent;
+- no refusal was spoken for that question in the last ten minutes.
+
+The frame is kept as evidence and the answer log marks it "cannot
+tell". The detail named is the checker's own "missing" when it is a
+short plain noun phrase with no action verb in it; otherwise the line
+is "Is the stove off? I can't tell from here." `TRUSS_REFUSALS=0`
+turns refusals off.
+
+A safety check is also held to the deciding detail itself: Glimmer is
+told that no flame, no glow or no light is not enough on its own to
+say yes. The first live run had answered "Is the stove off?" yes from
+"no blue flame is visible".
+
+## Pre-flight
+
+Before a recording, with the server running and the app open:
+
+```bash
+python3 preflight.py                      # the whole list
+python3 preflight.py --wait-capture 120   # and take one photo with the glasses
+python3 preflight.py --photo doorway.jpg  # rehearse the refusal from that spot
+```
+
+It checks the clock, that the server checks on a Meta model on the
+endpoint (never Aman or the contributor tier) with no live-test
+settings left on, that the phone polled in the last 90 seconds, that
+a photo came from the glasses, that `llama-server` and SAM on the DGX
+are healthy, and that the questions each shot needs are planted, have
+both looks and compiled words, and are due at the planned times
+(`--witness-at 13:00 --reach-at 13:40 --bedtime-at 20:30`, and
+`--refusal-at` when the refusal is not shot on the bedtime round).
+Every FAIL line says how to fix it. It changes nothing.
+
+## When the clocks change
+
+Times in the question store are plain local clock times. Gaps between
+checks are measured as real time, so on the night the clocks go back
+(2 AM to 1 AM, Nov 1) a question checked at 1:55 AM is due again at
+the second 1:10 AM, not an hour later. Nightly and window questions
+are set by the clock on the wall, so the pills window is 9 to 10 PM
+on both sides of the change. The check log that alerts read keeps
+each time with its UTC offset, so the repeated hour is counted once
+each pass. `test_demo.py` runs these in US Pacific time.
+
 ## The bedtime round
 
 `bedtime.py` plants three nightly questions in the order the wearer
 meets them on one walk: the stove, the front door, and tonight's pill
-compartment, with a short one-minute check gap so a question a pass
+compartment (the stove and the pills as safety questions), with a short one-minute check gap so a question a pass
 cannot settle is checked again on the next pass. Run
 `python3 bedtime_demo.py` to see the round with scripted checks and no
 hardware, or `python3 test_bedtime.py` for the tested choreography.
