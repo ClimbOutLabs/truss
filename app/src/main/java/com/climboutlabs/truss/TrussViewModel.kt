@@ -78,8 +78,8 @@ data class TrussUiState(
     val lastSpoken: List<String> = emptyList(),
     val lastSpokenAt: String? = null,
     val lastSpokenPhoto: Bitmap? = null,
-    // False when the answer could not be played through the glasses.
-    val lastSpokenAloud: Boolean = true,
+    // Null while the answer is being spoken, then whether it played through the glasses.
+    val lastSpokenAloud: Boolean? = null,
     val historyDay: String? = null,
     val history: List<AnswerItem> = emptyList(),
     val historyBusy: Boolean = false,
@@ -489,10 +489,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                 lastSpoken = result.speak,
                 lastSpokenAt = at,
                 lastSpokenPhoto = bitmap,
+                lastSpokenAloud = null,
             )
           }
           result.speak.forEach { line -> photoLog("Mannie says: $line") }
-          speakViaGlasses(result.speak)
+          val spoken = speakViaGlasses(result.speak)
+          _uiState.update { it.copy(lastSpokenAloud = spoken) }
         }
       }
       photoLog("Done in ${SystemClock.elapsedRealtime() - startedAt} ms.")

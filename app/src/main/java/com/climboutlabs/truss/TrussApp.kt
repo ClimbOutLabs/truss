@@ -610,7 +610,12 @@ private fun LastAnswer(state: TrussUiState) {
     }
     return
   }
-  val how = if (state.lastSpokenAloud) "told you in your glasses" else "on screen only, not spoken"
+  val how =
+      when (state.lastSpokenAloud) {
+        true -> "told you in your glasses"
+        false -> "on screen only, not spoken"
+        null -> "telling you now"
+      }
   val when_ = clock12(state.lastSpokenAt)?.let { "$it · $how" } ?: how.replaceFirstChar { it.uppercase() }
   val answer: @Composable () -> Unit = {
     Row(
