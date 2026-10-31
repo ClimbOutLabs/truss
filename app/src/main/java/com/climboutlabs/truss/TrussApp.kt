@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -227,12 +228,14 @@ private fun SectionLabel(text: String) {
 private fun Surface(
     modifier: Modifier = Modifier,
     color: Color = Truss.card,
-    shape: Shape = RoundedCornerShape(28.dp),
+    shape: Shape = RoundedCornerShape(24.dp),
     padding: Dp = 16.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+  // White cards get a hairline edge so they sit on the paper ground without a shadow.
+  val edge = if (color == Truss.card) Modifier.border(1.dp, Truss.line, shape) else Modifier
   Column(
-      modifier = modifier.fillMaxWidth().clip(shape).background(color).padding(padding),
+      modifier = modifier.fillMaxWidth().clip(shape).background(color).then(edge).padding(padding),
       verticalArrangement = Arrangement.spacedBy(10.dp),
       content = content,
   )
@@ -251,8 +254,8 @@ private fun IconTile(
     icon: ImageVector,
     background: Color,
     tint: Color,
-    size: Dp = 56.dp,
-    shape: Shape = RoundedCornerShape(18.dp),
+    size: Dp = 44.dp,
+    shape: Shape = RoundedCornerShape(14.dp),
 ) {
   Box(
       modifier = Modifier.size(size).clip(shape).background(background),
@@ -282,7 +285,7 @@ private fun BigButton(
     enabled: Boolean = true,
     container: Color = Truss.ink,
     content: Color = Color.White,
-    height: Dp = 64.dp,
+    height: Dp = 56.dp,
     busy: Boolean = false,
 ) {
   Button(
@@ -299,12 +302,12 @@ private fun BigButton(
       modifier = modifier.fillMaxWidth().height(height),
   ) {
     if (busy) {
-      CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = content)
+      CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = content)
     } else if (icon != null) {
-      Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
+      Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
     }
-    Spacer(Modifier.width(12.dp))
-    Text(text, style = if (height >= 72.dp) MaterialTheme.typography.titleLarge else MaterialTheme.typography.labelLarge)
+    Spacer(Modifier.width(10.dp))
+    Text(text, style = MaterialTheme.typography.labelLarge)
   }
 }
 
@@ -321,11 +324,16 @@ private fun OutlineBigButton(
       onClick = onClick,
       enabled = enabled,
       shape = Pill,
-      border = androidx.compose.foundation.BorderStroke(2.dp, if (enabled) color else color.copy(alpha = 0.35f)),
-      colors = ButtonDefaults.outlinedButtonColors(contentColor = color),
-      modifier = modifier.height(64.dp),
+      border = androidx.compose.foundation.BorderStroke(1.dp, Truss.line),
+      colors =
+          ButtonDefaults.outlinedButtonColors(
+              containerColor = Truss.card,
+              contentColor = color,
+              disabledContentColor = color.copy(alpha = 0.4f),
+          ),
+      modifier = modifier.height(52.dp),
   ) {
-    icon?.let { Icon(it, contentDescription = null, modifier = Modifier.size(24.dp)) }
+    icon?.let { Icon(it, contentDescription = null, modifier = Modifier.size(22.dp)) }
     Spacer(Modifier.width(10.dp))
     Text(text, style = MaterialTheme.typography.labelLarge)
   }
@@ -459,6 +467,7 @@ private fun HomeScreen(
   Column(Modifier.fillMaxSize()) {
     ScreenBody(Modifier.weight(1f)) {
       state.lastError?.let { ErrorBanner(it, onDismissError) }
+      Greeting()
       HeroCard(state, onConnectGlasses, onCheckLaptop, onWatch, onWatchEvery, onOpenSettings)
       LastAnswer(state)
       QuestionTiles(state, onOpenQuestions)
@@ -469,9 +478,28 @@ private fun HomeScreen(
         onClick = onLookNow,
         enabled = state.glassesReady && !state.busy,
         busy = state.photoBusy,
-        height = 72.dp,
         modifier = Modifier.padding(16.dp, 4.dp, 16.dp, 16.dp),
     )
+  }
+}
+
+/** The date and a time-of-day greeting at the top of Home. */
+@Composable
+private fun Greeting() {
+  val now = java.time.LocalDateTime.now()
+  val hello =
+      when (now.hour) {
+        in 5..11 -> "Good morning"
+        in 12..17 -> "Good afternoon"
+        else -> "Good evening"
+      }
+  Column(modifier = Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Text(
+        now.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.US)),
+        style = MaterialTheme.typography.bodySmall,
+        color = Truss.muted,
+    )
+    Text(hello, style = MaterialTheme.typography.displaySmall, modifier = Modifier.semantics { heading() })
   }
 }
 
@@ -528,24 +556,24 @@ private fun HeroCard(
     }
   }
 
-  Surface(color = Truss.forest, shape = RoundedCornerShape(36.dp), padding = 20.dp) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+  Surface(shape = RoundedCornerShape(28.dp), padding = 18.dp) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
       Box(
-          modifier = Modifier.size(88.dp).clip(cookieShape()).background(Truss.lime),
+          modifier = Modifier.size(72.dp).clip(cookieShape()).background(Truss.sage),
           contentAlignment = Alignment.Center,
       ) {
         Icon(
             if (state.photoBusy) TrussIcons.Camera else TrussIcons.Eye,
             contentDescription = null,
-            tint = Truss.forest,
-            modifier = Modifier.size(38.dp),
+            tint = Truss.ink,
+            modifier = Modifier.size(30.dp),
         )
       }
       Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             title,
             style = MaterialTheme.typography.headlineMedium,
-            color = Color.White,
+            color = Truss.ink,
             modifier = Modifier.semantics { heading() },
         )
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Truss.onForestSoft)
@@ -554,12 +582,12 @@ private fun HeroCard(
 
     if (!ready && !state.watching) {
       if (!state.glassesReady && state.sdkReady) {
-        BigButton("Connect glasses", TrussIcons.Glasses, onConnectGlasses, container = Truss.lime, content = Truss.onLime)
+        BigButton("Connect glasses", TrussIcons.Glasses, onConnectGlasses)
       }
       if (state.laptopIp.isBlank()) {
-        BigButton("Set the laptop address", TrussIcons.Laptop, onOpenSettings, container = Truss.lime, content = Truss.onLime)
+        BigButton("Set the laptop address", TrussIcons.Laptop, onOpenSettings)
       } else if (state.laptopReachable == false) {
-        BigButton("Try the laptop again", TrussIcons.Refresh, onCheckLaptop, container = Truss.lime, content = Truss.onLime)
+        BigButton("Try the laptop again", TrussIcons.Refresh, onCheckLaptop)
       }
     } else {
       Segmented(
@@ -567,29 +595,23 @@ private fun HeroCard(
           selected = state.watchEverySeconds,
           label = { "Every $it s" },
           onSelect = onWatchEvery,
-          onDark = true,
+          onDark = false,
       )
       if (state.watching) {
-        OutlinedButton(
-            onClick = { onWatch(false) },
-            shape = Pill,
-            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.6f)),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-        ) {
-          Icon(TrussIcons.Stop, contentDescription = null, modifier = Modifier.size(22.dp))
-          Spacer(Modifier.width(10.dp))
-          Text("Stop watching", style = MaterialTheme.typography.labelLarge)
-        }
+        OutlineBigButton(
+            "Stop watching",
+            TrussIcons.Stop,
+            { onWatch(false) },
+            color = Truss.ink,
+            modifier = Modifier.fillMaxWidth(),
+        )
       } else {
         BigButton(
             "Start watching",
             TrussIcons.Play,
             { onWatch(true) },
             enabled = ready,
-            container = Truss.lime,
-            content = Truss.onLime,
-            height = 56.dp,
+            height = 52.dp,
         )
       }
     }
@@ -619,11 +641,11 @@ private fun LastAnswer(state: TrussUiState) {
   val when_ = clock12(state.lastSpokenAt)?.let { "$it · $how" } ?: how.replaceFirstChar { it.uppercase() }
   val answer: @Composable () -> Unit = {
     Row(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Truss.card).padding(14.dp, 12.dp),
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Truss.card).padding(14.dp, 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-      IconTile(TrussIcons.Check, Truss.lime, Truss.onLime, size = 44.dp, shape = CircleShape)
+      IconTile(TrussIcons.Check, Truss.lime, Truss.onLime, size = 40.dp, shape = CircleShape)
       Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         state.lastSpoken.forEach { line ->
           Text(line, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -636,7 +658,7 @@ private fun LastAnswer(state: TrussUiState) {
   if (photo == null) {
     answer()
   } else {
-    Box(modifier = Modifier.fillMaxWidth().heightIn(min = 240.dp).clip(RoundedCornerShape(32.dp)).background(Truss.sage)) {
+    Box(modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).clip(RoundedCornerShape(28.dp)).background(Truss.sage)) {
       Photo(photo, "What Mannie saw", Modifier.matchParentSize())
       Box(Modifier.align(Alignment.BottomCenter).padding(12.dp)) { answer() }
     }
@@ -651,14 +673,15 @@ private fun QuestionTiles(state: TrussUiState, onOpenQuestions: () -> Unit) {
       Row(
           modifier =
               Modifier.fillMaxWidth()
-                  .clip(RoundedCornerShape(28.dp))
-                  .background(Truss.sage)
+                  .clip(RoundedCornerShape(24.dp))
+                  .background(Truss.card)
+                  .border(1.dp, Truss.line, RoundedCornerShape(24.dp))
                   .clickable(onClick = onOpenQuestions)
                   .padding(14.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(14.dp),
       ) {
-        IconTile(TrussIcons.Questions, Truss.ink, Color.White, shape = CircleShape)
+        IconTile(TrussIcons.Questions, Truss.sage, Truss.ink, size = 40.dp, shape = CircleShape)
         Column {
           Text("Add your first question", style = MaterialTheme.typography.titleMedium)
           Text("Like \"Is the stove off?\"", style = MaterialTheme.typography.bodySmall, color = Truss.muted)
@@ -667,26 +690,24 @@ private fun QuestionTiles(state: TrussUiState, onOpenQuestions: () -> Unit) {
     }
     return
   }
-  shown.chunked(2).forEachIndexed { row, pair ->
+  shown.chunked(2).forEach { pair ->
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-      pair.forEachIndexed { col, item ->
+      pair.forEach { item ->
         val look = lookFor(item)
-        // Alternate one tighter corner per tile so the grid reads as playful, not boxy.
-        val shape =
-            if ((row + col) % 2 == 0) RoundedCornerShape(32.dp, 32.dp, 32.dp, 12.dp)
-            else RoundedCornerShape(32.dp, 32.dp, 12.dp, 32.dp)
+        val shape = RoundedCornerShape(24.dp)
         Column(
             modifier =
                 Modifier.weight(1f)
-                    .heightIn(min = 140.dp)
+                    .heightIn(min = 132.dp)
                     .clip(shape)
-                    .background(look.background)
+                    .background(Truss.card)
+                    .border(1.dp, Truss.line, shape)
                     .clickable(onClick = onOpenQuestions)
                     .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-          Icon(topicIcon(item.question), contentDescription = null, tint = look.onBackground, modifier = Modifier.size(30.dp))
-          Text(item.question, style = MaterialTheme.typography.titleMedium, color = look.onBackground)
+          IconTile(topicIcon(item.question), look.background, look.onBackground, size = 36.dp, shape = RoundedCornerShape(11.dp))
+          Text(item.question, style = MaterialTheme.typography.titleMedium)
           Text(look.status, style = MaterialTheme.typography.labelMedium, color = look.soft)
         }
       }
@@ -797,14 +818,15 @@ private fun QuestionsScreen(
       Row(
           modifier =
               Modifier.fillMaxWidth()
-                  .clip(RoundedCornerShape(28.dp))
-                  .background(Truss.sage)
+                  .clip(RoundedCornerShape(24.dp))
+                  .background(Truss.card)
+                  .border(1.dp, Truss.line, RoundedCornerShape(24.dp))
                   .clickable(enabled = !state.plantBusy, onClick = viewModel::plantBedtimeRound)
                   .padding(14.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(14.dp),
       ) {
-        IconTile(TrussIcons.Moon, Truss.ink, Color.White, shape = CircleShape)
+        IconTile(TrussIcons.Moon, Truss.lime, Truss.onLime, size = 40.dp, shape = CircleShape)
         Column {
           Text("Bedtime round", style = MaterialTheme.typography.titleMedium)
           Text("Stove, door and pills in one go", style = MaterialTheme.typography.bodySmall, color = Truss.muted)
@@ -825,7 +847,7 @@ private fun QuestionRow(
   val look = lookFor(item)
   Surface(padding = 14.dp) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-      IconTile(topicIcon(item.question), look.background, look.onBackground)
+      IconTile(topicIcon(item.question), look.background, look.onBackground, size = 40.dp, shape = RoundedCornerShape(12.dp))
       Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(item.question, style = MaterialTheme.typography.titleMedium)
         Chip(
@@ -860,7 +882,7 @@ private fun PlantingCard(
 ) {
   val needsYes = planting?.hasRefYes != true
   val step = if (needsYes) 2 else 3
-  Surface(color = Truss.apricot, shape = RoundedCornerShape(36.dp), padding = 20.dp) {
+  Surface(color = Truss.apricot, shape = RoundedCornerShape(24.dp), padding = 18.dp) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         (1..3).forEach { i ->
@@ -955,13 +977,13 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
       val name = item.outline ?: item.evidence
       val photo = name?.let { state.historyPhotos["${state.historyDay}/$it"] }
       Row(
-          modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Truss.card).padding(12.dp),
+          modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Truss.card).border(1.dp, Truss.line, RoundedCornerShape(24.dp)).padding(12.dp),
           horizontalArrangement = Arrangement.spacedBy(14.dp),
       ) {
         if (photo != null) {
-          Photo(photo, "Evidence photo for ${item.question}", Modifier.size(92.dp).clip(RoundedCornerShape(20.dp)))
+          Photo(photo, "Evidence photo for ${item.question}", Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)))
         } else {
-          IconTile(topicIcon(item.question), Truss.sage, Truss.muted, size = 92.dp, shape = RoundedCornerShape(20.dp))
+          IconTile(topicIcon(item.question), Truss.sage, Truss.muted, size = 84.dp, shape = RoundedCornerShape(16.dp))
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
           Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -997,7 +1019,7 @@ private fun SettingsScreen(
     SectionLabel("Connections")
     Surface {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        IconTile(TrussIcons.Laptop, Truss.sage, Truss.ink, size = 48.dp, shape = RoundedCornerShape(16.dp))
+        IconTile(TrussIcons.Laptop, Truss.sage, Truss.ink, size = 40.dp, shape = RoundedCornerShape(12.dp))
         Text("Laptop", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         when (state.laptopReachable) {
           true -> Chip("Connected", Truss.lime, Truss.onLime)
@@ -1026,7 +1048,7 @@ private fun SettingsScreen(
       HorizontalDivider(color = Truss.sage, modifier = Modifier.padding(vertical = 4.dp))
 
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        IconTile(TrussIcons.Glasses, Truss.sage, Truss.ink, size = 48.dp, shape = RoundedCornerShape(16.dp))
+        IconTile(TrussIcons.Glasses, Truss.sage, Truss.ink, size = 40.dp, shape = RoundedCornerShape(12.dp))
         Column(Modifier.weight(1f)) {
           Text("Glasses", style = MaterialTheme.typography.titleMedium)
           Text(
@@ -1061,14 +1083,15 @@ private fun SettingsScreen(
     Row(
         modifier =
             Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(Truss.card)
+                .border(1.dp, Truss.line, RoundedCornerShape(24.dp))
                 .clickable { showDiagnostics = !showDiagnostics }
                 .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-      IconTile(TrussIcons.Pulse, Truss.sage, Truss.ink, size = 48.dp, shape = RoundedCornerShape(16.dp))
+      IconTile(TrussIcons.Pulse, Truss.sage, Truss.ink, size = 40.dp, shape = RoundedCornerShape(12.dp))
       Column(Modifier.weight(1f)) {
         Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
         Text("Connection, last capture, voice tests", style = MaterialTheme.typography.bodySmall, color = Truss.muted)

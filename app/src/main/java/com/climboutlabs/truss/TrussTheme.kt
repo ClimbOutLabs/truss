@@ -17,42 +17,47 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * The "Big and clear" look: Material 3 Expressive in spirit, with large type,
- * one bold colour tile per question and big buttons. Forest green with a lime
- * highlight, set in Plus Jakarta Sans (bundled under res/font, SIL OFL 1.1).
+ * The "Paper and ink" look: near-white surfaces, black type and buttons, and one
+ * muted slate accent, so colour is kept for meaning. Titles are set in Instrument
+ * Serif and everything else in Inter (both bundled under res/font, SIL OFL 1.1).
+ *
+ * The token names describe roles: forest is the dark primary (ink), lime and sky
+ * are the soft accent fill, apricot is the soft attention fill.
  */
 object Truss {
-  val ground = Color(0xFFF3F4EF)
-  val ink = Color(0xFF10140F)
-  val muted = Color(0xFF4A524A)
+  val ground = Color(0xFFF6F6F4)
+  val ink = Color(0xFF141414)
+  val muted = Color(0xFF6B6B6B)
   val card = Color(0xFFFFFFFF)
-  val forest = Color(0xFF12372A)
-  val onForestSoft = Color(0xFFC9DCCF)
-  val lime = Color(0xFFD8F36A)
-  val onLime = Color(0xFF1F2A00)
-  val apricot = Color(0xFFFFD3B0)
-  val onApricot = Color(0xFF3A1C00)
-  val onApricotSoft = Color(0xFF6B3B10)
-  val sky = Color(0xFFCFE5F2)
-  val onSky = Color(0xFF0E2A3A)
-  val onSkySoft = Color(0xFF33536A)
-  val sage = Color(0xFFE3E8DD)
-  val nav = Color(0xFFE9ECE4)
+  val line = Color(0xFFE6E6E2)
+  val forest = Color(0xFF141414)
+  val onForestSoft = Color(0xFF6B6B6B)
+  val lime = Color(0xFFE9EDF1)
+  val onLime = Color(0xFF34495E)
+  val apricot = Color(0xFFF4ECE7)
+  val onApricot = Color(0xFF8C4A2F)
+  val onApricotSoft = Color(0xFF8C5A45)
+  val sky = Color(0xFFE9EDF1)
+  val onSky = Color(0xFF34495E)
+  val onSkySoft = Color(0xFF6B6B6B)
+  val sage = Color(0xFFEFEFEB)
+  val nav = Color(0xFFFFFFFF)
   val errorSoft = Color(0xFFFFDAD6)
   val onError = Color(0xFF410002)
 }
 
-val PlusJakartaSans =
+val InstrumentSerif = FontFamily(Font(R.font.instrument_serif_regular, FontWeight.Normal))
+
+val Inter =
     FontFamily(
-        Font(R.font.plus_jakarta_sans_medium, FontWeight.Medium),
-        Font(R.font.plus_jakarta_sans_semibold, FontWeight.SemiBold),
-        Font(R.font.plus_jakarta_sans_bold, FontWeight.Bold),
-        Font(R.font.plus_jakarta_sans_extrabold, FontWeight.ExtraBold),
+        Font(R.font.inter_regular, FontWeight.Normal),
+        Font(R.font.inter_medium, FontWeight.Medium),
+        Font(R.font.inter_semibold, FontWeight.SemiBold),
     )
 
 private val TrussColors =
     lightColorScheme(
-        primary = Truss.forest,
+        primary = Truss.ink,
         onPrimary = Color.White,
         primaryContainer = Truss.lime,
         onPrimaryContainer = Truss.onLime,
@@ -65,34 +70,41 @@ private val TrussColors =
         surfaceVariant = Truss.card,
         onSurfaceVariant = Truss.muted,
         surfaceContainer = Truss.nav,
-        outline = Truss.forest,
+        outline = Truss.line,
         errorContainer = Truss.errorSoft,
         onErrorContainer = Truss.onError,
     )
 
-private fun style(size: Int, line: Int, weight: FontWeight, tracking: Double = 0.0) =
+private fun style(
+    size: Int,
+    line: Int,
+    weight: FontWeight,
+    tracking: Double = 0.0,
+    family: FontFamily = Inter,
+) =
     TextStyle(
-        fontFamily = PlusJakartaSans,
+        fontFamily = family,
         fontSize = size.sp,
         lineHeight = line.sp,
         fontWeight = weight,
         letterSpacing = tracking.sp,
     )
 
+/** A calm scale: serif titles, 16 sp semibold item titles, 13 sp secondary text. */
 private val TrussType =
     Typography(
-        displaySmall = style(34, 40, FontWeight.ExtraBold, -0.6),
-        headlineMedium = style(30, 34, FontWeight.ExtraBold, -0.5),
-        headlineSmall = style(24, 30, FontWeight.ExtraBold, -0.3),
-        titleLarge = style(20, 26, FontWeight.ExtraBold),
-        titleMedium = style(18, 24, FontWeight.ExtraBold),
-        titleSmall = style(16, 22, FontWeight.Bold),
-        bodyLarge = style(17, 24, FontWeight.Medium),
-        bodyMedium = style(16, 22, FontWeight.Medium),
-        bodySmall = style(14, 20, FontWeight.Medium),
-        labelLarge = style(16, 20, FontWeight.ExtraBold),
-        labelMedium = style(14, 18, FontWeight.Bold),
-        labelSmall = style(13, 16, FontWeight.Bold),
+        displaySmall = style(36, 40, FontWeight.Normal, -0.2, InstrumentSerif),
+        headlineMedium = style(28, 32, FontWeight.Normal, -0.2, InstrumentSerif),
+        headlineSmall = style(26, 30, FontWeight.Normal, -0.2, InstrumentSerif),
+        titleLarge = style(18, 24, FontWeight.SemiBold),
+        titleMedium = style(16, 22, FontWeight.SemiBold),
+        titleSmall = style(15, 20, FontWeight.SemiBold),
+        bodyLarge = style(16, 23, FontWeight.Normal),
+        bodyMedium = style(15, 21, FontWeight.Normal),
+        bodySmall = style(13, 18, FontWeight.Normal),
+        labelLarge = style(15, 20, FontWeight.SemiBold),
+        labelMedium = style(13, 18, FontWeight.Medium),
+        labelSmall = style(12, 16, FontWeight.Medium),
     )
 
 @Composable
