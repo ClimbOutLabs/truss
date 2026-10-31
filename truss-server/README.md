@@ -248,6 +248,22 @@ question's folder:
   it in place of the two photos, and a check that cannot see the
   deciding detail can name it as what is missing.
 
+A stove question ("Is the stove off?", "Did I leave the stove on?")
+is decided by the control knobs alone. Its check asks the model to
+report the knobs first (are all of them in view, and where each one it
+can see points: off, on, or unclear) and only then the verdict, and
+`verdict.py` holds the verdict to that report: any knob clearly on
+means the stove is on; every knob in view and off means it is off;
+anything else is `cannot_tell`, with the knobs named as what is
+missing. A dark burner or a cold pan never stands in for the knobs,
+and a verdict that disagrees with the model's own knob report is not
+used (failure `inconsistent`). The report rides in the result's
+`knobs` field. A stove with touch controls and no knobs always reads
+`cannot_tell` under this rule. A negated phrasing ("Is the stove not
+on?", "Did I forget to turn the stove off?") is not held to the knobs,
+because what its yes means is not guessed; plant it as "Is the stove
+off?" instead.
+
 The compile runs in the background, so planting answers at once. A
 re-shot look deletes both files at once, before anything else can
 read them, and compiles again; a compile still running on the old
