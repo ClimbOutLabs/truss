@@ -1,26 +1,16 @@
 # Truss Server
 
-Local server for the Truss Android app. Handles photo uploads, speech-to-text, and text-to-speech.
+Local server for the Truss Android app. Handles photo uploads and text-to-speech.
 
 ## Requirements
 
 - Python 3.6+
 - macOS (uses `say` and `afconvert` commands)
-- Optional: `whisper-cpp` for speech-to-text
 
 ## Installation
 
 No dependencies needed beyond Python standard library and macOS built-in tools.
-
-To enable speech-to-text, install whisper.cpp and download a model:
-
-```bash
-brew install whisper-cpp
-mkdir -p truss-server/models
-curl -L -o truss-server/models/ggml-small.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
-```
-
-The server uses `whisper-cli` from the Homebrew whisper.cpp package.
+There is no speech-to-text: questions are planted by typing them in the app.
 
 ## Running
 
@@ -39,7 +29,6 @@ The server will:
 
 - `GET /` - Health check, returns 200 OK
 - `POST /capture` - Upload JPEG photo (multipart field "image"), returns `{"bytes": n}`
-- `POST /stt` - Upload WAV audio (multipart field "audio"), returns `{"text": "..."}`
 - `POST /tts` - Send JSON `{"text": "..."}`, returns audio/wav file
 - `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}` with optional `"kind"`, `"pattern"`, `"safety"` (true or false), and `"look_at"`, returns the slug and the next prompt
 - `POST /plant/bedtime` - Plant the bedtime round (stove, front door, tonight's pills) in walk order, JSON with optional `"after"` and `"gap_minutes"`
@@ -392,5 +381,3 @@ hardware, or `python3 test_bedtime.py` for the tested choreography.
 - Speech, photos, and the question store are handled on this machine;
   the model check is the only call off it
 - Photos are saved with timestamps in the captures/ directory
-- If whisper-cli is not installed, STT returns an error
-- The whisper model (ggml-small.en.bin) should be in truss-server/models/

@@ -59,10 +59,6 @@ data class TrussUiState(
     val serverBytes: Long? = null,
     val photoElapsedMs: Long? = null,
     val wifiReturn: String? = null,
-    val recordBusy: Boolean = false,
-    val inputDevice: RoutedDevice? = null,
-    val transcript: String? = null,
-    val sttMs: Long? = null,
     val speakBusy: Boolean = false,
     val outputDevice: RoutedDevice? = null,
     val ttsMs: Long? = null,
@@ -93,7 +89,7 @@ data class TrussUiState(
 ) {
   /** True while any glasses camera or audio work is running. */
   val busy: Boolean
-    get() = photoBusy || recordBusy || speakBusy || plantBusy
+    get() = photoBusy || speakBusy || plantBusy
 
   /** True once the glasses are registered with this app and one is in range. */
   val glassesReady: Boolean
@@ -234,7 +230,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private fun beginCapture(quiet: Boolean): Boolean {
     if (_uiState.value.photoBusy) return false
     val now = _uiState.value
-    if (now.recordBusy || now.speakBusy || now.plantBusy) {
+    if (now.speakBusy || now.plantBusy) {
       if (quiet) return false
       // A camera session must never open while Bluetooth audio is open or
       // about to open: the two are never held together (see the Voice screen).
@@ -618,12 +614,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     val state = _uiState.value
     if (state.laptopIp.isBlank()) return
     // Never together: while a capture may be holding a toolkit camera
-    // session, or the glasses audio is busy recording, speaking, or
-    // planting by voice, this cycle is skipped rather than opening
-    // audio alongside it.
+    // session, or the glasses audio is busy speaking, this cycle is
+    // skipped rather than opening audio alongside it.
     if (state.photoBusy ||
         state.streamActive ||
-        state.recordBusy ||
         state.speakBusy ||
         state.plantBusy) return
     // Claimed in the same main-thread step as the check above, so a capture
@@ -662,53 +656,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     return audio.listAvailableCommunicationDevices()
   }
 
-  fun recordAndTranscribe(requestRecordAudio: suspend () -> Boolean) {
-    if (_uiState.value.recordBusy) return
-    val now = _uiState.value
-    if (now.photoBusy || now.speakBusy || now.plantBusy) {
-      // Bluetooth audio must never open while a camera session is alive or
-      // other audio work is running: the two are never held together.
-      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
-      return
-    }
-    _uiState.update { it.copy(recordBusy = true, transcript = null, sttMs = null, lastError = null) }
-    viewModelScope.launch {
-      val audio = GlassesAudio(getApplication())
-      try {
-        check(requestRecordAudio()) {
-          "Microphone permission was not granted, so nothing was recorded."
-        }
-        val glasses = audio.routeToGlasses()
-        check(glasses != null) {
-          "No Bluetooth headset device is available. Are the glasses connected to this phone?"
-        }
-        val dir = File(getApplication<Application>().filesDir, "voice").apply { mkdirs() }
-        val wav = File(dir, "voice-${System.currentTimeMillis()}.wav")
-        val routed = audio.recordFiveSeconds(wav, glasses)
-        val speechEnd = SystemClock.elapsedRealtime()
-        val text = withContext(Dispatchers.IO) { laptopClient().postStt(wav) }
-        _uiState.update {
-          it.copy(
-              inputDevice = routed,
-              transcript = text,
-              sttMs = SystemClock.elapsedRealtime() - speechEnd,
-          )
-        }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        showError(e)
-      } finally {
-        audio.clearRouting()
-        _uiState.update { it.copy(recordBusy = false) }
-      }
-    }
-  }
-
   fun speakTestSentence() {
     if (_uiState.value.speakBusy) return
     val now = _uiState.value
-    if (now.photoBusy || now.recordBusy || now.plantBusy) {
+    if (now.photoBusy || now.plantBusy) {
       _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
       return
     }
@@ -759,44 +710,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         throw e
       } catch (e: Exception) {
         showError(e)
-      }
-    }
-  }
-
-  /** Record the question through the glasses and put its words in the text field. */
-  fun recordPlantQuestion(requestRecordAudio: suspend () -> Boolean) {
-    if (_uiState.value.plantBusy) return
-    val now = _uiState.value
-    if (now.photoBusy || now.recordBusy || now.speakBusy) {
-      // Same rule as the Voice screen: Bluetooth audio never opens while a
-      // camera session is alive or other audio work is running.
-      _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
-      return
-    }
-    _uiState.update { it.copy(plantBusy = true, lastError = null) }
-    viewModelScope.launch {
-      val audio = GlassesAudio(getApplication())
-      try {
-        check(requestRecordAudio()) {
-          "Microphone permission was not granted, so nothing was recorded."
-        }
-        val glasses = audio.routeToGlasses()
-        check(glasses != null) {
-          "No Bluetooth headset device is available. Are the glasses connected to this phone?"
-        }
-        val dir = File(getApplication<Application>().filesDir, "voice").apply { mkdirs() }
-        val wav = File(dir, "plant-${System.currentTimeMillis()}.wav")
-        audio.recordFiveSeconds(wav, glasses)
-        val text = withContext(Dispatchers.IO) { laptopClient().postStt(wav) }
-        _uiState.update { it.copy(plantText = text) }
-        plantLog("Heard: $text")
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        showError(e)
-      } finally {
-        audio.clearRouting()
-        _uiState.update { it.copy(plantBusy = false) }
       }
     }
   }
@@ -867,7 +780,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   ) {
     if (_uiState.value.photoBusy) return
     val now = _uiState.value
-    if (now.recordBusy || now.speakBusy || now.plantBusy) {
+    if (now.speakBusy || now.plantBusy) {
       // Refuse before arming the reference routing, so a refused capture
       // can never leave the routing set for a later photo.
       _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }

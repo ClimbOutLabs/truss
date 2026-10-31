@@ -199,12 +199,6 @@ class LaptopClient(laptopIp: String) {
     postJson("/alerts/ack", JSONObject().put("id", id))
   }
 
-  /** POST /stt, multipart field "audio" (WAV). Returns the transcript text. */
-  fun postStt(wav: File): String {
-    val body = postMultipart("/stt", "audio", wav.name, "audio/wav", wav.readBytes())
-    return JSONObject(body).getString("text")
-  }
-
   /** POST /tts with a JSON body. Returns the WAV bytes the server sends back. */
   fun postTts(text: String): ByteArray {
     val connection = open("/tts")

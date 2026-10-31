@@ -4,7 +4,6 @@
 
     <!-- Plain-words reasons shown with the runtime permission requests -->
     <string name="why_bluetooth">Truss needs Bluetooth to talk to your glasses.</string>
-    <string name="why_record_audio">Truss needs the microphone so it can record your voice through the glasses and send it to your laptop.</string>
     <string name="why_location_wifi">Truss needs location and nearby Wi-Fi access so Android will let it join the Wi-Fi network your glasses host for photos.</string>
     <string name="why_camera_permission">The glasses ask, through the Meta AI app, whether Truss may use their camera. Nothing is recorded until you allow it.</string>
 </resources>

@@ -6,7 +6,7 @@ owner's home network. Four screens:
 - Home: whether the glasses and the laptop are connected, how many questions
   Mannie is watching, a Look now button for one glasses photo, the Watch
   hands-free switch, and the last thing Mannie said with the photo it was seen in.
-- Questions: plant a question by typing or saying it, then take its yes look and
+- Questions: plant a question by typing it, then take its yes look and
   its no look through the glasses, step by step; plant the bedtime round in one
   tap; see every question's state and remove one.
 - History: the day's answers from the laptop's log, each with its evidence photo
@@ -14,7 +14,7 @@ owner's home network. Four screens:
 - Settings: the laptop address (saved in SharedPreferences) and connecting the
   glasses. Diagnostics underneath keeps the day 1 gates: toolkit and phone
   versions, ping, one capture with its step-by-step log (also to Logcat tag
-  `Truss`), and the voice in and out tests through the glasses.
+  `Truss`), and a test sentence spoken through the glasses.
 
 Watch hands-free takes a glasses photo every 15, 30 or 60 seconds and sends it
 to the laptop, which checks it against whatever questions are due. Each photo is
@@ -27,7 +27,7 @@ skipped and failed photo goes into `watch-log.txt` in the app's files folder wit
 the battery percent, so a one-hour wear gives the battery cost per hour.
 
 The only network destination the app can call is `http://LAPTOP_IP:8792`
-(`GET /`, `POST /capture`, `POST /stt`, `POST /tts`, `POST /plant/question`,
+(`GET /`, `POST /capture`, `POST /tts`, `POST /plant/question`,
 `POST /plant/bedtime`, `POST /plant/ref`, `GET /questions`, `POST /questions/retire`,
 `GET /answers`, `GET /evidence`, `GET /alerts`, `POST /alerts/ack`). No cloud SDKs, no
 analytics, no crash reporters; the toolkit's own analytics and crash reporting are
@@ -41,7 +41,7 @@ opted out in the manifest, per the toolkit README.
    `mwdat_client_token`. Both toolkit values can be `0` while Developer Mode is on in
    the Meta AI app; without Developer Mode they come from the Wearables Developer Center.
 3. Build the debug variant, install on the phone, turn Developer Mode on in the Meta AI
-   app, then use the Diagnostics gates under Settings to check the glasses, the laptop and the voice path.
+   app, then use the Diagnostics gates under Settings to check the glasses, the laptop and the speaker path.
 
 ## Where the brief met the toolkit as it is today (checked Oct 26, version 1.0.1)
 
@@ -61,11 +61,11 @@ opted out in the manifest, per the toolkit README.
   `camera.photo` path is documented as experimental, with no sample code in the repo,
   so day 1 uses the sample's path. The stream exists only to take the still; the photo
   is saved on the phone, the session is ended, and only then is anything uploaded.
-- Microphone and speaker follow the brief (plain Android audio, glasses as the
-  Bluetooth SCO communication device), not the toolkit. One upstream catch, GitHub
-  issue 192 on the toolkit repo: opening Bluetooth SCO can end a toolkit session, so
-  this app never holds a toolkit session open during the voice tests; the photo flow
-  always ends its session, and the voice screen says so.
+- The speaker follows the brief (plain Android audio, glasses as the Bluetooth SCO
+  communication device), not the toolkit. One upstream catch, GitHub issue 192 on the
+  toolkit repo: opening Bluetooth SCO can end a toolkit session, so this app never
+  holds a toolkit session open while it speaks; the photo flow always ends its
+  session first. The app does not record audio and does not ask for the microphone.
 - Permissions the sample declares that the brief did not list: `BLUETOOTH` (the legacy
   permission, alongside `BLUETOOTH_CONNECT`) and `CAMERA`. The sample also declares
   `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE` and `WAKE_LOCK`, but

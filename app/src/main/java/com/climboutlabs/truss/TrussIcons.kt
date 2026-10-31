@@ -73,7 +73,6 @@ object TrussIcons {
   val Pill = icon("pill", rect(3f, 9f, 18f, 6f, 3f), "M12 9v6", rotate = -45f)
   val Flame =
       icon("flame", "M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.5 1.5-4 2.5-5 .3 1.6 1 2.5 2 3 0-3 .5-5.5.5-8z")
-  val Mic = icon("mic", rect(9f, 3f, 6f, 11f, 3f), "M5 11a7 7 0 0 0 14 0M12 18v3")
   val Keyboard =
       icon(
           "keyboard",

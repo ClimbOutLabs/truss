@@ -8,13 +8,10 @@ import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.AudioRecord
 import android.media.AudioTrack
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -152,68 +149,6 @@ class GlassesAudio(private val context: Context) {
     }
   }
 
-  /** Records exactly 5 seconds at 16 kHz mono 16-bit PCM and writes a WAV file. */
-  suspend fun recordFiveSeconds(file: File, preferred: AudioDeviceInfo?): RoutedDevice =
-      withContext(Dispatchers.IO) {
-        val sampleRate = 16_000
-        val minBuffer =
-            AudioRecord.getMinBufferSize(
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-            )
-        check(minBuffer > 0) { "This phone reported no usable recording buffer for 16 kHz mono." }
-        val totalBytes = sampleRate * 2 * RECORD_SECONDS
-        val record =
-            AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .build(),
-                )
-                .setBufferSizeInBytes(maxOf(minBuffer, totalBytes / 4))
-                .build()
-        try {
-          check(record.state == AudioRecord.STATE_INITIALIZED) {
-            "The recorder could not start. Is another app using the microphone?"
-          }
-          if (preferred != null) {
-            record.setPreferredDevice(preferred)
-          }
-          val pcm = ByteArray(totalBytes)
-          record.startRecording()
-          // Sample the routed device throughout the recording to catch any changes.
-          var latestRouted = describe(record.routedDevice)
-          var bluetoothRouted: RoutedDevice? = null
-          var offset = 0
-          val deadline = SystemClock.elapsedRealtime() + RECORD_SECONDS * 1_000L + 1_000L
-          while (offset < totalBytes && SystemClock.elapsedRealtime() < deadline) {
-            val read = record.read(pcm, offset, totalBytes - offset)
-            check(read >= 0) { "Recording failed with error code $read." }
-            offset += read
-            val sample = describe(record.routedDevice)
-            latestRouted = sample
-            if (sample.isBluetooth && bluetoothRouted == null) {
-              bluetoothRouted = sample
-            }
-          }
-          // One final sample before stopping
-          val finalSample = describe(record.routedDevice)
-          if (finalSample.isBluetooth && bluetoothRouted == null) {
-            bluetoothRouted = finalSample
-          }
-          record.stop()
-          val routed = bluetoothRouted ?: finalSample
-          writeWavPcm16(file, pcm.copyOf(offset), sampleRate, channels = 1)
-          routed
-        } finally {
-          record.release()
-        }
-      }
-
   /** Plays a WAV (16-bit PCM) with voice-communication usage so it lands in the glasses. */
   suspend fun playWav(wavBytes: ByteArray, preferred: AudioDeviceInfo?, requestStartMs: Long): PlayResult =
       withContext(Dispatchers.IO) {
@@ -306,43 +241,6 @@ class GlassesAudio(private val context: Context) {
   }
 
   companion object {
-    const val RECORD_SECONDS = 5
     private const val SCO_WAIT_MS = 10_000L
-
-    /** Writes 16-bit PCM samples as a standard WAV file. */
-    fun writeWavPcm16(file: File, pcm: ByteArray, sampleRate: Int, channels: Int) {
-      val byteRate = sampleRate * channels * 2
-      val header = ByteArray(44)
-      fun putAscii(at: Int, text: String) {
-        text.toByteArray(Charsets.US_ASCII).copyInto(header, at)
-      }
-      fun put32(at: Int, value: Int) {
-        header[at] = (value and 0xff).toByte()
-        header[at + 1] = ((value shr 8) and 0xff).toByte()
-        header[at + 2] = ((value shr 16) and 0xff).toByte()
-        header[at + 3] = ((value shr 24) and 0xff).toByte()
-      }
-      fun put16(at: Int, value: Int) {
-        header[at] = (value and 0xff).toByte()
-        header[at + 1] = ((value shr 8) and 0xff).toByte()
-      }
-      putAscii(0, "RIFF")
-      put32(4, 36 + pcm.size)
-      putAscii(8, "WAVE")
-      putAscii(12, "fmt ")
-      put32(16, 16)
-      put16(20, 1)
-      put16(22, channels)
-      put32(24, sampleRate)
-      put32(28, byteRate)
-      put16(32, channels * 2)
-      put16(34, 16)
-      putAscii(36, "data")
-      put32(40, pcm.size)
-      file.outputStream().use { out ->
-        out.write(header)
-        out.write(pcm)
-      }
-    }
   }
 }
