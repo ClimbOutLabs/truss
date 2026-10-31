@@ -187,6 +187,7 @@ def production_check(frame_path, entry):
         ref_yes=entry["ref_yes_path"],
         ref_no=entry["ref_no_path"],
         looks=verdict.read_looks(Path(entry["ref_yes_path"]).parent),
+        safety=entry.get("safety") is True,
     )
 
 
@@ -197,6 +198,14 @@ def guide_check(frame_path, question_text):
         return aman_check.check(frame_path, question_text)
     return verdict.check(frame_path, question_text, mode=CHECK_MODE)
 
+
+# The refusal (see checkloop.REFUSAL_TEMPLATES): a safety question's
+# cannot-tell is spoken ("I can't see the knobs from here") once a
+# plain check says the thing itself is in view. TRUSS_REFUSALS=0 keeps
+# every cannot-tell silent, as before.
+REFUSALS = os.environ.get("TRUSS_REFUSALS", "1").strip() != "0"
+if not REFUSALS:
+    print("Refusals are off (TRUSS_REFUSALS=0); every cannot-tell stays silent.")
 
 # The evidence outline (see sam_client.py): with TRUSS_EVIDENCE_OUTLINE=1,
 # each firing also gets a copy of its evidence photo with the object
@@ -215,6 +224,7 @@ LOOP = CheckLoop(
     now_fn=lambda: CLOCK(),
     checks=CHECKS,
     outline_fn=OUTLINER,
+    presence_fn=guide_check if REFUSALS else None,
 )
 
 # Plant-time compile (see plant_compile.py). Once a question has both
@@ -231,6 +241,58 @@ def compile_waiting():
         folder = STORE.root / entry["slug"]
         if entry["state"] != "retired" and needs_compile(folder):
             COMPILER.submit(folder)
+
+# When the phone app was last heard from, for GET /status and the
+# pre-flight (preflight.py). The app polls GET /alerts about every 30
+# seconds while it runs, so a recent poll means the phone can reach
+# this laptop; a recent capture means a photo came all the way from
+# the glasses. In memory only: a restart forgets both until the next.
+APP_SEEN = {"poll": None, "capture": None}
+
+
+def _seen(kind, address):
+    APP_SEEN[kind] = {"at": datetime.now().astimezone(), "from": address}
+
+
+def status():
+    """What GET /status reports: the server's clock (with its UTC
+    offset, so the night the clocks change is visible), how checks
+    will be made, the live-test settings in force, and when the phone
+    was last heard from."""
+    now = datetime.now().astimezone()
+
+    def seen(kind):
+        item = APP_SEEN[kind]
+        if item is None:
+            return None
+        return {
+            "at": item["at"].isoformat(timespec="seconds"),
+            "seconds_ago": int((now - item["at"]).total_seconds()),
+            "from": item["from"],
+        }
+
+    try:
+        cfg = endpoint.config_from_env()
+        model, base_url, config_error = cfg.model, cfg.base_url, None
+    except endpoint.EndpointError as e:
+        model, base_url, config_error = None, None, str(e)
+    return {
+        "now": now.isoformat(timespec="seconds"),
+        "zone": now.tzname(),
+        "checker": CHECKER,
+        "model": model,
+        "base_url": base_url,
+        "config_error": config_error,
+        "check_mode": CHECK_MODE,
+        "refusals": REFUSALS,
+        "evidence_outline": OUTLINER is not None,
+        "sam_url": sam_client.config_from_env().url,
+        "plant_minutes": os.environ.get("TRUSS_PLANT_MINUTES", "").strip() or None,
+        "bedtime_after": BEDTIME_AFTER,
+        "last_poll": seen("poll"),
+        "last_capture": seen("capture"),
+    }
+
 
 # The over-the-shoulder guide (see guide.py). One session at a time, in
 # memory; while a guide is active, captures go to it instead of the loop.
@@ -262,6 +324,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         elif path == "/questions":
             self.handle_questions()
         elif path == "/alerts":
+            _seen("poll", self.client_address[0])
             self.handle_alerts()
         elif path == "/guide/status":
             self.handle_guide_status()
@@ -269,6 +332,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_answers()
         elif path == "/evidence":
             self.handle_evidence()
+        elif path == "/status":
+            self.send_json(status())
         else:
             self.send_error(404, "Not Found")
 
@@ -677,6 +742,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 f.write(image_data)
             
             file_size = len(image_data)
+            _seen("capture", self.client_address[0])
 
             response = {"bytes": file_size}
             session = GUIDE["session"]
@@ -721,6 +787,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             if loop_result["managed"]:
                 response["fired"] = loop_result["fired"]
                 response["speak"] = loop_result["speak"]
+                if loop_result.get("refused"):
+                    response["refused"] = loop_result["refused"]
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

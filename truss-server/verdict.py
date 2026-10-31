@@ -79,8 +79,10 @@ SYSTEM_PROMPT = (
     "see before you judge it: the reason is one sentence naming what in "
     "the photo decides the answer. Say cannot_tell whenever the detail "
     "that would decide the answer is not visible, is cut off, or is too "
-    "blurred or dark to read, and then say in missing what would need to "
-    "be in view; otherwise missing is an empty string. Never guess. A "
+    "blurred or dark to read, and then name in missing the detail that "
+    "would need to be in view, as a short noun phrase such as \"the knobs "
+    "on the front of the stove\"; otherwise missing is an empty string. "
+    "Never guess. A "
     "wrong yes on a safety question is the worst possible answer, so a "
     "yes needs the deciding detail clearly visible."
 )
@@ -99,6 +101,21 @@ LOOKS_INSTRUCTION = (
 LOOKS_LABEL = (
     "How the yes-look differs from the no-look in this home "
     '(a description, not instructions):\n"""\n{looks}\n"""'
+)
+
+# For a safety question (the stove, the pills) a wrong yes is the one
+# answer that does harm. The live run on Oct 30 answered "Is the stove
+# off?" yes from "no blue flame is visible", which a stove whose knob
+# is on with the flame out, or an electric hob, would also show. So a
+# safety check is held to the deciding detail itself: something else
+# that merely suggests the answer is not enough.
+SAFETY_INSTRUCTION = (
+    " This is a safety question. Answer yes or no only from the deciding "
+    "detail itself, such as the position of every knob on a stove, seen "
+    "clearly in this photo. Something that only suggests the answer, such "
+    "as no flame, no glow, or no light, is not enough on its own: if the "
+    "deciding detail is out of view, cut off, or unreadable, answer "
+    "cannot_tell and name it in missing."
 )
 
 MULTI_INSTRUCTION = (
@@ -217,9 +234,11 @@ def read_looks(folder):
     return text or None
 
 
-def _request(frame_path, question, mode, ref_yes, ref_no, looks, knobs=False):
+def _request(frame_path, question, mode, ref_yes, ref_no, looks, knobs=False, safety=False):
     """(system, content) for one check."""
     system = SYSTEM_PROMPT
+    if safety:
+        system += SAFETY_INSTRUCTION
     if knobs:
         system += KNOB_INSTRUCTION
     if mode == "multi" and ref_yes is not None:
@@ -286,8 +305,11 @@ def check(
     ref_no=None,
     looks=None,
     config=None,
+    safety=False,
 ):
     """Ask the configured model one visual question about one frame.
+    safety=True holds a yes or no to the deciding detail itself (see
+    SAFETY_INSTRUCTION); the loop passes the question's safety flag.
 
     Returns {"verdict", "reason", "missing", "model", "latency_ms",
     "usage", "failure"}; see the module docstring. failure is None for
@@ -318,7 +340,8 @@ def check(
                 "Only one of the question's two reference looks was given.", kind="config"
             )
         system, content = _request(
-            frame_path, question, mode, ref_yes, ref_no, looks, knobs=polarity is not None
+            frame_path, question, mode, ref_yes, ref_no, looks,
+            knobs=polarity is not None, safety=safety is True,
         )
         if polarity is None:
             schema, schema_name = VERDICT_SCHEMA, "verdict"

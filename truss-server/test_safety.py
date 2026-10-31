@@ -91,6 +91,12 @@ def all_safety_templates():
         out[f"alerts.SPAN_TEMPLATES[{name}]"] = text
     for name, text in checkloop_module.MISS_CHECK_TEMPLATES.items():
         out[f"checkloop.MISS_CHECK_TEMPLATES[{name}]"] = text
+    # The refusal is spoken for safety questions only (the stove).
+    # The redo reminder is not scanned: it is spoken only after the act
+    # was seen, and says what she did ("You took your night pills at
+    # 9:05 PM"), never what to do.
+    for name, text in checkloop_module.REFUSAL_TEMPLATES.items():
+        out[f"checkloop.REFUSAL_TEMPLATES[{name}]"] = text
     return out
 
 

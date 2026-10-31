@@ -30,6 +30,12 @@ mode with the question's own reference looks.
 - Every check of a done question that comes back with a verdict is
   written to the check log (see coverage.py), so a missed-window
   alert can say how much of the window was really watched.
+- A safety state question (the stove) whose check comes back
+  cannot_tell, with the model naming what it lacked, is spoken as a
+  refusal ("I can't see the knobs from here") when a plain presence
+  check confirms the thing itself is in view; at most once per ten
+  minutes per question, with the frame kept as evidence. Without a
+  presence check function, every cannot_tell stays silent.
 - When no question is standing, frames are not managed at all and the
   capture path behaves exactly as it did on day 1.
 - With an outline function (the evidence outline, TRUSS_EVIDENCE_OUTLINE
@@ -42,11 +48,13 @@ with scripted verdicts, and so the real checker (eval/checker.py) can
 be wired in without the loop knowing anything about models or keys.
 """
 
+import re
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from questions import look_at_for
+from wording import action_verbs_in
 
 
 def model_name(result):
@@ -67,16 +75,107 @@ def _reason_text(result):
     return reason.strip() if isinstance(reason, str) else ""
 
 
-def speak_text(entry, result):
-    """The spoken line for a firing: the question, the answer, and the
-    checker's one-sentence observation. Only yes verdicts are spoken."""
+def _clock(moment):
+    """A time of day as it is spoken, like 8:05 PM."""
+    return moment.strftime("%I:%M %p").lstrip("0")
+
+
+def _spoken_question(entry):
     question = entry["question"].strip()
     if not question.endswith("?"):
         question += "?"
+    return question
+
+
+# Every sentence the loop speaks for a firing or a redo reminder.
+# A firing names the time it was seen, so the bedtime round says when
+# each thing was found the way it was, and the checker's reason, so
+# she hears what was seen rather than a bare yes. The redo reminder
+# names the witnessed time and says it was seen, because "I saw you"
+# is what lets her stop fretting.
+SPOKEN_TEMPLATES = {
+    "state": "{question} Yes, as of {time}. {reason}",
+    "state_bare": "{question} Yes, as of {time}.",
+    "done": "{question} Yes. I saw it at {time}. {reason}",
+    "done_bare": "{question} Yes. I saw it at {time}.",
+    "redo": "You {act} at {time}. I saw you.",
+    "redo_plain": "That is already done. You did it at {time}. I saw you.",
+}
+
+# The past tense of the verbs a done question is likely to open with.
+# Any other verb takes the regular ending; a question that does not
+# open "Did I ..." gets the plain reminder instead.
+_PAST = {
+    "take": "took", "feed": "fed", "give": "gave", "eat": "ate",
+    "drink": "drank", "put": "put", "shut": "shut", "set": "set",
+    "get": "got", "make": "made", "leave": "left", "do": "did",
+    "go": "went", "run": "ran", "bring": "brought", "pay": "paid",
+    "send": "sent", "hang": "hung", "lay": "laid", "stop": "stopped",
+    "plug": "plugged", "unplug": "unplugged", "mop": "mopped",
+    "water": "watered",
+}
+
+# The wearer's words are hers ("my pills"); Mannie says them back to
+# her ("your pills").
+_TO_YOU = {
+    "i": "you", "me": "you", "my": "your", "mine": "yours",
+    "myself": "yourself", "we": "you", "us": "you", "our": "your",
+    "ours": "yours", "i'm": "you're", "i've": "you've",
+}
+
+
+# Regular verbs a done question is likely to open with. Only these
+# and the verbs in _PAST are said back as an act: the word after
+# "Did I" is not always the verb ("Did I already take my pills?"), and
+# a guessed past tense ("You alreadied take ...") is worse than the
+# plain reminder.
+_REGULAR = {
+    "lock", "unlock", "close", "turn", "switch", "check", "clean", "wash",
+    "brush", "walk", "charge", "pack", "fill", "empty", "dry", "bolt",
+    "latch", "load", "unload", "shave", "floss", "measure", "apply",
+    "inject", "use", "finish", "start", "remove", "replace", "change",
+}
+
+
+def _past(verb):
+    if verb in _PAST:
+        return _PAST[verb]
+    if verb.endswith("e"):
+        return verb + "d"
+    if len(verb) > 2 and verb.endswith("y") and verb[-2] not in "aeiou":
+        return verb[:-1] + "ied"
+    return verb + "ed"
+
+
+def done_act(question):
+    """The act a done question asks about, said back to her in the past
+    tense, or None when the question does not open "Did I <verb>":
+    "Did I take my night pills?" gives "took your night pills"."""
+    match = re.match(r"^\s*did\s+i\s+([a-z]+)\b(.*)$", question, re.IGNORECASE)
+    if not match:
+        return None
+    verb = match.group(1).lower()
+    if verb not in _PAST and verb not in _REGULAR:
+        return None
+    rest = match.group(2).strip().rstrip("?.! ").strip()
+    words = [
+        _TO_YOU.get(word.lower(), word) for word in rest.split()
+    ] if rest else []
+    return " ".join([_past(verb)] + words)
+
+
+def speak_text(entry, result, now=None):
+    """The spoken line for a firing: the question, the answer, the time
+    it was seen, and the checker's one-sentence observation. Only yes
+    verdicts are spoken."""
     reason = _reason_text(result)
-    if reason:
-        return f"{question} Yes. {reason}"
-    return f"{question} Yes."
+    done = entry.get("kind") == "done"
+    key = ("done" if done else "state") + ("" if reason else "_bare")
+    return SPOKEN_TEMPLATES[key].format(
+        question=_spoken_question(entry),
+        time=_clock(now or datetime.now()),
+        reason=reason,
+    )
 
 
 def return_prompt(entry):
@@ -90,12 +189,15 @@ def return_prompt(entry):
     )
 
 
-def redo_text(witness):
-    """The spoken redo reminder: plain words, and the witnessed time
-    in a 12-hour clock, like 8:05 PM."""
-    moment = datetime.fromisoformat(witness["at"])
-    spoken = moment.strftime("%I:%M %p").lstrip("0")
-    return f"That is already done. You did it at {spoken}."
+def redo_text(witness, entry=None):
+    """The spoken redo reminder: what she did, in her own words said
+    back to her, the witnessed time in a 12-hour clock, and that it
+    was seen. "You took your night pills at 9:05 PM. I saw you." """
+    spoken = _clock(datetime.fromisoformat(witness["at"]))
+    act = done_act(entry["question"]) if entry else None
+    if act:
+        return SPOKEN_TEMPLATES["redo"].format(act=act, time=spoken)
+    return SPOKEN_TEMPLATES["redo_plain"].format(time=spoken)
 
 
 def _owed_look_at(entry):
@@ -154,10 +256,151 @@ def miss_check_text(entry, result):
     return MISS_CHECK_TEMPLATES["reason"].format(question=question, reason=reason)
 
 
+# The refusal: what Mannie says when a safety question is in front of
+# her but the detail that decides it is not ("Is the stove off? I
+# can't tell. I can't see the knobs on the front of the stove from
+# here."). A wrong all-clear on the stove is the failure Truss is
+# designed against, so for a safety question a cannot-tell is worth
+# saying out loud, once the thing itself is confirmed in view. No
+# refusal ever tells her what to do; test_safety.py scans these too.
+REFUSAL_TEMPLATES = {
+    "detail": "{question} I can't tell. I can't see {detail} from here.",
+    "plain": "{question} I can't tell from here.",
+}
+
+# A refusal is spoken at most this often per question, so standing at
+# the stove she hears it once, not on every frame.
+REFUSAL_REST_MINUTES = 10
+
+# After a presence check finds the thing not in view, the next one for
+# that question waits this long.
+ABSENT_REST = timedelta(minutes=1)
+
+# Words that mark the checker's "missing" as a sentence about the
+# photo ("The knobs need to be in view") rather than the thing itself
+# ("the knobs on the front of the stove"). Only a plain noun phrase is
+# spoken inside the refusal; anything else gets the plain line.
+_NOT_A_THING = {
+    "need", "needs", "needed", "must", "should", "would", "could",
+    "visible", "view", "is", "are", "be", "been", "show", "shows",
+    "shown", "see", "seen", "photo", "image", "frame", "picture",
+    "camera", "angle", "closer", "unclear", "not", "no",
+}
+
+
+def refusal_detail(missing):
+    """The checker's "missing" as a phrase that fits "I can't see ...
+    from here", or None when it is not a short plain noun phrase."""
+    if not isinstance(missing, str):
+        return None
+    text = " ".join(missing.split()).strip().rstrip(".!?;:,").strip()
+    # "All of the stove's control knobs, in clear view" names the thing,
+    # then where it should be; only the thing is spoken.
+    text = re.sub(
+        r",?\s*(in (clear |full |plain )?view|clearly visible|visible)$", "", text,
+        flags=re.IGNORECASE,
+    ).strip()
+    if not text:
+        return None
+    words = re.findall(r"[a-z']+", text.lower())
+    if not words or len(words) > 12:
+        return None
+    if _NOT_A_THING.intersection(words) or action_verbs_in(text):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9' ,-]+", text):
+        return None
+    first, _, rest = text.partition(" ")
+    if first[:1].isupper() and first[1:].islower() and first != "I":
+        first = first.lower()
+    detail = f"{first} {rest}".strip()
+    if not detail.lower().startswith(("the ", "a ", "an ", "any ", "all ", "both ", "each ")):
+        detail = "the " + detail
+    return detail
+
+
+def refusal_text(entry, result):
+    """The spoken refusal for a safety question's cannot-tell."""
+    detail = refusal_detail(result.get("missing"))
+    question = _spoken_question(entry)
+    if detail:
+        return REFUSAL_TEMPLATES["detail"].format(question=question, detail=detail)
+    return REFUSAL_TEMPLATES["plain"].format(question=question)
+
+
+def presence_question(thing):
+    """The check that tells "the stove is here but its knobs are not"
+    from "the stove is not here at all"."""
+    return (
+        f"Is any part of the {thing} itself in this photo? Answer yes "
+        f"if the {thing} is in view at all, even partly or from an "
+        f"angle, and no if it is not in the photo."
+    )
+
+
+def _thing_for(entry):
+    """The SAM phrase that names the thing itself ("stove"), or None
+    when there is none. A phrase naming a part ("stove knob") would
+    make the presence check ask about the very detail that is out of
+    view, so a whole-thing phrase is preferred; a part is used only
+    when nothing else was compiled."""
+    try:
+        folder = Path(entry["ref_yes_path"]).parent
+        lines = (folder / "prompts.txt").read_text(encoding="utf-8").splitlines()
+    except (KeyError, TypeError, OSError, UnicodeDecodeError):
+        return None
+    phrases = [
+        line.strip() for line in lines
+        if re.fullmatch(r"[a-z][a-z -]{0,40}", line.strip())
+    ]
+    for phrase in phrases:
+        if not _PART_WORDS.intersection(re.findall(r"[a-z]+", phrase)):
+            return phrase
+    return phrases[0] if phrases else None
+
+
+# Words that name a part of a thing rather than the thing.
+_PART_WORDS = {
+    "knob", "knobs", "dial", "dials", "button", "buttons", "switch",
+    "switches", "handle", "handles", "burner", "burners", "control",
+    "controls", "compartment", "compartments", "lid", "lids", "latch",
+    "bolt", "lock", "lever", "flame",
+}
+
+
+def _refusable(entry, result):
+    """A model's own cannot-tell on a safety state question that named
+    what it lacked. A check that failed (no answer from the model) is
+    never spoken as a refusal: that is not her stove being unreadable."""
+    return (
+        entry.get("kind", "state") == "state"
+        and entry.get("safety") is True
+        and isinstance(result, dict)
+        and result.get("verdict") == "cannot_tell"
+        # "inconsistent" is the stove check catching a yes its own knob
+        # report does not back (the knobs out of view): exactly the case
+        # to say out loud. Any other failure means no answer was made.
+        and result.get("failure") in (None, "", "inconsistent")
+        and isinstance(result.get("missing"), str)
+        and result["missing"].strip() != ""
+    )
+
+
 class CheckLoop:
     def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None,
-                 checks=None, outline_fn=None):
+                 checks=None, outline_fn=None, presence_fn=None,
+                 refusal_minutes=REFUSAL_REST_MINUTES):
         self.store = store
+        # presence_fn(frame_path, question_text) is a plain check with
+        # no reference looks. With one, a safety question's cannot-tell
+        # is spoken as a refusal when the thing itself is in view (see
+        # REFUSAL_TEMPLATES). Without one, every cannot-tell is silent.
+        self.presence_fn = presence_fn
+        self.refusal_rest = timedelta(minutes=refusal_minutes)
+        # When each question's last refusal was spoken. In memory: a
+        # restart can only mean one more refusal, never a missed answer.
+        self._refused = {}
+        # When each question's thing was last checked and not in view.
+        self._absent = {}
         # The check log (a coverage.CheckLog). Without one, no check
         # is counted as watching, and alerts claim nothing was watched.
         self.checks = checks
@@ -198,6 +441,7 @@ class CheckLoop:
     def _check_frame(self, frame_path, due, watch, owed):
         now = self.now_fn()
         fired = []
+        refusable = None
         errors = 0
         for entry in due:
             try:
@@ -232,6 +476,10 @@ class CheckLoop:
                 continue
             if verdict == "yes":
                 fired.append((entry, result))
+            elif refusable is None and _refusable(entry, result):
+                refusable = (entry, result)
+
+        refusal = self._refusal(frame_path, refusable, now)
 
         # The redo watch: done questions holding today's witness are
         # offered the frame under a return prompt, with their own
@@ -306,13 +554,15 @@ class CheckLoop:
         evidence = None
         outline = None
         completed_fired = []
-        if fired or redo is not None or seen:
+        if fired or redo is not None or seen or refusal is not None:
             if fired:
                 first = fired[0][0]
             elif redo is not None:
                 first = redo[0]
-            else:
+            elif seen:
                 first = seen[0][0]
+            else:
+                first = refusal[0]
             try:
                 evidence = self._save_evidence(frame_path, first, now)
             except Exception:
@@ -344,7 +594,7 @@ class CheckLoop:
                 except Exception:
                     errors += 1
                 completed_fired.append(entry)
-                text = speak_text(entry, result)
+                text = speak_text(entry, result, now)
                 speak.append(text)
                 if self.speak_fn is not None:
                     try:
@@ -365,7 +615,7 @@ class CheckLoop:
                     # risk being spoken twice.
                     errors += 1
                 else:
-                    text = redo_text(witness)
+                    text = redo_text(witness, entry)
                     speak.append(text)
                     if self.speak_fn is not None:
                         try:
@@ -390,6 +640,19 @@ class CheckLoop:
                         self.speak_fn(text, entry, evidence)
                     except Exception:
                         errors += 1
+            if refusal is not None:
+                entry, result, text = refusal
+                try:
+                    self._append_refusal_log(entry, result, text, evidence, now)
+                except Exception:
+                    errors += 1
+                self._refused[entry["slug"]] = now
+                speak.append(text)
+                if self.speak_fn is not None:
+                    try:
+                        self.speak_fn(text, entry, evidence)
+                    except Exception:
+                        errors += 1
             if self.outline_fn is not None and completed_fired:
                 try:
                     outline = self.outline_fn(evidence, completed_fired)
@@ -402,11 +665,41 @@ class CheckLoop:
         return {
             "managed": True,
             "fired": [entry["slug"] for entry in completed_fired],
+            "refused": [refusal[0]["slug"]] if refusal is not None else [],
             "speak": speak,
             "evidence": str(evidence) if evidence else None,
             "outline": str(outline) if outline else None,
             "errors": errors,
         }
+
+    def _refusal(self, frame_path, refusable, now):
+        """(entry, result, text) for a refusal to speak on this frame,
+        or None. The cannot-tell is only spoken once a plain presence
+        check says the thing itself is in view, so a frame of the
+        hallway, where the stove is not, stays silent."""
+        if refusable is None or self.presence_fn is None:
+            return None
+        entry, result = refusable
+        last = self._refused.get(entry["slug"])
+        if last is not None and timedelta(0) <= now - last < self.refusal_rest:
+            return None
+        absent = self._absent.get(entry["slug"])
+        if absent is not None and timedelta(0) <= now - absent < ABSENT_REST:
+            return None
+        thing = _thing_for(entry)
+        if thing is None:
+            return None
+        try:
+            seen = self.presence_fn(frame_path, presence_question(thing))
+        except Exception:
+            return None
+        if not isinstance(seen, dict) or seen.get("verdict") != "yes":
+            # Not in view: no presence check for this question for a
+            # minute, so frames away from the stove cost one extra
+            # model call a minute at most.
+            self._absent[entry["slug"]] = now
+            return None
+        return entry, result, refusal_text(entry, result)
 
     # -- evidence and the answer log --------------------------------------
 
@@ -438,14 +731,24 @@ class CheckLoop:
             f.write(line)
 
     def _append_redo_log(self, entry, witness, evidence, now):
+        """The redo line names the witness photo, the one of her doing
+        it, as its evidence, so the History screen shows the moment she
+        was seen; the frame she was caught returning in is kept beside
+        it and named as "now"."""
         day = self._day_dir(now)
+        shown = evidence.name
+        witness_frame = witness.get("frame")
+        if isinstance(witness_frame, str) and (day / witness_frame).is_file():
+            shown = witness_frame
         line = (
             f"{now.strftime('%H:%M:%S')} | {entry['question']} | "
-            f"redo reminder | {redo_text(witness)} | "
-            f"evidence: {evidence.name}\n"
+            f"redo reminder | {redo_text(witness, entry)} | "
+            f"evidence: {shown}"
         )
+        if shown != evidence.name:
+            line += f" | now: {evidence.name}"
         with open(day / "answers.txt", "a") as f:
-            f.write(line)
+            f.write(line + "\n")
 
     def _append_miss_check_log(self, entry, verdict, text, evidence, now):
         day = self._day_dir(now)
@@ -453,6 +756,16 @@ class CheckLoop:
             f"{now.strftime('%H:%M:%S')} | {entry['question']} | "
             f"state check after a missed window | {verdict} | {text} | "
             f"evidence: {evidence.name}\n"
+        )
+        with open(day / "answers.txt", "a") as f:
+            f.write(line)
+
+    def _append_refusal_log(self, entry, result, text, evidence, now):
+        day = self._day_dir(now)
+        line = (
+            f"{now.strftime('%H:%M:%S')} | {entry['question']} | "
+            f"cannot tell | {text} | evidence: {evidence.name} | "
+            f"model: {model_name(result)}\n"
         )
         with open(day / "answers.txt", "a") as f:
             f.write(line)

@@ -972,6 +972,7 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
             "answer" -> Triple("Yes", Truss.lime, Truss.onLime)
             "redo" -> Triple("Reminder", Truss.sky, Truss.onSky)
             "state_check" -> Triple("Checked late", Truss.apricot, Truss.onApricot)
+            "cannot_tell" -> Triple("Can't tell", Truss.sage, Truss.ink)
             else -> Triple("", Truss.sage, Truss.ink)
           }
       val name = item.outline ?: item.evidence
