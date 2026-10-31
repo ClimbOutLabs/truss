@@ -8,7 +8,9 @@ a finish_reason, and reasoning_content beside the content. It says
 cannot_tell for any photo whose bytes contain "blind", answers multi
 checks (three images) yes and single checks no on photo 02 so the
 agreement report has a disagreement, and cuts off the reply on photo
-03's stove check to stand in for a max_tokens truncation.
+03's stove check to stand in for a max_tokens truncation. A stove
+check asks for the knob report too, so the stub adds one that backs
+its verdict ("Is the stove off?": yes is every knob off).
 """
 
 import base64
@@ -52,6 +54,16 @@ class Stub(BaseHTTPRequestHandler):
             reply = {"verdict": v, "reason": "Knobs are visible.", "missing": ""}
         else:
             reply = {"verdict": "yes", "reason": "It is visible.", "missing": ""}
+        schema = body.get("response_format", {}).get("json_schema", {}).get("schema", {})
+        if "knobs_in_view" in schema.get("properties", {}):
+            reply = {
+                "knobs_in_view": {"yes": "all", "no": "all"}.get(reply["verdict"], "none"),
+                "knobs": {
+                    "yes": [{"where": "front", "position": "off"}],
+                    "no": [{"where": "front", "position": "on"}],
+                }.get(reply["verdict"], []),
+                **reply,
+            }
         content = json.dumps(reply)
         if b"photo03" in frame and "stove" in question:
             content, finish = "", "length"

@@ -46,7 +46,7 @@ export HEIC as JPEG first.
 ```
 
 From the Mac, for example:
-`scp -r q01-stove-off schoure@192.168.0.214:~/truss/eval/dataset/`
+`scp -r q01-stove-off <user>@<dgx-ip>:~/truss/eval/dataset/`
 
 The folder can also be named just `q01` or `stove-off`. `eval/dataset/` is
 git-ignored; your photos never go into the repo.
@@ -68,7 +68,8 @@ and waits for Enter. Then it checks every frame and writes the scorecard to
 `eval/runs/first/SCORECARD.md` and `eval/SCORECARD.md`.
 
 - Stop any time with Ctrl-C. The same command picks up where it left off, and
-  retries failed checks (timeouts).
+  retries checks that never got an answer (timeouts). A wrong or malformed reply
+  is kept as scored, not retried.
 - Add more photos later and run the same command: only the new frames are checked.
   A question whose reference photos change is recompiled and redone.
 - `--modes generic,planted,planted-photos` also checks with the two reference

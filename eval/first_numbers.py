@@ -28,7 +28,8 @@ What it does, in order, saying each step as it goes:
 
 Results are kept as they are made (eval/runs/<run>/results.jsonl and
 sam.jsonl). Run the same command again after adding photos and only
-the new frames are checked; failed checks are retried. --fresh starts
+the new frames are checked; checks that never got an answer
+(timeouts, an unreachable server) are retried. --fresh starts
 the run over. A question whose reference photos change is recompiled
 and its planted rows are redone.
 
@@ -36,8 +37,8 @@ On the DGX, with Glimmer serving (./dgx/bringup.sh serve) and SAM
 serving (./dgx/sam/setup.sh serve), the defaults point at both. From
 the laptop instead:
 
-    TRUSS_BASE_URL=http://192.168.0.214:8080/v1 \\
-    TRUSS_SAM_URL=http://192.168.0.214:8090 python3 eval/first_numbers.py
+    TRUSS_BASE_URL=http://<dgx-ip>:8080/v1 \\
+    TRUSS_SAM_URL=http://<dgx-ip>:8090 python3 eval/first_numbers.py
 
 Needs PyYAML (sudo apt install python3-yaml). Nothing else outside the
 standard library.
@@ -378,7 +379,7 @@ def main(argv=None):
         plans.append((mode, mode_rows))
     done_before = {
         (r.get("mode"), r.get("frame_id"))
-        for r in run_eval.read_jsonl(results_path) if not (r.get("failure") or r.get("error"))
+        for r in run_eval.read_jsonl(results_path) if not run_eval.needs_retry(r)
     }
     to_check = sum(1 for mode, mrows in plans for r in mrows if (mode, r["frame_id"]) not in done_before)
     say(

@@ -24,6 +24,22 @@ Two modes:
     multi   the yes-look, the no-look and the current frame as three
             images.
 
+A stove question ("Is the stove off?", "Did I leave the stove on?") is
+decided by its control knobs and nothing else. Its check asks the
+model to report the knobs first (are all of them in view, and where
+each one it can see points) and then the verdict, and the verdict is
+read back against that knob report:
+
+    any visible knob clearly on       the stove is on
+    every knob in view, all off       the stove is off
+    anything else                     cannot_tell; missing names the knobs
+
+A verdict that disagrees with the model's own knob report reads as
+cannot_tell (failure "inconsistent"), so a dark burner, a cold pan or
+a missing flame can never stand in for the knobs, and a stove whose
+knobs are out of frame is never called off. The result's "knobs" field
+carries the report (None for any other question).
+
 A check with no references at all (the guide) runs as single with no
 looks in either mode. A multi check with only one of its two
 references is a setup error and reads cannot_tell.
@@ -36,6 +52,7 @@ cannot_tell whose reason says no check was made.
 """
 
 import os
+import re
 import time
 from pathlib import Path
 
@@ -92,6 +109,88 @@ MULTI_INSTRUCTION = (
     "the two references instead of a generic idea of the scene."
 )
 
+# -- stove questions: the knobs decide ---------------------------------------
+
+STOVE_WORDS = re.compile(r"\b(stoves?|stovetops?|stove top|cooktops?|cook top|hobs?|burners?)\b", re.I)
+OFF_WORD = re.compile(r"\boff\b", re.I)
+ON_WORD = re.compile(r"\bon\b", re.I)
+# A negated phrasing ("Is the stove not on?", "Did I forget to turn the
+# stove off?") flips what a yes means; it is not guessed at.
+NEGATION = re.compile(r"\b(not|never|without|forg[eo]t\w*)\b|n't\b|n’t\b", re.I)
+
+KNOB_POSITIONS = ("off", "on", "unclear")
+KNOBS_IN_VIEW = ("all", "some", "none")
+MAX_KNOBS = 12
+
+KNOB_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "knobs_in_view": {"type": "string", "enum": list(KNOBS_IN_VIEW)},
+        "knobs": {
+            "type": "array",
+            "maxItems": MAX_KNOBS,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "where": {"type": "string"},
+                    "position": {"type": "string", "enum": list(KNOB_POSITIONS)},
+                },
+                "required": ["where", "position"],
+                "additionalProperties": False,
+            },
+        },
+        **VERDICT_SCHEMA["properties"],
+    },
+    "required": ["knobs_in_view", "knobs"] + VERDICT_SCHEMA["required"],
+    "additionalProperties": False,
+}
+
+KNOB_INSTRUCTION = (
+    " This question is about a stove, and only its control knobs decide "
+    "it: a dark burner, a cold pan or no visible flame never does. "
+    "Report the knobs before the verdict. knobs_in_view is all only when "
+    "every control knob the stove has is in the photo and readable, some "
+    "when only part of them are, none when no knob can be seen. knobs "
+    "lists each knob you can see, where it is (such as front left) and "
+    "its position: off when it clearly points to the off mark, on when "
+    "it is clearly turned away from off, unclear otherwise. The stove is "
+    "on when any knob is clearly on; it is off only when every knob is "
+    "in view and every one is off. When the knobs are not all in view or "
+    "any is unclear, and none is clearly on, the verdict is cannot_tell "
+    "and missing names the knobs that would need to be in view."
+)
+
+KNOBS_MISSING = "All of the stove's control knobs, in clear view."
+
+
+def stove_polarity(question):
+    """For a stove question, the state a yes means: "off" ("Is the
+    stove off?") or "on" ("Did I leave the stove on?"). None for any
+    other question, for a stove question that names both or neither,
+    and for a negated one, which are checked the ordinary way."""
+    if not isinstance(question, str) or not STOVE_WORDS.search(question):
+        return None
+    if NEGATION.search(question):
+        return None
+    off, on = bool(OFF_WORD.search(question)), bool(ON_WORD.search(question))
+    if off == on:
+        return None
+    return "off" if off else "on"
+
+
+def knob_reading(in_view, knobs):
+    """What the knob report says about the stove: "on", "off", or None
+    when it does not decide it."""
+    if in_view == "none" or not knobs:
+        return None
+    positions = [k["position"] for k in knobs]
+    if "on" in positions:
+        return "on"
+    if in_view == "all" and all(p == "off" for p in positions):
+        return "off"
+    return None
+
+
 ZERO_USAGE = {"spark_input_tokens": 0, "spark_output_tokens": 0, "sam_images": 0}
 
 # Muse Glimmer thinks before it answers, so the answer needs room after
@@ -118,9 +217,11 @@ def read_looks(folder):
     return text or None
 
 
-def _request(frame_path, question, mode, ref_yes, ref_no, looks):
+def _request(frame_path, question, mode, ref_yes, ref_no, looks, knobs=False):
     """(system, content) for one check."""
     system = SYSTEM_PROMPT
+    if knobs:
+        system += KNOB_INSTRUCTION
     if mode == "multi" and ref_yes is not None:
         system += MULTI_INSTRUCTION
         content = [
@@ -148,6 +249,35 @@ def _reason_text(value):
     return value.strip() if isinstance(value, str) else ""
 
 
+def _decide_on_knobs(polarity, report, verdict, reason, missing, failure):
+    """Hold a stove verdict to the model's own knob report. Returns
+    (verdict, reason, missing, failure). The model may always be more
+    careful than its report (a cannot_tell stands); it may never be
+    less careful, or disagree with it."""
+    reading = knob_reading(report["in_view"], report["knobs"])
+    if verdict == "cannot_tell":
+        if reading is None:
+            missing = missing or KNOBS_MISSING
+        return verdict, reason, missing, failure
+    if reading is None:
+        return (
+            "cannot_tell",
+            "The stove's knobs are not all in clear view, so whether it is off was not judged.",
+            missing or KNOBS_MISSING,
+            failure or "inconsistent",
+        )
+    answer = "yes" if reading == polarity else "no"
+    if verdict != answer:
+        return (
+            "cannot_tell",
+            f"The answer did not match the knobs it reported (the knobs read {reading}), "
+            "so it is not used.",
+            "",
+            failure or "inconsistent",
+        )
+    return verdict, reason, missing, failure
+
+
 def check(
     frame_path,
     question,
@@ -163,13 +293,16 @@ def check(
     "usage", "failure"}; see the module docstring. failure is None for
     an answer the model gave, and otherwise names why no check was made
     (endpoint.EndpointError kinds, plus "unexplained" for a verdict
-    downgraded below), so a cut-off reply is never counted as the
+    given with no reason and "inconsistent" for a stove verdict that
+    its own knob report does not back), so a cut-off reply is never counted as the
     model honestly saying cannot_tell. Never raises.
     """
     started = time.monotonic()
     model = None
     missing = ""
     failure = None
+    knob_report = None
+    polarity = stove_polarity(question)
     usage = dict(ZERO_USAGE)
     if mode == "multi" and ref_yes is not None and ref_no is not None:
         used_looks = "images"
@@ -184,9 +317,15 @@ def check(
             raise endpoint.EndpointError(
                 "Only one of the question's two reference looks was given.", kind="config"
             )
-        system, content = _request(frame_path, question, mode, ref_yes, ref_no, looks)
+        system, content = _request(
+            frame_path, question, mode, ref_yes, ref_no, looks, knobs=polarity is not None
+        )
+        if polarity is None:
+            schema, schema_name = VERDICT_SCHEMA, "verdict"
+        else:
+            schema, schema_name = KNOB_SCHEMA, "stove_verdict"
         reply = endpoint.ask_json(
-            system, content, VERDICT_SCHEMA, "verdict", config=cfg, max_tokens=max_tokens()
+            system, content, schema, schema_name, config=cfg, max_tokens=max_tokens()
         )
         usage["spark_input_tokens"] = reply["_usage"]["input_tokens"]
         usage["spark_output_tokens"] = reply["_usage"]["output_tokens"]
@@ -202,6 +341,17 @@ def check(
             # A verdict that also says something needed was missing is
             # a guess; it reads as cannot_tell and keeps what it lacked.
             verdict = "cannot_tell"
+        if polarity is not None:
+            knob_report = {
+                "in_view": reply["knobs_in_view"],
+                "knobs": [
+                    {"where": _reason_text(k["where"]), "position": k["position"]}
+                    for k in reply["knobs"]
+                ],
+            }
+            verdict, reason, missing, failure = _decide_on_knobs(
+                polarity, knob_report, verdict, reason, missing, failure
+            )
         if verdict != "cannot_tell":
             missing = ""
     except endpoint.EndpointError as e:
@@ -219,6 +369,7 @@ def check(
         "model": model,
         "failure": failure,
         "looks": used_looks,
+        "knobs": knob_report,
         "latency_ms": int((time.monotonic() - started) * 1000),
         "usage": usage,
     }

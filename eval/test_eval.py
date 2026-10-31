@@ -97,6 +97,12 @@ class FakeModel:
                         fake.fail_next -= 1
                         return self._send(500, {"error": "boom"})
                     reply = {"verdict": fake.verdict, "reason": "The knobs point up.", "missing": ""}
+                    schema = body.get("response_format", {}).get("json_schema", {}).get("schema", {})
+                    if "knobs_in_view" in schema.get("properties", {}):
+                        # A stove question: the knob report has to back the verdict.
+                        position = "off" if fake.verdict == "yes" else "on"
+                        reply = dict(reply, knobs_in_view="all",
+                                     knobs=[{"where": "front left", "position": position}])
                 self._send(200, {
                     "choices": [{"message": {"content": json.dumps(reply)}, "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": 1000, "completion_tokens": 100},
@@ -107,7 +113,7 @@ class FakeModel:
         self.url = f"http://127.0.0.1:{self.server.server_port}/v1"
 
     def verdict_calls(self):
-        return [c for c in self.calls if c[0] == "verdict"]
+        return [c for c in self.calls if c[0] != "plant_compile"]
 
 
 class FakeSam:
@@ -217,9 +223,9 @@ def test_build_manifest(root):
 
 
 def test_local_endpoint():
-    check("the DGX's LAN address is local", run_eval.endpoint_is_local("http://192.168.0.214:8080/v1"))
+    check("the DGX's LAN address is local", run_eval.endpoint_is_local("http://192.168.1.20:8080/v1"))
     check("loopback is local", run_eval.endpoint_is_local("http://127.0.0.1:8080/v1"))
-    check("a bare host name is local", run_eval.endpoint_is_local("http://spark-2516:8080/v1"))
+    check("a bare host name is local", run_eval.endpoint_is_local("http://dgx:8080/v1"))
     check("the Meta Model API is not", not run_eval.endpoint_is_local("https://api.meta.ai/v1"))
 
 
@@ -350,6 +356,25 @@ def test_mock_runner(root):
           len(got) == 7 and all(r["error"] and r["verdict"] == "cannot_tell" for r in got))
 
 
+def test_retry_policy(root):
+    out = root / "r.jsonl"
+    rows = [
+        {"frame_id": "a", "mode": "generic", "failure": "timeout", "error": None},
+        {"frame_id": "b", "mode": "generic", "failure": "invalid", "error": None},
+        {"frame_id": "c", "mode": "generic", "failure": "inconsistent", "error": None},
+        {"frame_id": "d", "mode": "generic", "failure": None, "error": "no looks.txt"},
+        {"frame_id": "e", "mode": "generic", "failure": None, "error": None},
+        {"frame_id": "a", "mode": "planted", "failure": "timeout", "error": None},
+    ]
+    out.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    done, kept = run_eval.done_keys(out, "generic")
+    check("a resume retries transport failures and setup errors only",
+          done == {"b", "c", "e"})
+    check("a wrong reply from the model is kept as scored, not re-rolled",
+          {r["frame_id"] for r in kept if r["mode"] == "generic"} == {"b", "c", "e"})
+    check("other modes' rows are left alone", any(r["mode"] == "planted" for r in kept))
+
+
 def test_scorer_terms():
     q = {"q01": {"slug": "stove-off", "safety": True}, "q05": {"slug": "faucet", "safety": False}}
 
@@ -394,6 +419,7 @@ def main():
     card_backup = card.read_bytes() if card.exists() else None
     try:
         for name, fn in [("manifest", test_build_manifest), ("first", test_first_numbers),
+                         ("retry", test_retry_policy),
                          ("refusals", test_refusals), ("mock", test_mock_runner)]:
             sub = root / name
             sub.mkdir()

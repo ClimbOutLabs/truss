@@ -16,9 +16,10 @@ TRUSS_MAX_TOKENS); see checker.py. Mock mode never touches it.
 
 Rows are appended and flushed one at a time, so a long run that stops
 part way keeps what it did. Running again with --resume skips frames
-already answered for this mode and retries the ones whose check
-failed (a timeout, an unreachable endpoint), so a failure is never
-mistaken for the model's answer.
+already answered for this mode and retries the ones that never got an
+answer (a timeout, an unreachable endpoint, a missing looks.txt). A
+reply the model got wrong (not JSON, cut off, inconsistent) is kept as
+scored, never re-rolled.
 
 A frame whose check throws records the error and verdict cannot_tell;
 the run continues. One bad frame never kills a 200-frame run.
@@ -105,13 +106,26 @@ def endpoint_base_url():
     return os.environ.get("TRUSS_BASE_URL") or "http://127.0.0.1:8080/v1"
 
 
+# Failures where no answer reached us: the network, the server, or the
+# setup. These are retried on a resume. A failure the model's own reply
+# caused (invalid, truncated, unexplained, inconsistent) is a scored
+# result and is kept, so a rerun never re-rolls it for a luckier draw.
+RETRY_FAILURES = {"timeout", "unreachable", "http", "refused", "config", "error"}
+
+
+def needs_retry(row):
+    """A row whose check never got an answer: a transport failure, or a
+    setup error (such as a missing looks.txt) that stopped the check."""
+    return bool(row.get("error")) or row.get("failure") in RETRY_FAILURES
+
+
 def done_keys(out_path, mode):
     """Rows already in out_path that need no rerun, and the file's rows
-    with every failed row of this mode dropped (so it is retried)."""
+    with every row of this mode that needs a retry dropped."""
     kept = []
     done = set()
     for row in read_jsonl(out_path):
-        if row.get("mode") == mode and (row.get("failure") or row.get("error")):
+        if row.get("mode") == mode and needs_retry(row):
             continue
         kept.append(row)
         if row.get("mode") == mode:
