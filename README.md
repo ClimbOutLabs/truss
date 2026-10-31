@@ -1,85 +1,282 @@
-# Truss companion app
+# Truss
 
-An Android app that connects Oakley Meta Vanguard glasses to a server on the
-owner's home network. Four screens:
+**Trust the Truss. Your witness for your life.**
 
-- Home: whether the glasses and the laptop are connected, how many questions
-  Mannie is watching, a Look now button for one glasses photo, the Watch
-  hands-free switch, and the last thing Mannie said with the photo it was seen in.
-- Questions: plant a question by typing or saying it, then take its yes look and
-  its no look through the glasses, step by step; plant the bedtime round in one
-  tap; see every question's state and remove one.
-- History: the day's answers from the laptop's log, each with its evidence photo
-  (the outlined copy when SAM made one).
-- Settings: the laptop address (saved in SharedPreferences) and connecting the
-  glasses. Diagnostics underneath keeps the day 1 gates: toolkit and phone
-  versions, ping, one capture with its step-by-step log (also to Logcat tag
-  `Truss`), and the voice in and out tests through the glasses.
+Truss watches for the answers to questions you leave standing around your
+day: "Is the stove off?" "Did I take my night pills?" "Is the front door
+locked?" You plant each question once, with two photos from your own home:
+what yes looks like and what no looks like. As you go about your day wearing
+Meta glasses, the photos they take are checked only against the questions
+that are due. When a photo answers one, Mannie, the voice of Truss, speaks
+first, without being asked, and the photo that answered it is kept on your
+own laptop as evidence. Photos that answer nothing are deleted.
 
-Watch hands-free takes a glasses photo every 15, 30 or 60 seconds and sends it
-to the laptop, which checks it against whatever questions are due. Each photo is
-the ordinary capture flow, so the camera session always ends before an answer is
-spoken, and no photo is taken while Mannie speaks, records, or a question's looks
-are being taken. A photo whose 16 by 16 grey thumbnail is within 8 levels of the
-last one sent, less than two minutes ago, is not sent. Three failed photos in a
-row stop watching. The screen stays on while watching. Every start, stop, sent,
-skipped and failed photo goes into `watch-log.txt` in the app's files folder with
-the battery percent, so a one-hour wear gives the battery cost per hour.
+Built for the Meta Global AI Developer Hackathon (Indie track, "Build for
+Your World"). Every check and every plant-time compile goes to a Meta
+model, and in the demo every one of them runs on hardware in the home. The
+one non-Meta model is Whisper, for speech to text on the laptop; it never
+sees a photo.
 
-The only network destination the app can call is `http://LAPTOP_IP:8792`
-(`GET /`, `POST /capture`, `POST /stt`, `POST /tts`, `POST /plant/question`,
-`POST /plant/bedtime`, `POST /plant/ref`, `GET /questions`, `POST /questions/retire`,
-`GET /answers`, `GET /evidence`, `GET /alerts`, `POST /alerts/ack`). No cloud SDKs, no
-analytics, no crash reporters; the toolkit's own analytics and crash reporting are
-opted out in the manifest, per the toolkit README.
+## Who it is for
 
-## Build and run
+An older woman living alone who forgets: the gas stove, her pills, whether
+the dog was fed. She can look at the stove herself. What fails is trusting
+her own memory of having looked, so she frets for hours or does the thing
+again to be safe. A second dose of the night pills is where the harm is.
 
-1. Open this folder in Android Studio (Narwhal or newer, JDK 17+), or use the Gradle
-   wrapper on a machine with the Android SDK 36 installed.
-2. `local.properties` needs `sdk.dir`, plus `mwdat_application_id` and
-   `mwdat_client_token`. Both toolkit values can be `0` while Developer Mode is on in
-   the Meta AI app; without Developer Mode they come from the Wearables Developer Center.
-3. Build the debug variant, install on the phone, turn Developer Mode on in the Meta AI
-   app, then run the three gates in order and fill in the report from the brief.
+Truss does not sell seeing. Seeing is free. It sells remembering, at the
+moment she is about to do it twice. Her daughter or a caretaker can plant
+the questions for her.
 
-## Where the brief met the toolkit as it is today (checked Oct 26, version 1.0.1)
+## Two kinds of question
 
-- The toolkit is on Maven Central as `com.meta.wearable:mwdat-core` and
-  `mwdat-camera`, version `1.0.1`. There is no GitHub Packages repository and no
-  `gpr.user` / `gpr.token` any more; `mavenCentral()` in `settings.gradle.kts` is enough.
-- The CameraAccess sample is a Compose app, so this app is Compose too, and its
-  registration and permission flow is copied: Android permissions first, then
-  `Wearables.initialize`, registration with `Wearables.startRegistration`, wearable
-  permissions through `Wearables.RequestPermissionContract`, one at a time.
-- There is no separate Wi-Fi join or leave call in toolkit 1.0.1. The session and camera
-  stream are the toolkit's own way onto the glasses' network, and stopping the camera
-  and the session is the leave step. Screen 2 therefore checks whether the laptop is
-  already reachable again before that leave, polls for it afterwards, and records
-  "automatic" or "needed explicit leave" from what actually happened.
-- The sample's photo path is `stream.capturePhoto()` inside a session; the standalone
-  `camera.photo` path is documented as experimental, with no sample code in the repo,
-  so day 1 uses the sample's path. The stream exists only to take the still; the photo
-  is saved on the phone, the session is ended, and only then is anything uploaded.
-- Microphone and speaker follow the brief (plain Android audio, glasses as the
-  Bluetooth SCO communication device), not the toolkit. One upstream catch, GitHub
-  issue 192 on the toolkit repo: opening Bluetooth SCO can end a toolkit session, so
-  this app never holds a toolkit session open during the voice tests; the photo flow
-  always ends its session, and the voice screen says so.
-- Permissions the sample declares that the brief did not list: `BLUETOOTH` (the legacy
-  permission, alongside `BLUETOOTH_CONNECT`) and `CAMERA`. The sample also declares
-  `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE` and `WAKE_LOCK`, but
-  those exist only for its backgrounded video recording service, which this harness
-  does not have, so they are not declared here. The brief's `BLUETOOTH_SCAN`,
-  `ACCESS_FINE_LOCATION` and `NEARBY_WIFI_DEVICES` are declared even though the sample
-  does not declare them, because the brief asked for them.
+- **State questions** ask how the world is now: is the stove off, is the
+  door locked. The current photo answers them.
+- **Done questions** ask about something she did: did I take my night pills.
+  Here the current state can lie (a fed dog's bowl is empty an hour later
+  because he ate), so the answer comes from witnessed history. A done
+  question has a time window, such as 9 to 10 PM. The first time the glasses
+  see the yes-look inside the window, Truss keeps that one photo and its
+  time as the witness. If she comes back to the organizer later in the
+  window, Mannie says once that it is already done, and when. If the window
+  closes with no witness, an alert is raised that survives restarts and
+  clears only when the phone confirms it was spoken.
 
-## Building on the VM this was written on (not needed on a normal machine)
+Truss uses done questions only where the act leaves a trace that does not
+undo itself: a pill organizer compartment that goes empty, a deadbolt that
+turns. A bowl that fills and then empties, or pills taken from a bottle,
+need act recognition, which Truss does not attempt.
 
-This machine denies direct TCP connections and TLS from Java, which breaks both the
-Gradle daemon and normal dependency downloads. The build here therefore runs Gradle
-in-process, offline, against a local Maven mirror fetched with curl into
-`local-maven/` (about 600 MB, safe to delete; it is a cache, not source). The exact
-invocation is in `~/workspace/tools/build-mannie.sh`, with the mirror injected by an
-init script in the Gradle user home, so nothing VM-specific lives in the project files.
-On the owner's machine none of this applies: Android Studio and `./gradlew` work as usual.
+## Safety posture
+
+The failure designed against is a wrong all-clear, above all on the stove
+and the pills.
+
+- **Cannot tell, instead of a guess.** Every check returns `yes`, `no` or
+  `cannot_tell`, with a one-sentence reason naming what in the photo decides
+  it, and what is missing when it cannot tell. A yes or no with no reason
+  is read as cannot tell. A check that fails for any reason (timeout, a
+  reply cut off, invalid JSON) is never a verdict.
+- **Description over verdict.** A missed pills window never says "you
+  didn't take your pills": she may have taken them with the glasses off,
+  and that sentence is how Truss would cause the double dose it exists to
+  prevent. It tells her where to look instead ("Check the Tuesday PM
+  compartment first, before you act on this"), and a test fails the build
+  if any alert sentence holds an action verb such as take, turn, feed or
+  lock (`truss-server/test_safety.py`).
+- **Coverage is stated.** A missed-window alert says how much of the window
+  was actually watched, counted from the photos that were really checked:
+  the whole window, from 9:10 to 9:50, or not at all.
+- **The evidence is always kept with the answer**, and every line in the
+  answer log names the model that made the call.
+
+Truss reduces fretting and redoing. It is not the last line of defense on a
+stove.
+
+## Architecture
+
+```
+ Meta glasses            Android phone                 Laptop (home)                  The DGX (home)
+ (Oakley Meta    BT  ┌──────────────────┐  LAN  ┌──────────────────────────┐  LAN  ┌──────────────────────────┐
+  Vanguard)  ──────► │ Truss app        │ ────► │ truss-server             │ ────► │ llama-server             │
+  photo + mic        │ Wearables toolkit│ HTTP  │ Python standard library  │ HTTP  │ Muse Glimmer 30B (GGUF)  │
+             ◄────── │ capture, diff,   │ ◄──── │ question store (files)   │ ◄──── │ OpenAI-compatible API    │
+  speaker            │ speak, alerts    │       │ check loop, done windows │       ├──────────────────────────┤
+                     └──────────────────┘       │ alerts, evidence, log    │ ────► │ SAM 3.1 service          │
+                                                │ Whisper STT, local TTS   │       │ (evidence outline)       │
+                                                └──────────────────────────┘       └──────────────────────────┘
+```
+
+- **Glasses and phone (`app/`).** An Android app on Meta's Wearables Device
+  Access Toolkit takes photos and voice from the glasses over Bluetooth and
+  sends them to the laptop. The camera session always ends before any
+  answer is spoken, because the toolkit session and the Bluetooth audio
+  channel cannot be held open together. Watch hands-free takes a photo every
+  15, 30 or 60 seconds and skips one that is nearly identical to the last
+  photo sent. The app talks only to the laptop: no cloud SDKs, no analytics.
+  See [`app/README.md`](app/README.md).
+- **Laptop server (`truss-server/`).** Python standard library only, no
+  database, no cloud account. Each question is a plain folder: its words,
+  the yes and no reference photos, its watch pattern, and two files written
+  at plant time (below). Answers go to a plain-text log per day, with the
+  evidence photos beside it. Only questions that are due ever see a photo,
+  and a question rests once it has fired. See
+  [`truss-server/README.md`](truss-server/README.md).
+- **Checking.** One OpenAI-compatible `chat/completions` endpoint with
+  image inputs and a strict JSON schema reply. By default it is Muse
+  Glimmer 30B under llama.cpp's `llama-server` on an NVIDIA DGX Spark on
+  the home network. The same code runs against the Meta Model API by
+  changing two settings (`TRUSS_BASE_URL`, `TRUSS_MODEL`).
+- **Plant-time compile.** When a question has both reference photos, one
+  call to the same model writes `looks.txt` (in words, what tells this
+  home's yes-look from its no-look, such as the knob positions) and
+  `prompts.txt` (two or three short noun phrases for SAM: `stove`,
+  `pill organizer`). Checks then read the current photo plus `looks.txt`.
+- **Evidence outline.** When a question fires, SAM 3.1 on the DGX can find
+  the object by those phrases and save a copy of the evidence photo with
+  the object outlined. It runs in the background and can never delay or
+  stop a spoken answer.
+- **Voice.** Whisper (whisper.cpp) on the laptop for speech to text, the
+  laptop's own text to speech back through the phone to the glasses.
+
+### Where your data goes
+
+Photos go from the glasses to the phone to the laptop, and from the laptop
+to the DGX for the check. All three are in the home. A photo no question
+fires on is deleted after its check. Nothing is uploaded to any cloud
+service in the demo configuration.
+
+## Meta models used
+
+| Model | Where it runs | What it does | Status |
+|---|---|---|---|
+| **Muse Glimmer 30B** (open weights, `meta-models/Muse-Glimmer-30B-GGUF`, Q4_K_M with its mmproj and dflash drafter) | Locally, llama.cpp `llama-server` on an NVIDIA DGX Spark | Every check, and the plant-time compile | Running; answers real glasses photos end to end |
+| **SAM 3.1** (open weights, `facebook/sam3.1`; SAM 3 as fallback) | Locally, a small HTTP service on the same DGX (`dgx/sam/`) | Outlines the object in kept evidence photos | <!-- TODO: SAM acceptance result --> _Kit built; live result pending_ |
+| **Muse Spark 1.3** (Meta Model API, standard tier `muse-spark-1.3`) | Meta's API | Optional: the same checker code with different settings; the eval harness's default checker on main | <!-- TODO: used or not --> _Not used in the demo_ |
+
+Rules Truss holds itself to:
+
+- No non-Meta model makes any check in the demo or the eval. Whisper
+  (whisper.cpp, local) turns her spoken words into text and never sees a
+  photo.
+- Never the Muse Spark contributor tier, which trains on what it is sent.
+  Any model name containing `contributor` is refused in code before
+  anything is sent.
+- An API key is never sent over plain HTTP to another machine, so the
+  local `llama-server` runs without one.
+
+How to bring the models up on a DGX Spark:
+[`dgx/RUNBOOK.md`](dgx/RUNBOOK.md) (Glimmer) and
+[`dgx/sam/RUNBOOK.md`](dgx/sam/RUNBOOK.md) (SAM).
+
+## Eval
+
+`eval/` is a harness of 20 staged household questions, five of them safety
+questions (stove, oven, front door, tonight's pills, hair straightener)
+where a false yes is a false all-clear. Frames are split into tuning and
+held-out; prompts are tuned on tuning only, and numbers are reported on
+held-out. The false all-clear rate on safety questions is reported as its
+own headline number, never averaged into overall accuracy. One question is
+a cannot-tell probe, where a confident answer is wrong.
+
+The headline comparison is generic questions (the question alone) against
+planted questions (with the home's own reference looks).
+
+<!-- TODO: fill from the F v0/v1 run. Mock numbers in eval/SCORECARD.md only validate the harness. On main, eval/checker.py calls muse-spark-1.3 at the Meta Model API (plus a mock mode); set the header below to the model F v0 actually runs. -->
+
+| Held-out, _model TBD_ | Generic | Planted |
+|---|---|---|
+| Accuracy | _TBD_ | _TBD_ |
+| Safety false all-clear rate | _TBD_ | _TBD_ |
+| Miss rate | _TBD_ | _TBD_ |
+| Cannot-tell rate | _TBD_ | _TBD_ |
+| Frames (n) | _TBD_ | _TBD_ |
+
+## Cost card
+
+Truss is designed so that the expensive thing, a model looking at a photo,
+happens rarely. The gates that keep photos away from the model are all free:
+
+1. **Due-question gating.** A photo is checked only against questions that
+   are due now (an interval, a nightly time, or a done window). With
+   nothing due, no model call is made.
+2. **Rest once fired.** A question that has answered rests until its next
+   due time.
+3. **On-phone diff.** The phone skips a photo whose 16 by 16 grey
+   thumbnail is within 8 levels of the last one sent in the past two
+   minutes.
+
+A photo-a-second design was costed and rejected.
+
+**Method.** Cost per day = checks per day × cost per check. In the demo
+configuration the cost per check is the DGX's electricity for the seconds
+the check takes; there is no per-call fee. For comparison, the same check
+over the Meta Model API is priced from its measured tokens at Muse Spark
+1.3 standard rates ($1.25 per million input tokens, $4.25 per million
+output tokens), and an outline over the API at SAM 3.1's $2.50 per 1,000
+images. On a worn device, battery bounds watching before dollars do, so
+wear-hours per charge sits on the card next to cost per day.
+
+<!-- TODO: fill from the eval run (latency, tokens) and the one-hour wear (watch-log.txt). -->
+
+| | Measured |
+|---|---|
+| Checks per day (bedtime round + daytime questions) | _TBD_ |
+| Time per check on the DGX, p50 / p95 | _TBD_ |
+| Tokens per check, in / out | _TBD_ |
+| Cost per day, local (electricity) | _TBD_ |
+| Cost per day, same checks over the Meta Model API | _TBD_ |
+| Photos sent per hour of wear, and skipped by the diff | _TBD_ |
+| Glasses battery per hour of wear at the demo cadence | _TBD_ |
+
+In the first live end-to-end run, a glasses photo took about 11 to 13
+seconds from arriving at the laptop to Glimmer's verdict, and about
+15 seconds to Mannie speaking.
+
+## Repository
+
+| Path | What |
+|---|---|
+| `app/` | Android companion app (Kotlin, Compose, Meta Wearables toolkit) |
+| `truss-server/` | Laptop server: question store, check loop, done windows, alerts, voice, evidence |
+| `dgx/` | Bring-up and bench scripts for Muse Glimmer 30B under `llama-server` |
+| `dgx/sam/` | Local SAM 3.1 service, its setup script and acceptance run |
+| `eval/` | Eval harness: question set, capture tool, runner, scorer |
+| `REVIEW.md` | The review checklist every change goes through |
+
+## Run it
+
+You need an Android phone, Meta glasses with Developer Mode on in the Meta
+AI app, a Mac on the same network (the server uses macOS `say`,
+`afconvert` and the `en0` interface), and a machine that can serve Muse
+Glimmer 30B (an NVIDIA DGX Spark here).
+
+1. Serve Glimmer: `./dgx/bringup.sh all` on the DGX
+   ([`dgx/RUNBOOK.md`](dgx/RUNBOOK.md)).
+2. Optional, the evidence outline: `./dgx/sam/setup.sh all` on the DGX
+   ([`dgx/sam/RUNBOOK.md`](dgx/sam/RUNBOOK.md)).
+3. On the Mac:
+
+   ```bash
+   export TRUSS_BASE_URL=http://<dgx-ip>:8080/v1
+   python3 truss-server/server.py
+   ```
+
+   For speech to text, `brew install whisper-cpp` and the model file in
+   [`truss-server/README.md`](truss-server/README.md).
+4. Build and install the app ([`app/README.md`](app/README.md)), enter
+   the laptop's address under Settings, connect the glasses, and plant a
+   question.
+
+Tests are plain Python, standard library only: run any
+`truss-server/test_*.py` with `python3`.
+
+## Beyond the demo
+
+- **Sensor-agnostic.** Nothing in the server knows the photos come from
+  glasses: a question, its two looks, and a frame. The worn, first-person
+  viewpoint is the point of Truss, because it sees what she sees where she
+  is, but the same store and checks would take frames from any camera.
+- **The guide.** `truss-server/guide.py` is an over-the-shoulder mode: a
+  job stated as steps, each step a question a glance can settle, spoken one
+  at a time and checked before the next. It checks only presence, absence,
+  count, position and order, never a safety verdict, keeps no photos, and
+  is not in the demo.
+
+## Built during the event
+
+All code in this repository was written during the hackathon, which began
+October 26, 2026; the first commit is from October 27. Pre-existing pieces it relies on:
+
+- Meta's Wearables Device Access Toolkit; the app's registration and
+  permission flow follows its CameraAccess sample.
+- llama.cpp, Whisper (whisper.cpp), and the SAM 3 code from
+  `facebookresearch/sam3`, installed by the scripts, not vendored.
+- Hanken Grotesk, under the SIL Open Font License
+  ([`third_party/fonts/`](third_party/fonts/)).
+- Before Glimmer was running locally, early end-to-end checks went through
+  a bridge to the author's own local assistant, a separate project from
+  before the event that runs a non-Meta model (`truss-server/aman_check.py`,
+  and the spike script `eval/aman_truss_spike.py`).
+  It is off by default, never used in the demo or the eval, and nothing it
+  answered counts as a Truss result.
