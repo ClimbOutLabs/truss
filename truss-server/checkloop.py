@@ -50,6 +50,7 @@ be wired in without the loop knowing anything about models or keys.
 
 import re
 import shutil
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -73,6 +74,20 @@ def _reason_text(result):
     as no reason, rather than breaking the answer it came with."""
     reason = result.get("reason")
     return reason.strip() if isinstance(reason, str) else ""
+
+
+def _print_check(entry, verdict, reason, started):
+    """One server log line per question checked on a frame, so a live
+    test shows what each question saw, not only what fired."""
+    seconds = time.monotonic() - started
+    try:
+        print(
+            f"  check {entry.get('slug')}: {verdict or 'no verdict'} "
+            f"({seconds:.1f} s) {' '.join(str(reason).split())}"[:400],
+            flush=True,
+        )
+    except Exception:
+        pass
 
 
 def _clock(moment):
@@ -443,18 +458,24 @@ class CheckLoop:
         fired = []
         refusable = None
         errors = 0
+        if not due:
+            print("  check: no question is due on this frame (each waits for its gap)", flush=True)
         for entry in due:
+            started = time.monotonic()
             try:
                 result = self.check_fn(frame_path, entry)
                 if not isinstance(result, dict):
                     raise TypeError("check returned no verdict")
                 verdict = result.get("verdict")
-            except Exception:
+            except Exception as e:
                 # A failed check is treated like a cannot_tell: silent,
                 # never spoken, and the question is still marked checked
                 # so a broken checker cannot hot-loop on every frame.
                 result, verdict = {}, None
                 errors += 1
+                _print_check(entry, None, f"check failed: {e}", started)
+            else:
+                _print_check(entry, verdict, _reason_text(result), started)
             if (
                 entry.get("kind") == "done"
                 and verdict in ("yes", "no", "cannot_tell")
