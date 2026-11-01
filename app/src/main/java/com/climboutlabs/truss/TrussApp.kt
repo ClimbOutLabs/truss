@@ -527,6 +527,12 @@ private fun HeroCard(
   val title: String
   val subtitle: String
   when {
+    state.watching && state.watchAwaySince != null -> {
+      title = "Waiting for the glasses"
+      subtitle =
+          "They went quiet at ${clock12(state.watchAwaySince)}: off, folded, too warm or low on " +
+              "battery. Watching carries on by itself when they are back."
+    }
     state.watching -> {
       title = "Watching"
       subtitle =
