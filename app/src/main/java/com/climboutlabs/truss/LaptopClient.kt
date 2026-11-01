@@ -27,6 +27,7 @@ data class QuestionInfo(
     val hasRefNo: Boolean,
     val kind: String = "state",
     val answeredAt: String? = null,
+    val safety: Boolean = false,
 )
 
 /** One logged answer as GET /answers reports it. kind is "answer", "redo",
@@ -120,6 +121,12 @@ class LaptopClient(laptopIp: String) {
     return JSONObject(body)
   }
 
+  /** POST /plant/finish: start a planting question standing with the looks it has
+   * (the yes look alone, or none), for a question its words decide, like a number on
+   * a display. Returns the reply: slug, state, and the next line to show. */
+  fun finishPlanting(slug: String): JSONObject =
+      JSONObject(postJson("/plant/finish", JSONObject().put("slug", slug)))
+
   /** GET /questions: the standing questions and their states. */
   fun getQuestions(): List<QuestionInfo> {
     val array = JSONObject(getJson("/questions")).getJSONArray("questions")
@@ -133,6 +140,7 @@ class LaptopClient(laptopIp: String) {
           hasRefNo = item.getBoolean("has_ref_no"),
           kind = item.optString("kind", "state"),
           answeredAt = item.optNullableString("answered_at"),
+          safety = item.optBoolean("safety", false) || item.optString("kind", "state") == "done",
       )
     }
   }
