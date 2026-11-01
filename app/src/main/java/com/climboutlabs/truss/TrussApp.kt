@@ -48,6 +48,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1014,41 +1015,44 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
       }
     }
     state.history.forEach { item ->
-      val (label, bg, fg) =
-          when (item.kind) {
-            "answer" -> Triple("Yes", Truss.lime, Truss.onLime)
-            "redo" -> Triple("Reminder", Truss.sky, Truss.onSky)
-            "state_check" -> Triple("Checked late", Truss.apricot, Truss.onApricot)
-            "cannot_tell" -> Triple("Can't tell", Truss.sage, Truss.ink)
-            else -> Triple("", Truss.sage, Truss.ink)
+      // Keyed by the answer itself, so an open photo stays with its own row when the list reloads.
+      key(state.historyDay, item) {
+        val (label, bg, fg) =
+            when (item.kind) {
+              "answer" -> Triple("Yes", Truss.lime, Truss.onLime)
+              "redo" -> Triple("Reminder", Truss.sky, Truss.onSky)
+              "state_check" -> Triple("Checked late", Truss.apricot, Truss.onApricot)
+              "cannot_tell" -> Triple("Can't tell", Truss.sage, Truss.ink)
+              else -> Triple("", Truss.sage, Truss.ink)
+            }
+        val name = item.outline ?: item.evidence
+        val photo = name?.let { state.historyPhotos["${state.historyDay}/$it"] }
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Truss.card).border(1.dp, Truss.line, RoundedCornerShape(24.dp)).padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+          if (photo != null) {
+            var open by remember { mutableStateOf(false) }
+            Photo(
+                photo,
+                "Evidence photo for ${item.question}. Tap to open.",
+                Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).clickable { open = true },
+            )
+            if (open) {
+              PhotoViewer(photo, item.text.ifBlank { item.question }, onClose = { open = false })
+            }
+          } else {
+            IconTile(topicIcon(item.question), Truss.sage, Truss.muted, size = 84.dp, shape = RoundedCornerShape(16.dp))
           }
-      val name = item.outline ?: item.evidence
-      val photo = name?.let { state.historyPhotos["${state.historyDay}/$it"] }
-      Row(
-          modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Truss.card).border(1.dp, Truss.line, RoundedCornerShape(24.dp)).padding(12.dp),
-          horizontalArrangement = Arrangement.spacedBy(14.dp),
-      ) {
-        if (photo != null) {
-          var open by remember { mutableStateOf(false) }
-          Photo(
-              photo,
-              "Evidence photo for ${item.question}. Tap to open.",
-              Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).clickable { open = true },
-          )
-          if (open) {
-            PhotoViewer(photo, item.text.ifBlank { item.question }, onClose = { open = false })
-          }
-        } else {
-          IconTile(topicIcon(item.question), Truss.sage, Truss.muted, size = 84.dp, shape = RoundedCornerShape(16.dp))
-        }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(clock12(item.time) ?: "", style = MaterialTheme.typography.labelMedium, color = Truss.muted)
-            if (label.isNotEmpty()) Chip(label, bg, fg)
-          }
-          Text(item.text.ifBlank { item.question }, style = MaterialTheme.typography.titleSmall)
-          if (item.text.isNotBlank()) {
-            Text(item.question, style = MaterialTheme.typography.bodySmall, color = Truss.muted)
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              Text(clock12(item.time) ?: "", style = MaterialTheme.typography.labelMedium, color = Truss.muted)
+              if (label.isNotEmpty()) Chip(label, bg, fg)
+            }
+            Text(item.text.ifBlank { item.question }, style = MaterialTheme.typography.titleSmall)
+            if (item.text.isNotBlank()) {
+              Text(item.question, style = MaterialTheme.typography.bodySmall, color = Truss.muted)
+            }
           }
         }
       }

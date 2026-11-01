@@ -1319,19 +1319,22 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private fun showError(e: Exception) {
     val message = e.message ?: e.toString()
     Log.e(TAG, message, e)
-    _uiState.update { it.copy(lastError = plainError(message)) }
+    _uiState.update { it.copy(lastError = plainError(e, message)) }
   }
 
   /** Network errors in plain words: "Failed to connect to /192.168.0.5:8792" reads as
    * the laptop not answering, with the likely reason. */
-  private fun plainError(message: String): String {
-    val connect = Regex("""(?:Failed to connect to|connect to) /?([0-9.]+)(?::(\d+))?""").find(message)
+  private fun plainError(e: Exception, message: String): String {
+    val connect =
+        if (e is java.net.ConnectException || e is java.net.NoRouteToHostException) {
+          Regex("""(?:Failed to connect to|connect to) /?([0-9.]+)(?::(\d+))?""").find(message)
+        } else null
     if (connect != null) {
       val (ip, port) = connect.destructured
       return "Can't reach the laptop at $ip${if (port.isNotEmpty()) ":$port" else ""}. " +
           "Is the Truss server running, and is the phone on the same Wi-Fi?"
     }
-    if (message.contains("timeout", ignoreCase = true) || message.contains("timed out", ignoreCase = true)) {
+    if (e is java.net.SocketTimeoutException) {
       return "The laptop took too long to answer. $message"
     }
     return message
