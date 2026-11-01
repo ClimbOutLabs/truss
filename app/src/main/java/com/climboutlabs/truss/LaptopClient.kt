@@ -27,6 +27,7 @@ data class QuestionInfo(
     val hasRefNo: Boolean,
     val kind: String = "state",
     val answeredAt: String? = null,
+    val safety: Boolean = false,
 )
 
 /** One logged answer as GET /answers reports it. kind is "answer", "redo",
@@ -139,6 +140,7 @@ class LaptopClient(laptopIp: String) {
           hasRefNo = item.getBoolean("has_ref_no"),
           kind = item.optString("kind", "state"),
           answeredAt = item.optNullableString("answered_at"),
+          safety = item.optBoolean("safety", false) || item.optString("kind", "state") == "done",
       )
     }
   }

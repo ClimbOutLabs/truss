@@ -28,7 +28,7 @@ from checkloop import CheckLoop
 from guide import Guide
 import history
 from plant_compile import Compiler, compile_question, needs_compile
-from questions import QuestionStore
+from questions import QuestionStore, SafetyLooksNeeded
 
 # Get the Wi-Fi interface address
 def get_wifi_address():
@@ -702,6 +702,9 @@ class TrussHandler(BaseHTTPRequestHandler):
             return
         try:
             state = STORE.start_standing(slug)
+        except SafetyLooksNeeded as e:
+            self.send_error(409, str(e))
+            return
         except KeyError as e:
             self.send_error(404, str(e))
             return

@@ -54,6 +54,10 @@ from pathlib import Path
 from wording import action_verbs_in
 
 
+class SafetyLooksNeeded(Exception):
+    """A safety or done question cannot start standing without both looks."""
+
+
 def slugify(text):
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return (slug[:48].strip("-") or "question")
@@ -622,9 +626,15 @@ class QuestionStore:
             watch = self._read_watch(slug)
             if not self._watch_ok(watch) or not (folder / "question.txt").is_file():
                 raise KeyError(f"No question named {slug}.")
-            if watch["state"] == "planting":
-                watch["state"] = "standing"
-                self._write_watch(slug, watch)
+            if watch["state"] != "planting":
+                return watch["state"]
+            kind = _clean_kind(watch.get("kind"))
+            if kind == "done" or _clean_safety(watch.get("safety"), kind):
+                # A wrong word on the stove or the pills does harm: a
+                # safety or done question stands only on both its looks.
+                raise SafetyLooksNeeded("A safety question needs both its looks.")
+            watch["state"] = "standing"
+            self._write_watch(slug, watch)
             return watch["state"]
 
     def _next_seq(self):

@@ -902,13 +902,16 @@ private fun PlantingCard(
       }
     }
     // For a question its words decide, like a number on a display, where a
-    // no look (or any look) cannot be staged.
-    TextButton(onClick = onFinish, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-      Text(
-          if (needsYes) "Start watching with no looks" else "Start watching without a no look",
-          style = MaterialTheme.typography.labelLarge,
-          color = Truss.onApricot,
-      )
+    // no look (or any look) cannot be staged. Never for a safety question: the
+    // laptop refuses it, since a wrong word on the stove or the pills does harm.
+    if (planting != null && !planting.safety) {
+      TextButton(onClick = onFinish, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+        Text(
+            if (needsYes) "Start watching with no looks" else "Start watching without a no look",
+            style = MaterialTheme.typography.labelLarge,
+            color = Truss.onApricot,
+        )
+      }
     }
   }
 }

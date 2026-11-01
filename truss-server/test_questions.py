@@ -206,6 +206,19 @@ def test_http():
             status, _ = post(base + "/plant/finish", b"{}", "application/json")
             check("finish with no slug is 400", status == 400)
 
+            # Safety and done questions stand only on both looks.
+            for payload in ({"text": "Is the stove off?", "safety": True},
+                            {"text": "Did I take my pills?", "kind": "done"}):
+                status, body = post(base + "/plant/question",
+                                    json.dumps(payload).encode(), "application/json")
+                held = body["slug"]
+                post(f"{base}/plant/ref?slug={held}&kind=yes", img, ctype)
+                status, _ = post(base + "/plant/finish",
+                                 json.dumps({"slug": held}).encode(), "application/json")
+                check(f"finish refused for {payload['text']}", status == 409)
+                check(f"{payload['text']} stays planting",
+                      server_module.STORE.get(held)["state"] == "planting")
+
             # The check for a one-look question sends no reference looks.
             seen = {}
 
