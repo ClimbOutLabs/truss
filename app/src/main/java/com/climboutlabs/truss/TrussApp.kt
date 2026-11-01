@@ -1019,7 +1019,20 @@ private fun SettingsScreen(
           style = MaterialTheme.typography.bodySmall,
           color = Truss.muted,
       )
-      OutlineBigButton("Check connection", TrussIcons.Refresh, viewModel::checkLaptopNow, modifier = Modifier.fillMaxWidth())
+      OutlineBigButton(
+          if (state.laptopCheckBusy) "Checking..." else "Check connection",
+          TrussIcons.Refresh,
+          viewModel::checkLaptopNow,
+          enabled = !state.laptopCheckBusy,
+          modifier = Modifier.fillMaxWidth(),
+      )
+      state.laptopCheck?.let { line ->
+        Text(
+            line,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (state.laptopReachable == false) Truss.onApricot else Truss.muted,
+        )
+      }
 
       HorizontalDivider(color = Truss.sage, modifier = Modifier.padding(vertical = 4.dp))
 
@@ -1033,9 +1046,12 @@ private fun SettingsScreen(
               color = Truss.muted,
           )
         }
-        TextButton(onClick = onConnectGlasses, enabled = state.sdkReady) {
+        TextButton(onClick = onConnectGlasses) {
           Text(if (state.glassesReady) "Reconnect" else "Connect", style = MaterialTheme.typography.labelLarge, color = Truss.forest)
         }
+      }
+      state.glassesNote?.let { note ->
+        Text(note, style = MaterialTheme.typography.bodySmall, color = Truss.muted)
       }
       if (!state.sdkReady) {
         Text(stringResource(R.string.why_bluetooth), style = MaterialTheme.typography.bodySmall, color = Truss.muted)

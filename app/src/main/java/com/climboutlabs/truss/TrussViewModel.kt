@@ -20,6 +20,7 @@ import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 import com.meta.wearable.dat.core.selectors.DeviceSelector
 import com.meta.wearable.dat.core.session.DeviceSessionState
+import com.meta.wearable.dat.core.types.DeviceSessionError
 import com.meta.wearable.dat.core.types.DeviceIdentifier
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
@@ -42,6 +43,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.merge
 
 data class TrussUiState(
     val laptopIp: String = "",
@@ -53,6 +58,10 @@ data class TrussUiState(
     val lastError: String? = null,
     val pingResult: String? = null,
     val pingBusy: Boolean = false,
+    // Settings feedback: the last manual laptop check, and what Connect or Reconnect did.
+    val laptopCheckBusy: Boolean = false,
+    val laptopCheck: String? = null,
+    val glassesNote: String? = null,
     val photoBusy: Boolean = false,
     val photoLog: List<String> = emptyList(),
     val photo: Bitmap? = null,
@@ -153,8 +162,43 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   private fun laptopClient(): LaptopClient = LaptopClient(_uiState.value.laptopIp)
 
-  fun startRegistration(activity: Activity) {
-    Wearables.startRegistration(activity)
+  /**
+   * The Connect or Reconnect button. Registering again while the glasses are already
+   * registered and in range does nothing in the toolkit, so that case only says so;
+   * otherwise it starts registration through the Meta AI app. Every press leaves a
+   * line on screen saying what happened.
+   */
+  fun connectGlasses(activity: Activity) {
+    val now = _uiState.value
+    val names = now.deviceNames.joinToString()
+    val note =
+        when {
+          !now.sdkReady -> "Allow Bluetooth for Truss first, then try again."
+          now.registrationState == RegistrationState.REGISTERED && now.deviceNames.isNotEmpty() ->
+              "Already connected to $names. Nothing to redo."
+          now.registrationState == RegistrationState.REGISTERING ->
+              "Already connecting. Finish it in the Meta AI app."
+          now.registrationState == RegistrationState.UNREGISTERING ->
+              "The glasses are being removed. Try again in a moment."
+          now.registrationState == RegistrationState.UNAVAILABLE ->
+              "The Meta AI app isn't ready. Open it, check the glasses are paired there, then try again."
+          now.registrationState == RegistrationState.REGISTERED ->
+              "Truss is registered, but no glasses are in range. Turn them on and wear them; " +
+                  "they reconnect on their own. Asking the Meta AI app again as well."
+          else -> "Opening the Meta AI app to connect the glasses."
+        }
+    _uiState.update { it.copy(glassesNote = note) }
+    val start =
+        now.sdkReady &&
+            (now.registrationState == RegistrationState.AVAILABLE ||
+                (now.registrationState == RegistrationState.REGISTERED && now.deviceNames.isEmpty()))
+    if (start) {
+      try {
+        Wearables.startRegistration(activity)
+      } catch (e: Exception) {
+        _uiState.update { it.copy(glassesNote = "Couldn't open the Meta AI app: ${e.message ?: e}") }
+      }
+    }
   }
 
   /** Called by MainActivity once the Android permissions are granted, as in the sample. */
@@ -165,7 +209,22 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     _uiState.update { it.copy(sdkReady = true) }
     viewModelScope.launch {
       Wearables.registrationState.collect { value ->
-        _uiState.update { it.copy(registrationState = value) }
+        _uiState.update {
+          // Once a connect attempt lands, replace its "opening" line with the outcome.
+          val note =
+              if (it.glassesNote != null && value == RegistrationState.REGISTERED &&
+                  it.registrationState != RegistrationState.REGISTERED) {
+                "Registered with the glasses."
+              } else {
+                it.glassesNote
+              }
+          it.copy(registrationState = value, glassesNote = note)
+        }
+      }
+    }
+    viewModelScope.launch {
+      Wearables.registrationErrorStream.collect { error ->
+        _uiState.update { it.copy(glassesNote = "Connecting didn't work: $error") }
       }
     }
     viewModelScope.launch {
@@ -280,6 +339,25 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  /** What the person should do about a session error, in plain words. */
+  private fun sessionErrorAdvice(error: DeviceSessionError): String =
+      when (error) {
+        DeviceSessionError.DAT_APP_ON_THE_GLASSES_UPDATE_REQUIRED,
+        DeviceSessionError.INSUFFICIENT_SDK_VERSION ->
+            "The glasses need a software update before Truss can use the camera. In the Meta AI app, " +
+                "open Devices, pick the glasses, then Settings, then General and Software update. " +
+                "Keep the glasses in their case on charge until it finishes."
+        DeviceSessionError.THERMAL_CRITICAL, DeviceSessionError.THERMAL_EMERGENCY ->
+            "The glasses are too warm for the camera. Let them cool for a few minutes."
+        DeviceSessionError.BATTERY_CRITICAL, DeviceSessionError.PEAK_POWER_SHUTDOWN ->
+            "The glasses battery is too low for the camera. Charge them and try again."
+        DeviceSessionError.SESSION_ALREADY_EXISTS ->
+            "Another app is using the glasses camera. Close the camera in the Meta AI app and try again."
+        DeviceSessionError.NO_ELIGIBLE_DEVICE, DeviceSessionError.DEVICE_DISCONNECTED ->
+            "The glasses are not reachable. Put them on, make sure they are on, and try again."
+        else -> "The glasses session failed: ${error.description}."
+      }
+
   private suspend fun runCapture(
       requestPermission: suspend (Permission) -> PermissionStatus,
       startedAt: Long,
@@ -323,16 +401,38 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     var camera: com.meta.wearable.dat.camera.Camera? = null
     var errorWatch: Job? = null
     try {
+      // The first session error ends the wait below at once, with a plain
+      // instruction, instead of a bare 15 second timeout.
+      val firstError = CompletableDeferred<DeviceSessionError>()
       errorWatch =
           viewModelScope.launch {
-            activeSession.errors.collect { error -> photoLog("Session error: ${error.description}") }
+            activeSession.errors.collect { error ->
+              photoLog("Session error: ${error.description}")
+              firstError.complete(error)
+            }
           }
       activeSession.start()
-      val started =
+      val outcome =
           withTimeoutOrNull(STEP_TIMEOUT_MS) {
-            activeSession.state.first { it == DeviceSessionState.STARTED }
+            merge<Any>(
+                    activeSession.state.filter {
+                      it == DeviceSessionState.STARTED || it == DeviceSessionState.STOPPED
+                    },
+                    flow<Any> { emit(firstError.await()) },
+                )
+                .first()
           }
-      check(started != null) { "The glasses session did not start within 15 seconds." }
+      if (outcome is DeviceSessionError) error(sessionErrorAdvice(outcome))
+      if (outcome == DeviceSessionState.STOPPED) {
+        // A stop usually comes with its reason a moment later.
+        val reason = withTimeoutOrNull(1_000L) { firstError.await() }
+        error(reason?.let(::sessionErrorAdvice)
+            ?: "The glasses ended the session before it started. Put the glasses on and try again.")
+      }
+      check(outcome != null) {
+        "The glasses session did not start within 15 seconds (last state: ${activeSession.state.value}). " +
+            "Wake the glasses, close the camera in the Meta AI app, and try again."
+      }
       photoLog("Session started (glasses Wi-Fi is handled by the toolkit).")
 
       var addError: String? = null
@@ -973,8 +1073,53 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     _uiState.update { it.copy(lastError = null) }
   }
 
+  /** The Check connection button: one timed request to the laptop, with the result on screen. */
   fun checkLaptopNow() {
-    viewModelScope.launch { checkLaptopOnce() }
+    val now = _uiState.value
+    if (now.laptopCheckBusy) return
+    val ip = now.laptopIp
+    if (ip.isBlank()) {
+      _uiState.update { it.copy(laptopCheck = "Type the laptop address first.") }
+      return
+    }
+    if (now.photoBusy || now.streamActive) {
+      _uiState.update {
+        it.copy(laptopCheck = "The glasses are busy with a photo. Try again when it finishes.")
+      }
+      return
+    }
+    _uiState.update { it.copy(laptopCheckBusy = true, laptopCheck = null) }
+    viewModelScope.launch {
+      val started = SystemClock.elapsedRealtime()
+      var reachable = false
+      val line =
+          try {
+            val code = withContext(Dispatchers.IO) { laptopClient().ping() }
+            val ms = SystemClock.elapsedRealtime() - started
+            reachable = code in 200..399
+            if (reachable) "Connected to $ip:8792, answered in $ms ms."
+            else "The laptop at $ip:8792 answered with HTTP $code."
+          } catch (e: CancellationException) {
+            _uiState.update { it.copy(laptopCheckBusy = false) }
+            throw e
+          } catch (e: Exception) {
+            "Can't reach $ip:8792. ${e.message ?: e.toString()}"
+          }
+      val at = SimpleDateFormat("h:mm a", Locale.US).format(Date())
+      _uiState.update {
+        it.copy(laptopCheckBusy = false, laptopReachable = reachable, laptopCheck = "$line Checked at $at.")
+      }
+      if (reachable) {
+        try {
+          val list = withContext(Dispatchers.IO) { laptopClient().getQuestions() }
+          _uiState.update { it.copy(questionsList = list) }
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          Log.i(TAG, "Question list refresh failed: ${e.message ?: e.toString()}")
+        }
+      }
+    }
   }
 
   /** Stop watching one question. Its files and history stay on the laptop. */

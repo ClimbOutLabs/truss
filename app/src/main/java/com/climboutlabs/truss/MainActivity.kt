@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
     setContent {
       TrussApp(
           viewModel = viewModel,
-          onConnectGlasses = { viewModel.startRegistration(this@MainActivity) },
+          onConnectGlasses = { viewModel.connectGlasses(this@MainActivity) },
           onRequestWearablesPermission = ::requestWearablesPermission,
       )
     }
