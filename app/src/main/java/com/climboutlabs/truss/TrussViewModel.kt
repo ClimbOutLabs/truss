@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
@@ -404,8 +405,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       // The first session error ends the wait below at once, with a plain
       // instruction, instead of a bare 15 second timeout.
       val firstError = CompletableDeferred<DeviceSessionError>()
+      // Undispatched, so the collector is subscribed before start() runs: the
+      // errors flow has no replay, and start() can emit its failure at once.
       errorWatch =
-          viewModelScope.launch {
+          viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             activeSession.errors.collect { error ->
               photoLog("Session error: ${error.description}")
               firstError.complete(error)
