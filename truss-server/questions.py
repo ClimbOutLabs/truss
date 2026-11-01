@@ -610,6 +610,23 @@ class QuestionStore:
                 self._write_watch(slug, watch)
             return watch["state"]
 
+    def start_standing(self, slug):
+        """Start a planting question standing with the looks it has,
+        which may be the yes look alone or none at all. A question that
+        reads a number off a display ("Is my heart rate above 160?")
+        needs no staged no look: the check reads the question's words
+        against the photo. Returns the question's state; a question
+        that is not planting is left as it is."""
+        with self._lock:
+            folder = self._folder(slug)
+            watch = self._read_watch(slug)
+            if not self._watch_ok(watch) or not (folder / "question.txt").is_file():
+                raise KeyError(f"No question named {slug}.")
+            if watch["state"] == "planting":
+                watch["state"] = "standing"
+                self._write_watch(slug, watch)
+            return watch["state"]
+
     def _next_seq(self):
         """The next planting sequence number. A counter file in the
         store root is the source; when it is missing or unreadable the

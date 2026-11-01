@@ -145,19 +145,24 @@ def production_check(frame_path, entry):
     looks. The endpoint checker reads the question's looks.txt from its
     folder in single mode and sends both looks as images in multi
     mode; Aman gets both looks as images."""
+    # A question started with one look or none (see /plant/finish) is
+    # checked on its words and the frame: the looks go only as a pair.
+    both = Path(entry["ref_yes_path"]).is_file() and Path(entry["ref_no_path"]).is_file()
+    ref_yes = entry["ref_yes_path"] if both else None
+    ref_no = entry["ref_no_path"] if both else None
     if CHECKER == "aman":
         return aman_check.check(
             frame_path,
             entry["question"],
-            ref_yes=entry["ref_yes_path"],
-            ref_no=entry["ref_no_path"],
+            ref_yes=ref_yes,
+            ref_no=ref_no,
         )
     return verdict.check(
         frame_path,
         entry["question"],
         mode=CHECK_MODE,
-        ref_yes=entry["ref_yes_path"],
-        ref_no=entry["ref_no_path"],
+        ref_yes=ref_yes,
+        ref_no=ref_no,
         looks=verdict.read_looks(Path(entry["ref_yes_path"]).parent),
         safety=entry.get("safety") is True,
     )
@@ -332,6 +337,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_guide_stop()
         elif path == "/plant/ref":
             self.handle_plant_ref()
+        elif path == "/plant/finish":
+            self.handle_plant_finish()
         else:
             self.send_error(404, "Not Found")
 
@@ -678,6 +685,44 @@ class TrussHandler(BaseHTTPRequestHandler):
             print(f"POST /plant/ref -> ERROR: {e}")
             self.send_error(500, str(e))
     
+    def handle_plant_finish(self):
+        """Start a planting question standing without the looks it is
+        still missing: POST JSON {"slug": ...}. For a question the
+        words decide, like a number on a display ("Is my heart rate
+        above 160?"), where staging a no look is not possible."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(content_length).decode())
+            slug = data.get("slug", "") if isinstance(data, dict) else ""
+        except Exception:
+            self.send_error(400, "Body must be JSON with a slug")
+            return
+        if not isinstance(slug, str) or not slug:
+            self.send_error(400, "Body must be JSON with a slug")
+            return
+        try:
+            state = STORE.start_standing(slug)
+        except KeyError as e:
+            self.send_error(404, str(e))
+            return
+        except Exception as e:
+            print(f"POST /plant/finish -> ERROR: {e}")
+            self.send_error(500, str(e))
+            return
+        entry = STORE.get(slug)
+        name = entry["question"] if entry else slug
+        looks = (
+            "both looks" if entry and entry["has_ref_yes"] and entry["has_ref_no"]
+            else "the yes look" if entry and entry["has_ref_yes"]
+            else "no looks"
+        )
+        self.send_json({
+            "slug": slug,
+            "state": state,
+            "next": f"Standing question planted: {name}",
+        })
+        print(f"POST /plant/finish -> {slug} with {looks}, state {state}")
+
     def handle_capture(self):
         """Handle photo upload."""
         # A capture starting means the wearer is about; it is also a

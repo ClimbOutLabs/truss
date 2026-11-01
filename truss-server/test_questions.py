@@ -42,6 +42,13 @@ def test_store():
         check("one ref still planting", state == "planting")
         state = store.save_ref(slug, "no", JPEG)
         check("both refs make it standing", state == "standing")
+
+        lone = store.create("Is my heart rate above 160?")
+        store.save_ref(lone, "yes", JPEG)
+        check("start_standing with one look", store.start_standing(lone) == "standing")
+        check("start_standing leaves a standing one alone", store.start_standing(slug) == "standing")
+        store.retire(lone)
+        check("start_standing never revives a retired one", store.start_standing(lone) == "retired")
         check(
             "ref files on disk",
             (Path(tmp) / slug / "ref-yes.jpg").read_bytes() == JPEG
@@ -164,6 +171,60 @@ def test_http():
                 f"{base}/plant/ref?slug=nope&kind=yes", img, ctype
             )
             check("bogus slug refused with 404", status == 404)
+
+            # A number on a display: the yes look alone, then start it.
+            status, body = post(
+                base + "/plant/question",
+                json.dumps({"text": "Is my heart rate above 160?"}).encode(),
+                "application/json",
+            )
+            hr = body["slug"]
+            post(f"{base}/plant/ref?slug={hr}&kind=yes", img, ctype)
+            status, body = post(
+                base + "/plant/finish", json.dumps({"slug": hr}).encode(), "application/json"
+            )
+            check("finish with the yes look alone stands", status == 200 and body["state"] == "standing")
+            check("finish names the question",
+                  body["next"] == "Standing question planted: Is my heart rate above 160?")
+
+            # No looks at all.
+            status, body = post(
+                base + "/plant/question",
+                json.dumps({"text": "Is the treadmill speed below 5?"}).encode(),
+                "application/json",
+            )
+            bare = body["slug"]
+            status, body = post(
+                base + "/plant/finish", json.dumps({"slug": bare}).encode(), "application/json"
+            )
+            check("finish with no looks stands", status == 200 and body["state"] == "standing")
+
+            status, _ = post(
+                base + "/plant/finish", json.dumps({"slug": "nope"}).encode(), "application/json"
+            )
+            check("finish on a bogus slug is 404", status == 404)
+            status, _ = post(base + "/plant/finish", b"{}", "application/json")
+            check("finish with no slug is 400", status == 400)
+
+            # The check for a one-look question sends no reference looks.
+            seen = {}
+
+            def fake_check(frame, question, **kw):
+                seen.update(kw)
+                return {"verdict": "cannot_tell"}
+
+            real = server_module.verdict.check
+            server_module.verdict.check = fake_check
+            try:
+                server_module.production_check("frame.jpg", server_module.STORE.get(hr))
+                check("one-look check sends no refs",
+                      seen.get("ref_yes") is None and seen.get("ref_no") is None)
+                server_module.production_check("frame.jpg", server_module.STORE.get(slug))
+                check("two-look check still sends both refs",
+                      seen.get("ref_yes", "").endswith("ref-yes.jpg")
+                      and seen.get("ref_no", "").endswith("ref-no.jpg"))
+            finally:
+                server_module.verdict.check = real
         finally:
             httpd.shutdown()
 

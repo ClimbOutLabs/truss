@@ -120,6 +120,12 @@ class LaptopClient(laptopIp: String) {
     return JSONObject(body)
   }
 
+  /** POST /plant/finish: start a planting question standing with the looks it has
+   * (the yes look alone, or none), for a question its words decide, like a number on
+   * a display. Returns the reply: slug, state, and the next line to show. */
+  fun finishPlanting(slug: String): JSONObject =
+      JSONObject(postJson("/plant/finish", JSONObject().put("slug", slug)))
+
   /** GET /questions: the standing questions and their states. */
   fun getQuestions(): List<QuestionInfo> {
     val array = JSONObject(getJson("/questions")).getJSONArray("questions")

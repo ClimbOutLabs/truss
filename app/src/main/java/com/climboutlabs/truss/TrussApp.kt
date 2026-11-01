@@ -761,13 +761,14 @@ private fun QuestionsScreen(
           modifier = Modifier.fillMaxWidth(),
       )
       Text(
-          "Next, you show Mannie what yes looks like and what no looks like, through the glasses.",
+          "Next, you show Mannie what yes looks like and what no looks like, through the glasses. " +
+              "For a number on a display, the yes look alone is enough.",
           style = MaterialTheme.typography.bodySmall,
           color = Truss.muted,
           modifier = Modifier.padding(horizontal = 6.dp),
       )
     } else {
-      PlantingCard(state, planting, onCaptureRef, viewModel::cancelPlanting)
+      PlantingCard(state, planting, onCaptureRef, viewModel::cancelPlanting, viewModel::finishPlantingWithoutMore)
     }
 
     val shown = state.questionsList.filter { it.state != "retired" }
@@ -855,6 +856,7 @@ private fun PlantingCard(
     planting: QuestionInfo?,
     onCaptureRef: (String) -> Unit,
     onCancel: () -> Unit,
+    onFinish: () -> Unit,
 ) {
   val needsYes = planting?.hasRefYes != true
   val step = if (needsYes) 2 else 3
@@ -898,6 +900,15 @@ private fun PlantingCard(
       TextButton(onClick = { onCaptureRef("yes") }, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally)) {
         Text("Retake the yes look", style = MaterialTheme.typography.labelLarge, color = Truss.onApricot)
       }
+    }
+    // For a question its words decide, like a number on a display, where a
+    // no look (or any look) cannot be staged.
+    TextButton(onClick = onFinish, enabled = !state.busy, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+      Text(
+          if (needsYes) "Start watching with no looks" else "Start watching without a no look",
+          style = MaterialTheme.typography.labelLarge,
+          color = Truss.onApricot,
+      )
     }
   }
 }

@@ -542,20 +542,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         val next = reply.getString("next")
         val completed = reply.getString("state") == "standing"
         if (completed && plantQueue.firstOrNull() == refSlug) {
-          // The queue head is fully planted. If a round is being planted, move
-          // the Plant screen on to its next question; if that was the last one,
-          // clear the planting target so its looks cannot be overwritten by a
-          // stray tap.
-          plantQueue = plantQueue.drop(1)
-          val nextSlug = plantQueue.firstOrNull()
-          if (nextSlug != null) {
-            _uiState.update {
-              it.copy(plantSlug = nextSlug, plantPrompt = "Show me what yes looks like.")
-            }
-            plantLog("Next question in the round: show it what yes looks like.")
-          } else {
-            _uiState.update { it.copy(plantSlug = null, plantPrompt = next) }
-          }
+          advancePlantQueue(next)
         } else if (!completed) {
           _uiState.update { it.copy(plantPrompt = next) }
         }
@@ -1148,6 +1135,53 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         throw e
       } catch (e: Exception) {
         showError(e)
+      }
+    }
+  }
+
+  /** The queue head is fully planted. If a round is being planted, move the Plant
+   * screen on to its next question; if that was the last one, clear the planting
+   * target so its looks cannot be overwritten by a stray tap. */
+  private fun advancePlantQueue(next: String) {
+    plantQueue = plantQueue.drop(1)
+    val nextSlug = plantQueue.firstOrNull()
+    if (nextSlug != null) {
+      _uiState.update {
+        it.copy(plantSlug = nextSlug, plantPrompt = "Show me what yes looks like.")
+      }
+      plantLog("Next question in the round: show it what yes looks like.")
+    } else {
+      _uiState.update { it.copy(plantSlug = null, plantPrompt = next) }
+    }
+  }
+
+  /** Start the question being planted without the looks it is still missing: the
+   * yes look alone, or none. For a question its words decide, like "Is my heart rate
+   * above 160?" read off a treadmill display, where a no look cannot be staged. */
+  fun finishPlantingWithoutMore() {
+    val now = _uiState.value
+    val slug = now.plantSlug ?: return
+    if (now.busy) return
+    _uiState.update { it.copy(plantBusy = true, lastError = null) }
+    viewModelScope.launch {
+      try {
+        val reply = withContext(Dispatchers.IO) { laptopClient().finishPlanting(slug) }
+        val next = reply.getString("next")
+        if (reply.getString("state") == "standing" && plantQueue.firstOrNull() == slug) {
+          pendingRefSlug = null
+          pendingRefKind = null
+          plantResumed = false
+          advancePlantQueue(next)
+        }
+        plantLog(next)
+        val list = fetchQuestions()
+        _uiState.update { it.copy(questionsList = list) }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      } finally {
+        _uiState.update { it.copy(plantBusy = false) }
       }
     }
   }
