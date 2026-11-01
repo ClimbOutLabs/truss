@@ -92,6 +92,8 @@ data class TrussUiState(
     val historyPhotos: Map<String, Bitmap> = emptyMap(),
     // Hands-free watching: a glasses photo every watchEverySeconds while on.
     val watching: Boolean = false,
+    /** While watching: when the glasses went away (off, folded, out of reach), or null. */
+    val watchAwaySince: String? = null,
     val watchEverySeconds: Int = 30,
     val watchSent: Int = 0,
     val watchSkipped: Int = 0,
@@ -316,17 +318,22 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   /** One capture after beginCapture claimed the camera. Returns what happened:
-   * true when it ran to the end (sent, or skipped as the same view), false on a failure. */
+   * true when it ran to the end (sent, or skipped as the same view), false on a failure,
+   * null when the glasses were off, folded or out of reach. */
   private suspend fun performCapture(
       requestPermission: suspend (Permission) -> PermissionStatus,
       fromWatch: Boolean,
-  ): Boolean {
+  ): Boolean? {
     val startedAt = SystemClock.elapsedRealtime()
     try {
       runCapture(requestPermission, startedAt, fromWatch)
       return true
     } catch (e: CancellationException) {
       throw e
+    } catch (e: GlassesAwayException) {
+      photoLog("Glasses away: ${e.message}")
+      if (!fromWatch) showError(e)
+      return null
     } catch (e: Exception) {
       photoLog("FAILED: ${e.message ?: e.toString()}")
       showError(e)
@@ -338,6 +345,20 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         it.copy(photoBusy = false, photoElapsedMs = SystemClock.elapsedRealtime() - startedAt, streamActive = false)
       }
     }
+  }
+
+  /** The glasses are off, folded or out of range: nothing is broken, so watching waits. */
+  private class GlassesAwayException(message: String) : IllegalStateException(message)
+
+  private fun isAway(error: DeviceSessionError) =
+      error == DeviceSessionError.NO_ELIGIBLE_DEVICE ||
+          error == DeviceSessionError.DEVICE_DISCONNECTED ||
+          error == DeviceSessionError.SESSION_ENDED_BY_DEVICE
+
+  /** Fail this capture over a session error, as away or as a real failure. */
+  private fun failSession(error: DeviceSessionError): Nothing {
+    if (isAway(error)) throw GlassesAwayException(sessionErrorAdvice(error))
+    error(sessionErrorAdvice(error))
   }
 
   /** What the person should do about a session error, in plain words. */
@@ -354,8 +375,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             "The glasses battery is too low for the camera. Charge them and try again."
         DeviceSessionError.SESSION_ALREADY_EXISTS ->
             "Another app is using the glasses camera. Close the camera in the Meta AI app and try again."
-        DeviceSessionError.NO_ELIGIBLE_DEVICE, DeviceSessionError.DEVICE_DISCONNECTED ->
-            "The glasses are not reachable. Put them on, make sure they are on, and try again."
+        DeviceSessionError.NO_ELIGIBLE_DEVICE, DeviceSessionError.DEVICE_DISCONNECTED,
+        DeviceSessionError.SESSION_ENDED_BY_DEVICE ->
+            "The glasses are off, folded or out of reach. Put them on and they are used again."
         else -> "The glasses session failed: ${error.description}."
       }
 
@@ -392,13 +414,16 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
     // Step 2: a session, then the camera, then one still. The session and stream are the
     // toolkit's own way onto the glasses' Wi-Fi; version 1.0.1 has no separate join call.
-    var sessionError: String? = null
+    var sessionError: DeviceSessionError? = null
     var session: com.meta.wearable.dat.core.session.DeviceSession? = null
     Wearables.createSession(deviceSelector)
         .onSuccess { session = it }
-        .onFailure { error, _ -> sessionError = error.description }
+        .onFailure { error, _ -> sessionError = error }
     val activeSession = session
-    check(activeSession != null) { sessionError ?: "Could not start a session with the glasses." }
+    if (activeSession == null) {
+      sessionError?.let { failSession(it) }
+      error("Could not start a session with the glasses.")
+    }
     var camera: com.meta.wearable.dat.camera.Camera? = null
     var errorWatch: Job? = null
     try {
@@ -425,12 +450,13 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 .first()
           }
-      if (outcome is DeviceSessionError) error(sessionErrorAdvice(outcome))
+      if (outcome is DeviceSessionError) failSession(outcome)
       if (outcome == DeviceSessionState.STOPPED) {
         // A stop usually comes with its reason a moment later.
         val reason = withTimeoutOrNull(1_000L) { firstError.await() }
-        error(reason?.let(::sessionErrorAdvice)
-            ?: "The glasses ended the session before it started. Put the glasses on and try again.")
+        if (reason != null) failSession(reason)
+        throw GlassesAwayException(
+            "The glasses ended the session before it started. Put the glasses on and they are used again.")
       }
       check(outcome != null) {
         "The glasses session did not start within 15 seconds (last state: ${activeSession.state.value}). " +
@@ -938,6 +964,22 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                       watchCapturing = false
                     }
                 if (watchStopAsked) break
+                if (ok == null) {
+                  // Off, folded, out of reach, or shut down for heat or battery:
+                  // not a failure. Watching keeps trying on its usual beat and
+                  // carries on by itself once the glasses are back.
+                  if (_uiState.value.watchAwaySince == null) {
+                    watchRecord("away")
+                    val since = SimpleDateFormat("HH:mm", Locale.US).format(Date())
+                    _uiState.update { it.copy(watchAwaySince = since) }
+                  }
+                  delay(_uiState.value.watchEverySeconds * 1000L)
+                  continue
+                }
+                if (_uiState.value.watchAwaySince != null) {
+                  watchRecord("back")
+                  _uiState.update { it.copy(watchAwaySince = null) }
+                }
                 if (!ok) watchRecord("failed")
                 failures = if (ok) 0 else failures + 1
                 if (failures >= WATCH_MAX_FAILURES) {
@@ -955,7 +997,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             }
           } finally {
             watchRecord("stop")
-            _uiState.update { it.copy(watching = false) }
+            _uiState.update { it.copy(watching = false, watchAwaySince = null) }
           }
         }
   }
