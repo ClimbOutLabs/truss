@@ -72,6 +72,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
@@ -240,9 +242,51 @@ private fun Surface(
 
 @Composable
 private fun ErrorBanner(message: String, onDismiss: () -> Unit) {
-  Surface(color = Truss.errorSoft) {
-    Text(message, style = MaterialTheme.typography.bodyMedium, color = Truss.onError)
-    TextButton(onClick = onDismiss) { Text("Dismiss", color = Truss.onError) }
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .clip(RoundedCornerShape(20.dp))
+              .background(Truss.errorSoft)
+              .padding(start = 16.dp, top = 6.dp, bottom = 6.dp, end = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+        message,
+        style = MaterialTheme.typography.bodySmall,
+        color = Truss.onError,
+        modifier = Modifier.weight(1f).padding(vertical = 6.dp),
+    )
+    IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
+      Icon(TrussIcons.Close, contentDescription = "Dismiss", tint = Truss.onError, modifier = Modifier.size(18.dp))
+    }
+  }
+}
+
+/** A photo filling the screen, whole and uncropped. A tap anywhere closes it. */
+@Composable
+private fun PhotoViewer(bitmap: Bitmap, caption: String, onClose: () -> Unit) {
+  Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color.Black).clickable(onClick = onClose),
+        contentAlignment = Alignment.Center,
+    ) {
+      Image(
+          bitmap = bitmap.asImageBitmap(),
+          contentDescription = caption,
+          contentScale = ContentScale.Fit,
+          modifier = Modifier.fillMaxSize(),
+      )
+      Text(
+          caption,
+          style = MaterialTheme.typography.bodySmall,
+          color = Color.White,
+          modifier =
+              Modifier.align(Alignment.BottomCenter)
+                  .fillMaxWidth()
+                  .background(Color.Black.copy(alpha = 0.55f))
+                  .padding(16.dp, 12.dp),
+      )
+    }
   }
 }
 
@@ -661,10 +705,17 @@ private fun LastAnswer(state: TrussUiState) {
   if (photo == null) {
     answer()
   } else {
-    Box(modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).clip(RoundedCornerShape(28.dp)).background(Truss.sage)) {
-      Photo(photo, "What Mannie saw", Modifier.matchParentSize())
-      Box(Modifier.align(Alignment.BottomCenter).padding(12.dp)) { answer() }
+    // The photo stays whole above the answer, never under it; a tap opens it full screen.
+    var open by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Photo(
+          photo,
+          "What Mannie saw",
+          Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(24.dp)).background(Truss.sage).clickable { open = true },
+      )
+      answer()
     }
+    if (open) PhotoViewer(photo, state.lastSpoken.joinToString(" "), onClose = { open = false })
   }
 }
 
@@ -978,7 +1029,15 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
           horizontalArrangement = Arrangement.spacedBy(14.dp),
       ) {
         if (photo != null) {
-          Photo(photo, "Evidence photo for ${item.question}", Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)))
+          var open by remember { mutableStateOf(false) }
+          Photo(
+              photo,
+              "Evidence photo for ${item.question}. Tap to open.",
+              Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).clickable { open = true },
+          )
+          if (open) {
+            PhotoViewer(photo, item.text.ifBlank { item.question }, onClose = { open = false })
+          }
         } else {
           IconTile(topicIcon(item.question), Truss.sage, Truss.muted, size = 84.dp, shape = RoundedCornerShape(16.dp))
         }
