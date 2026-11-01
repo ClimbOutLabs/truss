@@ -951,6 +951,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
               // While a question's looks are being taken, the camera is left to
               // the planting flow.
               val ready = _uiState.value.glassesReady && _uiState.value.plantSlug == null
+              if (!_uiState.value.glassesReady && _uiState.value.watchAwaySince == null) {
+                // The glasses dropped out of the device list: say so on Home.
+                watchRecord("away")
+                val since = SimpleDateFormat("HH:mm", Locale.US).format(Date())
+                _uiState.update { it.copy(watchAwaySince = since) }
+              }
               if (ready && beginCapture(quiet = true)) {
                 watchCapturing = true
                 // A capture runs to its end even if watching is switched off
@@ -965,8 +971,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 if (watchStopAsked) break
                 if (ok == null) {
-                  // Off, folded, out of reach, or shut down for heat or battery:
-                  // not a failure. Watching keeps trying on its usual beat and
+                  // Off, folded or out of reach: not a failure. Watching keeps trying on its usual beat and
                   // carries on by itself once the glasses are back.
                   if (_uiState.value.watchAwaySince == null) {
                     watchRecord("away")
