@@ -510,13 +510,21 @@ $("f-replay").addEventListener("change", (e) => {
 // alert, and an old photo of a cold stove would be a false all-clear,
 // so replay is refused while any safety or done question is watched,
 // and otherwise takes a second click.
-function replayBlocker() {
-  const q = QUESTIONS.find((x) => x.state !== "retired" && (x.safety || x.kind === "done"));
+async function replayBlocker() {
+  // Read what is watched now, never the page's last copy, and send
+  // nothing when that cannot be read.
+  let fresh;
+  try {
+    fresh = (await getJSON("/questions")).questions;
+  } catch (e) {
+    return "Couldn't check what is being watched, so nothing was sent.";
+  }
+  const q = fresh.find((x) => x.state !== "retired" && (x.safety || x.kind === "done"));
   return q ? `Not sent. “${q.question}” is a safety question being watched, and an old photo would count as a real sighting of it. Stop watching it first, or test with the glasses.` : "";
 }
 $("r-go").addEventListener("click", async () => {
   if (!REPLAY) return;
-  const blocked = replayBlocker();
+  const blocked = await replayBlocker();
   if (blocked) { showMsg("r-msg", blocked, true); return; }
   if ($("r-go").dataset.armed !== "1") {
     $("r-go").dataset.armed = "1";
