@@ -404,6 +404,33 @@ def test_aman():
     return False, f"Aman answered with an error (status {status_code})."
 
 
+# The glasses' latest view, kept in memory only (never on disk, gone on
+# restart), so the Desk can take a question's yes or no look through
+# the glasses. Only the newest frame is held.
+LATEST = {"bytes": None, "at": None}
+LATEST_LOCK = threading.Lock()
+# A view older than this is not offered as a look.
+LATEST_MAX_AGE_S = 120
+
+
+def keep_latest(image_data):
+    with LATEST_LOCK:
+        LATEST["bytes"] = bytes(image_data)
+        LATEST["at"] = time.monotonic()
+
+
+def latest_view():
+    """(bytes, seconds_ago), or (None, None) when there is no fresh view."""
+    with LATEST_LOCK:
+        data, at = LATEST["bytes"], LATEST["at"]
+    if data is None:
+        return None, None
+    age = time.monotonic() - at
+    if age > LATEST_MAX_AGE_S:
+        return None, None
+    return data, age
+
+
 # The Desk's start and stop for the phone's watching (see phone_watch.py).
 WATCH = WatchDesk()
 
@@ -459,6 +486,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_json(WATCH.view())
         elif path == "/settings":
             self.send_json(settings_view())
+        elif path == "/latest":
+            self.handle_latest()
         else:
             self.send_error(404, "Not Found")
 
@@ -517,6 +546,21 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_plant_finish()
         else:
             self.send_error(404, "Not Found")
+
+    def handle_latest(self):
+        """The glasses' latest view as a JPEG, for taking a look from
+        the Desk. 404 when no view came in the last two minutes. The
+        X-Seconds-Ago header says how old it is."""
+        data, age = latest_view()
+        if data is None:
+            self.send_error(404, "No view from the glasses in the last two minutes. Start watching on the phone, then try again.")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Seconds-Ago", f"{age:.1f}")
+        self.end_headers()
+        self.wfile.write(data)
 
     def handle_desk(self):
         """The Mac page for planting questions, laying out the day,
@@ -1112,6 +1156,11 @@ class TrussHandler(BaseHTTPRequestHandler):
             
             file_size = len(image_data)
             _seen("capture", self.client_address[0])
+            # Only the phone's own frames are the glasses' view. A
+            # browser always names its page in Origin, so a photo the
+            # Desk replays is never offered as a look.
+            if self.headers.get("Origin") is None:
+                keep_latest(image_data)
 
             response = {"bytes": file_size}
             session = GUIDE["session"]

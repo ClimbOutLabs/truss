@@ -49,6 +49,7 @@ The server will:
 - `POST /watch` - The Desk asks the phone to start or stop watching, JSON `{"on": true}`
 - `POST /watch/phone` - The phone checks in every few seconds with how its watching stands and gets the Desk's latest request back
 - `GET /watch` - The Desk's latest request and the phone's last check-in
+- `GET /latest` - The glasses' latest view as a JPEG, held in memory only, for taking a look from the Desk; 404 when none came in the last two minutes
 - `GET /settings` - What the Desk's Settings tab shows: whether the Meta key and the Aman token are set (never their values), the Aman address and check chat, and who answers the checks
 - `POST /settings` - Save settings from the Desk, JSON with any of `meta_key`, `aman_base`, `aman_token`, `aman_session`, `checker` (`endpoint` or `aman`), `clear`; JSON only, and only from the Desk's own page at the Mac's address
 - `POST /settings/test` - Try a connection, JSON `{"what": "meta"}` (one words-only Muse Spark call, no photo) or `{"what": "aman"}` (signs in and lists a few chats, no check)
