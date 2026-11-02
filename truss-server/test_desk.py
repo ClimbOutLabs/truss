@@ -53,7 +53,36 @@ def test_page_calls_only_real_endpoints():
     check(f"every call has a route (missing: {sorted(missing)})", not missing)
 
 
+def test_latest_view():
+    import urllib.error
+    server_module.LATEST.update({"bytes": None, "at": None})
+    httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/latest")
+            check("no view yet is a 404", False)
+        except urllib.error.HTTPError as e:
+            check("no view yet is a 404", e.code == 404)
+        server_module.keep_latest(b"\xff\xd8jpeg")
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/latest") as resp:
+            check("the latest view is served", resp.read() == b"\xff\xd8jpeg")
+            check("as a JPEG", resp.headers["Content-Type"] == "image/jpeg")
+            check("with its age", resp.headers["X-Seconds-Ago"] == "0")
+        server_module.LATEST["at"] -= server_module.LATEST_MAX_AGE_S + 1
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/latest")
+            check("a stale view is a 404", False)
+        except urllib.error.HTTPError as e:
+            check("a stale view is a 404", e.code == 404)
+    finally:
+        server_module.LATEST.update({"bytes": None, "at": None})
+        httpd.shutdown()
+
+
 if __name__ == "__main__":
     test_desk_is_served()
     test_page_calls_only_real_endpoints()
+    test_latest_view()
     print("ALL PASS")
