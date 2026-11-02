@@ -97,6 +97,9 @@ def test_question_phrases():
     check("numbers dropped", sam_client.question_phrases("is my hr below 160") == ["hr"])
     check("possessives dropped", sam_client.question_phrases("Is Sam's laptop closed?") == ["laptop"])
     check("not text is nothing", sam_client.question_phrases(None) == [])
+    check("forget is not a thing", sam_client.question_phrases("Did I forget to turn off the heater?") == ["heater"])
+    check("-ing states dropped", sam_client.question_phrases("Is the kettle boiling?") == ["kettle"])
+    check("weekdays dropped", sam_client.question_phrases("Did I take my Tuesday pills?") == ["pills"])
     check("at most three", len(sam_client.question_phrases("cup plate fork knife spoon")) == 3)
 
 

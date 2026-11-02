@@ -111,6 +111,11 @@ _QUESTION_WORDS = {
     "close", "shut", "open", "fed", "feed", "eat", "ate", "eaten", "get",
     "got", "make", "made", "go", "gone", "went", "see", "seen", "look",
     "looks", "showing", "show", "shows", "running", "run", "plugged",
+    "forget", "forgot", "forgotten", "remember", "remembered", "check",
+    "checked", "need", "needs", "want", "wants", "use", "used", "using",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+    "sunday", "weekday", "weekend", "pm", "time", "minutes", "hour",
+    "hours",
 }
 
 
@@ -125,6 +130,9 @@ def question_phrases(question):
     out = []
     for word in re.findall(r"[a-z]+(?:'[a-z]+)?", question.lower()):
         if "'" in word or len(word) < 2 or word in drop or word in out:
+            continue
+        if len(word) > 5 and word.endswith("ing"):
+            # A state or an action ("boiling", "charging"), not a thing.
             continue
         out.append(word)
         if len(out) == 3:
