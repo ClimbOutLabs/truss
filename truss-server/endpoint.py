@@ -213,10 +213,54 @@ def reset_rest():
     """Let Muse Spark be asked again at once. For tests."""
     with _rest_lock:
         _rest["until"] = 0.0
+    with _fallback_lock:
+        _fallback_seen.clear()
 
 
 # Where lines about Muse Spark and its fallback go: the server log.
 report = print
+
+# What a fallback must say it serves before Muse Spark's work goes to it.
+# Whatever answers at TRUSS_BASE_URL is asked GET /models first (cached
+# for FALLBACK_CHECK_S), and only a Meta model name lets the call through,
+# so a DGX serving something else on that port is never asked.
+_META_NAME = ("glimmer", "muse")
+FALLBACK_CHECK_S = 60.0
+_fallback_seen = {}
+_fallback_lock = threading.Lock()
+
+
+def _served_models(base_url):
+    req = urllib.request.Request(f"{base_url}/models", method="GET")
+    try:
+        with _OPENER.open(req, timeout=3) as resp:
+            data = json.loads(resp.read(256 * 1024).decode("utf-8", "replace"))
+    except Exception:
+        return None
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return None
+    return [str(i.get("id")) for i in items if isinstance(i, dict) and i.get("id")]
+
+
+def fallback_serves_meta(cfg):
+    """None when the fallback serves a Meta model, otherwise the plain
+    reason it is not asked. Never sends a key."""
+    now = time.monotonic()
+    with _fallback_lock:
+        hit = _fallback_seen.get(cfg.base_url)
+        if hit and hit[0] > now:
+            return hit[1]
+    names = _served_models(cfg.base_url)
+    if names is None:
+        reason = f"the fallback at {cfg.base_url} did not list its models"
+    elif any(word in n.lower() for n in names for word in _META_NAME):
+        reason = None
+    else:
+        reason = f"the fallback at {cfg.base_url} serves {', '.join(names)[:120]}, not a Meta model"
+    with _fallback_lock:
+        _fallback_seen[cfg.base_url] = (now + FALLBACK_CHECK_S, reason)
+    return reason
 
 
 def describe_from_env():
@@ -495,18 +539,32 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
         if fallback is None:
             raise meta_problem
         report(f"Muse Spark is not used ({meta_problem}); asking {fallback.model}.")
+    meta_error = meta_problem
     if meta is not None and not (fallback is not None and _resting()):
         try:
             return _ask_one(meta, system, content, schema, schema_name, max_tokens)
         except EndpointError as e:
             if fallback is None:
                 raise
+            meta_error = e
             if e.kind in _REST_KINDS:
                 _rest_meta()
                 rest = f" Resting {meta.model} for {int(META_REST_S)} s."
             else:
                 rest = ""
             report(f"{meta.model} failed ({e}); asking {fallback.model} instead.{rest}")
+    if fallback is not None and (meta is not None or meta_problem is not None):
+        # Muse Spark's work goes only to a fallback serving a Meta model.
+        why_not = fallback_serves_meta(fallback)
+        if why_not is not None:
+            report(f"{fallback.model} is not asked: {why_not}.")
+            if meta_error is not None:
+                raise meta_error
+            raise EndpointError(
+                f"{meta.model if meta else 'Muse Spark'} is resting and the fallback is not a Meta model.",
+                kind="unreachable",
+                model=meta.model if meta else None,
+            )
     if fallback is None:
         raise EndpointError(
             "No model is set up: set TRUSS_META_API_KEY or TRUSS_BASE_URL.", kind="config"

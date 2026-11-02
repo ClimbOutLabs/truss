@@ -79,7 +79,8 @@ class StubModel:
     finish_reason) tuple, or an int (an HTTP error status with no body
     worth reading). The last reply repeats."""
 
-    def __init__(self, replies, delay=0, redirect_to=None):
+    def __init__(self, replies, delay=0, redirect_to=None, models=("muse-glimmer-30b",)):
+        self.models = list(models)
         self.replies = list(replies)
         self.delay = delay
         self.redirect_to = redirect_to
@@ -103,6 +104,13 @@ class StubModel:
                     self.wfile.write(data)
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # the client gave up first, as the timeout test means it to
+
+            def do_GET(self):
+                # llama-server's model list, which the fallback check reads.
+                if self.path.endswith("/models"):
+                    self._send(200, {"data": [{"id": m} for m in stub.models]})
+                else:
+                    self._send(404, {})
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
@@ -623,11 +631,11 @@ def test_meta_config_from_env():
         check("meta: status names Muse Spark and no fallback",
               d["model"] == "muse-spark-1.3" and d["fallback_model"] is None and not d["config_error"])
         check("meta: the key is never in the description", KEY not in json.dumps(d))
-    with env(TRUSS_META_API_KEY=KEY, TRUSS_BASE_URL="http://192.168.0.214:8080/v1"):
+    with env(TRUSS_META_API_KEY=KEY, TRUSS_BASE_URL="http://192.0.2.1:8080/v1"):
         d = endpoint.describe_from_env()
         check("meta: an explicit TRUSS_BASE_URL is the fallback",
               d["fallback_model"] == "muse-glimmer-30b"
-              and d["fallback_base_url"] == "http://192.168.0.214:8080/v1")
+              and d["fallback_base_url"] == "http://192.0.2.1:8080/v1")
     with env(TRUSS_META_API_KEY=KEY, TRUSS_META_BASE_URL="http://api.meta.ai/v1"):
         try:
             endpoint.meta_config_from_env()
@@ -704,6 +712,22 @@ def test_meta_without_fallback():
     check("no fallback: Muse Spark is never rested when nothing else can answer",
           second["verdict"] == "cannot_tell" and calls == 2)
     check("no fallback: nothing reported as a fallback", lines == [])
+
+
+def test_fallback_must_serve_a_meta_model():
+    with StubModel([500]) as spark, StubModel([YES], models=["deepseek-v4-flash-vision"]) as other, \
+            env(TRUSS_BASE_URL=other.base), meta_at(spark) as lines:
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("fallback guard: a non-Meta model behind TRUSS_BASE_URL is never asked",
+          other.requests == [] and result["verdict"] == "cannot_tell")
+    check("fallback guard: the result names Muse Spark", result["model"] == "muse-spark-1.3")
+    check("fallback guard: the log says why", any("not a Meta model" in l for l in lines))
+    with StubModel([500]) as spark, \
+            StubModel([YES], models=["/models/Muse-Glimmer-30B-Q4_K_M.gguf"]) as glimmer, \
+            env(TRUSS_BASE_URL=glimmer.base), meta_at(spark):
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("fallback guard: llama-server's file name counts as Glimmer",
+          result["model"] == "muse-glimmer-30b" and result["verdict"] == "yes")
 
 
 def test_no_model_at_all():
@@ -832,7 +856,7 @@ def test_key_only_over_https_or_loopback():
     check("key: https allowed", allowed("https://api.meta.ai/v1"))
     check("key: loopback http allowed", allowed("http://127.0.0.1:8080/v1"))
     check("key: localhost allowed", allowed("http://localhost:8080/v1"))
-    check("key: plain http to the LAN refused", not allowed("http://192.168.1.20:8080/v1"))
+    check("key: plain http to the LAN refused", not allowed("http://192.0.2.1:8080/v1"))
     check("key: plain http to a name refused", not allowed("http://dgx.local:8080/v1"))
 
 
@@ -905,5 +929,6 @@ if __name__ == "__main__":
     test_meta_failure_falls_back_and_rests()
     test_meta_bad_reply_falls_back_without_rest()
     test_meta_without_fallback()
+    test_fallback_must_serve_a_meta_model()
     test_no_model_at_all()
     print("ALL PASS")

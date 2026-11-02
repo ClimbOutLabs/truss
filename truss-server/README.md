@@ -109,7 +109,9 @@ Muse Spark 1.3 over the Meta Model API:
 | `TRUSS_META_TIMEOUT_S` | `45` | |
 
 The endpoint below is then a fallback only when `TRUSS_BASE_URL` is set
-explicitly, so Glimmer need not run at all. When a Muse Spark call fails,
+explicitly, so Glimmer need not run at all, and only while it lists a
+Meta model at `GET /models` (a name with "glimmer" or "muse" in it):
+whatever else might answer on that port is never asked. When a Muse Spark call fails,
 the same call goes to the fallback and the server log says so, naming
 both models; when the failure says the API is down or refusing (no
 answer, timeout, a refused key, an HTTP error), Muse Spark rests for five
