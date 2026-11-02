@@ -26,6 +26,21 @@ row stop watching. The screen stays on while watching. Every start, stop, sent,
 skipped and failed photo goes into `watch-log.txt` in the app's files folder with
 the battery percent, so a one-hour wear gives the battery cost per hour.
 
+Settings, Watching, How to look picks one of two ways. **Live view** (the default)
+keeps the glasses video open between looks. The phone reads a 16 by 16 grey thumbnail
+from the video four times a second. It takes a photo only when the view differs from
+the last one the laptop received (or that one is two minutes old) and has stayed still
+for a second, so the photo shows something new and is not blurred by a turning head.
+Nothing in this knows what is in view; it compares thumbnails only. The beat setting
+becomes the shortest wait between looks. A hold ends without a photo, and the video
+closes, when a tapped photo, a planting look, a missed-window alert or a test sentence
+needs the glasses, or when watching stops. It also ends when the glasses stop the
+video themselves, or after three minutes with nothing new. **Timed photos** is the
+earlier way: a photo on every beat, each in its own short session. Whichever way is
+on, watching pauses while the glasses report they are off your face, and resumes when
+they are back on. The toolkit (1.0.1) has no location or head-motion data, so no part
+of this uses either. The Desk shows which way the phone is watching.
+
 The only network destination the app can call is `http://LAPTOP_IP:8792`
 (`GET /`, `POST /capture`, `POST /tts`, `POST /plant/question`,
 `POST /plant/bedtime`, `POST /plant/ref`, `GET /questions`, `POST /questions/retire`,

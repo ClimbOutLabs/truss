@@ -42,7 +42,7 @@ class WatchDesk:
         self._clock = clock or (lambda: datetime.now().astimezone())
         self._lock = threading.Lock()
         self._request = None  # {"id", "on", "at"}
-        self._phone = None  # {"watching", "away", "glasses", "pending", "every", "at", "from"}
+        self._phone = None  # {"watching", "away", "glasses", "pending", "every", "mode", "off", "at", "from"}
 
     def _request_view(self, now):
         if self._request is None:
@@ -77,6 +77,8 @@ class WatchDesk:
                 "glasses": data.get("glasses") is True,
                 "pending": data.get("pending") is True,
                 "every": _clean_every(data.get("every")),
+                "mode": data.get("mode") if data.get("mode") in ("live", "photos") else None,
+                "off": data.get("off") is True,
                 "at": now,
                 "from": address,
             }

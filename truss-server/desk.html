@@ -648,8 +648,9 @@ function phoneText(w) {
   const req = w && w.request;
   if (!p) return ["", "Phone not heard from yet"];
   if (!p.reachable) return ["bad", `Phone not heard from for ${p.seconds_ago < 90 ? p.seconds_ago + " s" : Math.round(p.seconds_ago / 60) + " min"}`];
+  if (p.watching && p.off) return ["", "Phone watching, paused while the glasses are off"];
   if (p.watching && p.away) return ["bad", "Phone watching, waiting for the glasses"];
-  if (p.watching) return ["ok", "Phone watching"];
+  if (p.watching) return ["ok", p.mode === "live" ? "Phone watching (live view)" : p.mode === "photos" ? `Phone watching (a photo every ${p.every} s)` : "Phone watching"];
   if (p.pending) return ["", "Phone starts once the glasses connect"];
   if (req && req.on && req.age_seconds < 20) return ["", "Asking the phone to start…"];
   return ["", "Phone not watching"];

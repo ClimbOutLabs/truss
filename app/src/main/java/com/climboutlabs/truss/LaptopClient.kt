@@ -219,7 +219,15 @@ class LaptopClient(laptopIp: String) {
 
   /** POST /watch/phone: tell the laptop how watching stands here, so the Desk can show
    * it, and get back the Desk's latest start or stop request. */
-  fun watchCheckIn(watching: Boolean, away: Boolean, glasses: Boolean, pending: Boolean, every: Int): WatchCheckIn {
+  fun watchCheckIn(
+      watching: Boolean,
+      away: Boolean,
+      glasses: Boolean,
+      pending: Boolean,
+      every: Int,
+      mode: String,
+      off: Boolean,
+  ): WatchCheckIn {
     val payload =
         JSONObject()
             .put("watching", watching)
@@ -227,6 +235,8 @@ class LaptopClient(laptopIp: String) {
             .put("glasses", glasses)
             .put("pending", pending)
             .put("every", every)
+            .put("mode", mode)
+            .put("off", off)
     val reply = JSONObject(postJson("/watch/phone", payload, POLL_READ_TIMEOUT_MS))
     val item = reply.optJSONObject("request")
     val request =
