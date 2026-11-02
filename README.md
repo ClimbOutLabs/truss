@@ -18,25 +18,25 @@ all of them run on hardware in the home.
 
 ## Who it is for
 
-An older woman living alone who forgets: the gas stove, her pills, whether
-the dog was fed. She can look at the stove herself. What fails is trusting
-her own memory of having looked, so she frets for hours or does the thing
+An older person living alone who forgets: the gas stove, the pills, whether
+the dog was fed. They can look at the stove themselves. What fails is trusting
+their own memory of having looked, so they fret for hours or do the thing
 again to be safe. A second dose of the night pills is where the harm is.
 
 Truss does not sell seeing. Seeing is free. It sells remembering, at the
-moment she is about to do it twice. Her daughter or a caretaker can plant
-the questions for her.
+moment they are about to do it twice. A family member or a caretaker can
+plant the questions for them.
 
 ## Two kinds of question
 
 - **State questions** ask how the world is now: is the stove off, is the
   door locked. The current photo answers them.
-- **Done questions** ask about something she did: did I take my night pills.
+- **Done questions** ask about something the wearer did: did I take my night pills.
   Here the current state can lie (a fed dog's bowl is empty an hour later
-  because he ate), so the answer comes from witnessed history. A done
+  because the dog ate), so the answer comes from witnessed history. A done
   question has a time window, such as 9 to 10 PM. The first time the glasses
   see the yes-look inside the window, Truss keeps that one photo and its
-  time as the witness. If she comes back to the organizer later in the
+  time as the witness. If the wearer comes back to the organizer later in the
   window, Mannie says once that it is already done, and when. If the window
   closes with no witness, an alert is raised that survives restarts and
   clears only when the phone confirms it was spoken.
@@ -57,9 +57,9 @@ and the pills.
   is read as cannot tell. A check that fails for any reason (timeout, a
   reply cut off, invalid JSON) is never a verdict.
 - **Description over verdict.** A missed pills window never says "you
-  didn't take your pills": she may have taken them with the glasses off,
+  didn't take your pills": the wearer may have taken them with the glasses off,
   and that sentence is how Truss would cause the double dose it exists to
-  prevent. It tells her where to look instead ("Check the Tuesday PM
+  prevent. It says where to look instead ("Check the Tuesday PM
   compartment first, before you act on this"), and a test fails the build
   if any alert sentence holds an action verb such as take, turn, feed or
   lock (`truss-server/test_safety.py`).
@@ -118,7 +118,7 @@ stove.
   stop a spoken answer.
 - **Voice out.** Mannie's lines are spoken by the Mac's built-in text to
   speech (`say`) and played through the phone to the glasses. There is no
-  speech to text: nothing she says is recorded.
+  speech to text: nothing the wearer says is recorded.
 
 ### Where your data goes
 
@@ -258,8 +258,8 @@ Tests are plain Python, standard library only: run any
 
 - **Sensor-agnostic.** Nothing in the server knows the photos come from
   glasses: a question, its two looks, and a frame. The worn, first-person
-  viewpoint is the point of Truss, because it sees what she sees where she
-  is, but the same store and checks would take frames from any camera.
+  viewpoint is the point of Truss, because it sees what the wearer sees where
+  they are, but the same store and checks would take frames from any camera.
 - **The guide.** `truss-server/guide.py` is an over-the-shoulder mode: a
   job stated as steps, each step a question a glance can settle, spoken one
   at a time and checked before the next. It checks only presence, absence,

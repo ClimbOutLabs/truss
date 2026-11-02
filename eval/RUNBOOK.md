@@ -80,7 +80,7 @@ and waits for Enter. Then it checks every frame and writes the scorecard to
 ## What the scorecard says
 
 - **generic**: the frame and the question only. **planted**: plus the looks text
-  compiled from her reference photos, which is what the product does.
+  compiled from the reference photos, which is what the product does.
 - **Safety false all-clear**: on a safety question, a yes while the truth is no or not
   in view. The number that matters most.
 - **Cannot tell**: its own rate; correct on cannot_tell frames and on q20.
