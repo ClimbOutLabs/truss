@@ -497,7 +497,9 @@ $("plant").addEventListener("submit", async (ev) => {
     // No new question: start the phone watching what is already planted.
     const live = QUESTIONS.filter((q) => q.state !== "retired" && q.state !== "planting").length;
     if (!live) { showMsg("p-msg", "Nothing is planted yet. Type a question, or plant a step of the sample day.", true); return; }
-    showMsg("p-msg", `${await askPhone(true)} It watches the ${live} planted question${live === 1 ? "" : "s"}.`);
+    const said = await askPhone(true);
+    if (said.startsWith("Couldn't")) showMsg("p-msg", said, true);
+    else showMsg("p-msg", `${said} It watches the ${live} planted question${live === 1 ? "" : "s"}.`);
     return;
   }
   const kind = document.querySelector("input[name=kind]:checked").value;
