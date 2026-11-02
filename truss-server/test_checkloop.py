@@ -13,6 +13,11 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+# A Meta key exported in this shell must never send a test's request
+# to the real API.
+import os  # noqa: E402
+for _name in ("TRUSS_META_API_KEY", "TRUSS_META_BASE_URL", "TRUSS_META_MODEL"):
+    os.environ.pop(_name, None)
 
 from checkloop import CheckLoop  # noqa: E402
 from questions import QuestionStore  # noqa: E402

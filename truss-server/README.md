@@ -95,10 +95,31 @@ is standing, `/capture` behaves exactly as it did before the loop.
 
 ## Checking
 
-Checks go to one OpenAI-compatible `chat/completions` endpoint (see
-`endpoint.py` and `verdict.py`). By default that is Muse Glimmer 30B
-under `llama-server` on the DGX; the Meta Model API is the same code
-with different settings:
+Checks, plant-time compiles and guide checks go to an OpenAI-compatible
+`chat/completions` endpoint (see `endpoint.py` and `verdict.py`).
+
+**Muse Spark first.** With `TRUSS_META_API_KEY` set, every call goes to
+Muse Spark 1.3 over the Meta Model API:
+
+| Variable | Default | |
+| --- | --- | --- |
+| `TRUSS_META_API_KEY` | unset (off) | the Meta key; https only, never logged |
+| `TRUSS_META_BASE_URL` | `https://api.meta.ai/v1` | must be https |
+| `TRUSS_META_MODEL` | `muse-spark-1.3` | never the contributor tier |
+| `TRUSS_META_TIMEOUT_S` | `45` | |
+
+The endpoint below is then a fallback only when `TRUSS_BASE_URL` is set
+explicitly, so Glimmer need not run at all. When a Muse Spark call fails,
+the same call goes to the fallback and the server log says so, naming
+both models; when the failure says the API is down or refusing (no
+answer, timeout, a refused key, an HTTP error), Muse Spark rests for five
+minutes so each check does not wait out its timeout first. With no
+fallback, a failed call is a `cannot_tell` that names Muse Spark, never a
+guess. Every answer line names the model that answered. Check the
+route with `python3 endpoint.py --smoke` (words only, no photo).
+
+**The local endpoint.** Without the Meta key, every call goes here, as
+before:
 
 | Variable | Default | Meta Model API |
 | --- | --- | --- |

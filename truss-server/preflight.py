@@ -199,6 +199,28 @@ def _root(base_url):
     return re.sub(r"/v1/?$", "", base_url.rstrip("/"))
 
 
+def check_models(status, get=get_json):
+    """Lines for where checks go: Muse Spark over the Meta Model API
+    when the Meta key is set (Glimmer then only as an optional
+    fallback), otherwise llama-server on the DGX."""
+    status = status or {}
+    base_url = status.get("base_url")
+    if not base_url:
+        where = endpoint.describe_from_env()
+        status = dict(status, **{k: where[k] for k in ("base_url", "model", "fallback_base_url", "fallback_model")})
+        base_url = status.get("base_url")
+    if base_url and base_url.startswith("https://"):
+        out = [(PASS, "Muse Spark", f"{status.get('model')} at {base_url} answers first")]
+        if status.get("meta_resting"):
+            out.append((WARN, "Muse Spark", "resting after a failure; the fallback answers for now"))
+        fallback = status.get("fallback_base_url")
+        if not fallback:
+            out.append((PASS, "fallback", "none (TRUSS_BASE_URL unset); Glimmer need not run"))
+            return out
+        return out + check_llama(fallback, get=get)
+    return check_llama(base_url, get=get)
+
+
 def check_llama(base_url, get=get_json):
     if not base_url:
         return [(FAIL, "llama-server", "No endpoint is configured.")]
@@ -394,13 +416,7 @@ def run(args, say=print):
     lines += check_server(status)
     lines += check_phone(status)
     lines += check_glasses(status, fetch_status, args.wait_capture, say=say)
-    base_url = (status or {}).get("base_url")
-    if not base_url:
-        try:
-            base_url = endpoint.config_from_env().base_url
-        except endpoint.EndpointError:
-            base_url = None
-    lines += check_llama(base_url)
+    lines += check_models(status)
     lines += check_sam(status)
     store = QuestionStore(Path(args.store))
     lines += check_shots(store, args.witness_at, args.reach_at, args.bedtime_at, args.refusal_at)

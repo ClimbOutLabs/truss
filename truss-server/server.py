@@ -140,12 +140,15 @@ if BEDTIME_AFTER != "20:00":
 if CHECKER == "aman":
     print("Checks will be made by Aman (TRUSS_CHECKER=aman).")
 else:
-    try:
-        _cfg = endpoint.config_from_env()
-        print(f"Checks will be made by {_cfg.model} at {_cfg.base_url}, {CHECK_MODE} mode.")
-    except endpoint.EndpointError as e:
-        # Every check will read cannot_tell with the same reason.
-        print(f"No checks will be made: {e}")
+    _where = endpoint.describe_from_env()
+    if _where["model"]:
+        _line = f"Checks and plant-time compiles go to {_where['model']} at {_where['base_url']}"
+        if _where["fallback_model"]:
+            _line += f", falling back to {_where['fallback_model']} at {_where['fallback_base_url']}"
+        print(f"{_line}, {CHECK_MODE} mode.")
+    if _where["config_error"]:
+        # With no model at all, every check reads cannot_tell with this reason.
+        print(f"Model setup: {_where['config_error']}")
 
 
 def production_check(frame_path, entry):
@@ -272,11 +275,8 @@ def status():
             "from": item["from"],
         }
 
-    try:
-        cfg = endpoint.config_from_env()
-        model, base_url, config_error = cfg.model, cfg.base_url, None
-    except endpoint.EndpointError as e:
-        model, base_url, config_error = None, None, str(e)
+    where = endpoint.describe_from_env()
+    model, base_url, config_error = where["model"], where["base_url"], where["config_error"]
     return {
         "now": now.isoformat(timespec="seconds"),
         "zone": now.tzname(),
@@ -284,6 +284,9 @@ def status():
         "model": model,
         "base_url": base_url,
         "config_error": config_error,
+        "fallback_model": where["fallback_model"],
+        "fallback_base_url": where["fallback_base_url"],
+        "meta_resting": where["meta_resting"],
         "check_mode": CHECK_MODE,
         "refusals": REFUSALS,
         "evidence_outline": OUTLINER is not None,

@@ -17,6 +17,25 @@ Meta Model API; only the configuration differs:
                     llama-server needs none.
     TRUSS_TIMEOUT_S default 120, for the whole call including its retry
 
+Muse Spark over the Meta Model API, first, with the above as fallback:
+
+    TRUSS_META_API_KEY    turns it on. Sent over https only; never
+                          logged, never put in a reason.
+    TRUSS_META_BASE_URL   default https://api.meta.ai/v1 (https only)
+    TRUSS_META_MODEL      default muse-spark-1.3 (never the
+                          contributor tier)
+    TRUSS_META_TIMEOUT_S  default 45
+
+With TRUSS_META_API_KEY set, every call that names no config of its
+own (checks, the plant-time compile, the guide) goes to Muse Spark.
+The endpoint above is then a fallback only if TRUSS_BASE_URL is set
+explicitly (Glimmer on the DGX need not be running at all). A Muse
+Spark call that fails is asked again of the fallback, and a failure
+that says the API is down or refusing (unreachable, timeout, refused,
+an HTTP error) rests Muse Spark for META_REST_S seconds so each check
+does not wait out the timeout first. Every line printed about it names
+the model. With TRUSS_META_API_KEY unset nothing changes.
+
 A model name naming the contributor tier is refused outright. A key is
 only sent over https or to this machine, never over plain http to the
 DGX.
@@ -43,6 +62,7 @@ import base64
 import json
 import math
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -53,6 +73,14 @@ from urllib.parse import urlparse
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
 DEFAULT_MODEL = "muse-glimmer-30b"
 DEFAULT_TIMEOUT_S = 120.0
+
+DEFAULT_META_BASE_URL = "https://api.meta.ai/v1"
+DEFAULT_META_MODEL = "muse-spark-1.3"
+DEFAULT_META_TIMEOUT_S = 45.0
+# How long Muse Spark rests after a failure saying the API is down, when
+# there is a fallback to ask instead.
+META_REST_S = 300.0
+_REST_KINDS = ("unreachable", "timeout", "refused", "http")
 
 # A thinking model that runs out of room is retried once with this
 # much more room.
@@ -70,9 +98,10 @@ class EndpointError(Exception):
     "unreachable", "refused", "http", "timeout", "truncated" or
     "invalid"."""
 
-    def __init__(self, message, kind="invalid"):
+    def __init__(self, message, kind="invalid", model=None):
         super().__init__(message)
         self.kind = kind
+        self.model = model
 
 
 def refuse_contributor(model):
@@ -109,13 +138,13 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def _timeout_seconds(raw):
+def _timeout_seconds(raw, default=DEFAULT_TIMEOUT_S):
     try:
         value = float(raw)
     except (TypeError, ValueError):
-        return DEFAULT_TIMEOUT_S
+        return default
     if not math.isfinite(value) or value <= 0:
-        return DEFAULT_TIMEOUT_S
+        return default
     return value
 
 
@@ -128,6 +157,95 @@ def config_from_env():
     timeout_s = _timeout_seconds(os.environ.get("TRUSS_TIMEOUT_S"))
     refuse_contributor(model)
     return EndpointConfig(base_url.rstrip("/"), model, api_key, timeout_s)
+
+
+def meta_config_from_env():
+    """Muse Spark over the Meta Model API, or None when
+    TRUSS_META_API_KEY is unset. Raises EndpointError for a
+    contributor-tier model, or for a base URL that is not https: the
+    key never crosses the network in the clear."""
+    api_key = (os.environ.get("TRUSS_META_API_KEY") or "").strip() or None
+    if api_key is None:
+        return None
+    base_url = (os.environ.get("TRUSS_META_BASE_URL") or "").strip() or DEFAULT_META_BASE_URL
+    model = (os.environ.get("TRUSS_META_MODEL") or "").strip() or DEFAULT_META_MODEL
+    timeout_s = _timeout_seconds(os.environ.get("TRUSS_META_TIMEOUT_S"), DEFAULT_META_TIMEOUT_S)
+    refuse_contributor(model)
+    if urlparse(base_url).scheme != "https":
+        raise EndpointError(
+            "TRUSS_META_BASE_URL is not https, so the Meta key is never sent there.",
+            kind="config",
+            model=model,
+        )
+    return EndpointConfig(base_url.rstrip("/"), model, api_key, timeout_s)
+
+
+def meta_on():
+    """True when TRUSS_META_API_KEY is set, whether or not the rest of
+    the Meta settings are usable."""
+    return bool((os.environ.get("TRUSS_META_API_KEY") or "").strip())
+
+
+def fallback_config_from_env():
+    """The endpoint asked when Muse Spark is not, or None. With the Meta
+    key set, the fallback is used only when TRUSS_BASE_URL is set
+    explicitly; without it, this is config_from_env() as always."""
+    if meta_on() and not (os.environ.get("TRUSS_BASE_URL") or "").strip():
+        return None
+    return config_from_env()
+
+
+_rest = {"until": 0.0}
+_rest_lock = threading.Lock()
+
+
+def _resting():
+    with _rest_lock:
+        return time.monotonic() < _rest["until"]
+
+
+def _rest_meta():
+    with _rest_lock:
+        _rest["until"] = time.monotonic() + META_REST_S
+
+
+def reset_rest():
+    """Let Muse Spark be asked again at once. For tests."""
+    with _rest_lock:
+        _rest["until"] = 0.0
+
+
+# Where lines about Muse Spark and its fallback go: the server log.
+report = print
+
+
+def describe_from_env():
+    """What GET /status and the startup line show: the model asked
+    first, its base URL, the fallback's model and base URL, and any
+    setup problem. Never the key."""
+    out = {"model": None, "base_url": None, "fallback_model": None,
+           "fallback_base_url": None, "meta_resting": False, "config_error": None}
+    problems = []
+    try:
+        meta = meta_config_from_env()
+    except EndpointError as e:
+        meta = None
+        problems.append(str(e))
+    try:
+        fallback = fallback_config_from_env()
+    except EndpointError as e:
+        fallback = None
+        problems.append(str(e))
+    first = meta or fallback
+    if first is not None:
+        out["model"], out["base_url"] = first.model, first.base_url
+    if meta is not None and fallback is not None:
+        out["fallback_model"], out["fallback_base_url"] = fallback.model, fallback.base_url
+        out["meta_resting"] = _resting()
+    if first is None and not problems:
+        problems.append("No model is set up: set TRUSS_META_API_KEY or TRUSS_BASE_URL.")
+    out["config_error"] = " ".join(problems) or None
+    return out
 
 
 # -- content parts ------------------------------------------------------------
@@ -359,8 +477,55 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
     thinking that never closed) is never parsed, whatever it holds: it
     is retried once with TRUNCATION_GROWTH times the room, and a second
     cut-off raises EndpointError with kind "truncated".
+
+    With no config, the call goes to Muse Spark when TRUSS_META_API_KEY
+    is set and falls back as the module docstring says; "_model" names
+    the model that answered, and an EndpointError's model the last one
+    asked.
     """
-    cfg = config or config_from_env()
+    if config is not None:
+        return _ask_one(config, system, content, schema, schema_name, max_tokens)
+    meta, fallback, meta_problem = None, None, None
+    try:
+        meta = meta_config_from_env()
+    except EndpointError as e:
+        meta_problem = e
+    fallback = fallback_config_from_env()
+    if meta_problem is not None:
+        if fallback is None:
+            raise meta_problem
+        report(f"Muse Spark is not used ({meta_problem}); asking {fallback.model}.")
+    if meta is not None and not (fallback is not None and _resting()):
+        try:
+            return _ask_one(meta, system, content, schema, schema_name, max_tokens)
+        except EndpointError as e:
+            if fallback is None:
+                raise
+            if e.kind in _REST_KINDS:
+                _rest_meta()
+                rest = f" Resting {meta.model} for {int(META_REST_S)} s."
+            else:
+                rest = ""
+            report(f"{meta.model} failed ({e}); asking {fallback.model} instead.{rest}")
+    if fallback is None:
+        raise EndpointError(
+            "No model is set up: set TRUSS_META_API_KEY or TRUSS_BASE_URL.", kind="config"
+        )
+    return _ask_one(fallback, system, content, schema, schema_name, max_tokens)
+
+
+def _ask_one(cfg, system, content, schema, schema_name, max_tokens):
+    """ask_json against one endpoint, with its one retry. An
+    EndpointError raised here names cfg's model."""
+    try:
+        return _ask_one_inner(cfg, system, content, schema, schema_name, max_tokens)
+    except EndpointError as e:
+        if e.model is None:
+            e.model = cfg.model
+        raise
+
+
+def _ask_one_inner(cfg, system, content, schema, schema_name, max_tokens):
     refuse_contributor(cfg.model)
     api_key = cfg.api_key if _key_allowed(cfg.base_url) else None
     url = f"{cfg.base_url}/chat/completions"
@@ -425,3 +590,47 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
         parsed["_model"] = cfg.model
         return parsed
     raise EndpointError(f"{failure} No valid reply after one retry.", kind=failure_kind)
+
+
+# -- smoke test ---------------------------------------------------------------
+
+
+def main(argv):
+    """python3 endpoint.py --smoke: one short words-only call, routed the
+    way every check is, printing which model answered and how long it
+    took. No photo is sent. Exits 1 when no model answered."""
+    if argv != ["--smoke"]:
+        print("usage: python3 endpoint.py --smoke")
+        return 2
+    where = describe_from_env()
+    if where["config_error"]:
+        print(f"Setup: {where['config_error']}")
+    line = f"Asking {where['model']} at {where['base_url']}"
+    if where["fallback_model"]:
+        line += f" (fallback {where['fallback_model']} at {where['fallback_base_url']})"
+    print(line)
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    started = time.monotonic()
+    try:
+        reply = ask_json(
+            "You are a smoke test. Answer in one word.",
+            [text_part("What color is a clear daytime sky?")],
+            schema, "smoke", max_tokens=1024,
+        )
+    except EndpointError as e:
+        print(f"FAILED ({e.model or 'no model'}): {e}")
+        return 1
+    seconds = time.monotonic() - started
+    print(f"OK: {reply['_model']} answered {reply['answer']!r} in {seconds:.1f} s")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main(sys.argv[1:]))

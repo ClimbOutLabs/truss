@@ -23,6 +23,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+# A Meta key exported in this shell must never send a test's request
+# to the real API.
+for _name in ("TRUSS_META_API_KEY", "TRUSS_META_BASE_URL", "TRUSS_META_MODEL"):
+    os.environ.pop(_name, None)
 
 import aman_check  # noqa: E402
 
