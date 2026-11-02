@@ -12,19 +12,22 @@ guide.py): one at a time, each confirmed before the next is spoken.
 No photo is sent: only the job's words.
 
 The guide never makes a safety call by eye, and neither do these
-steps. The model is told to leave out any step whose yes would be an
-all-clear on something that can hurt (a stove, pills, whether food is
-cooked through) and to name it in left_out instead; a step about how
-done food is becomes a reading off a thermometer's display. A small
-word list then catches a safety step the model wrote anyway and moves
-it to left_out, so the wearer hears it is not checked here. Those are
-the jobs for a standing question with its two reference looks.
+steps. That is judged by intent, not by a list of objects: the writing
+call is told to leave out any step whose yes would tell the person
+that something is now safe, and then a second, separate words-only
+call reads each written step and says whether a yes to it would be
+such an all-clear (something that could hurt someone if wrong is off,
+out, unplugged, locked, taken, or done inside). Those steps are moved
+to left_out, so the wearer hears they are not checked here; they are
+the jobs for a standing question with its two reference looks. A
+number read off a probe thermometer's display is a reading the person
+judges, not an all-clear, so doneness can still be a step. If the
+second call fails or leaves a step unjudged, that step is treated as
+an all-clear: the guide fails closed.
 
 compose_steps never returns a half-made list: it returns the steps or
 raises TaskError with a plain sentence the Desk can show.
 """
-
-import re
 
 MAX_STEPS = 8
 MAX_STEP_CHARS = 160
@@ -62,14 +65,13 @@ SYSTEM_PROMPT = (
     "what a photo shows: something present or gone, a count, a "
     "position, a colour, or a number read off a display or dial. One "
     'visible thing per step. Good: "Are the onions golden brown?", '
-    '"Is the back door bolt across?", "Are all four legs screwed on?", '
+    '"Is the shelf level?", "Are all four legs screwed on?", '
     '"Does the thermometer read 74 or more?". Bad: "Did you wash your '
     'hands?" (not visible), "Is everything ready?" (not one thing). '
-    "Never write a step whose yes would be an all-clear on something "
-    "that can hurt someone: whether a stove, oven or burner is off, "
-    "whether pills or medicine were taken or the dose is right, whether "
-    "food is cooked through or safe to eat, whether something is safe. "
-    "Leave those steps out. The one exception is food doneness when a "
+    "Never write a step whose yes would tell the person that something "
+    "which could hurt someone if it were wrong is now safe: switched "
+    "off, put out, unplugged, locked, taken, cooked through, or safe in "
+    "any other way, whatever the object. Leave those steps out. The one exception is food doneness when a "
     "probe thermometer is part of the job: then the step reads the "
     "number on the thermometer's display, as in the good example. "
     "left_out: the steps you left out for that reason, each in a few "
@@ -77,26 +79,78 @@ SYSTEM_PROMPT = (
     "Use plain, neutral words. Never guess at details the job does not give."
 )
 
-# A step that reads as a safety all-clear despite the prompt. A plain
-# word list, not a classifier: it errs toward leaving a step out,
-# which the wearer hears about, over checking it by eye.
-SAFETY_WORDS = re.compile(
-    r"\b(safe|safely|unsafe|stove|oven|burner|burners|hob|gas|cooked|"
-    r"undercooked|raw|pill|pills|medicine|medicines|medication|"
-    r"medications|dose|doses|dosage|insulin)\b",
-    re.IGNORECASE,
+# The second call: each written step judged by intent.
+CLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "step": {"type": "string"},
+                    "all_clear": {"type": "boolean"},
+                },
+                "required": ["step", "all_clear"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["steps"],
+    "additionalProperties": False,
+}
+
+CLASSIFY_SCHEMA_NAME = "guide_step_intent"
+
+CLASSIFY_PROMPT = (
+    "You check the steps of a guided job before they are used. Each step "
+    "is a yes/no question that will be answered from one photo from "
+    "smart glasses, and a yes moves the person on. A wrong yes must never "
+    "tell someone that something is safe when it is not. You are given "
+    "the steps, one per line. For each step, judge its intent, not its "
+    "words: would a yes to it tell the person that something which could "
+    "hurt someone if it were wrong is now safe? That covers anything "
+    "declared off, out, unplugged, shut down, locked, secured, taken, "
+    "given, or cooked or safe to eat or use, whatever the object. If so, "
+    "all_clear is true. A step that only reads a number off a probe "
+    "thermometer's display is a reading the person judges, not an "
+    "all-clear: all_clear is false for it, unless it also declares "
+    "something else safe. Steps about building, tidying, placing, "
+    "counting, or how something looks while the person is still working "
+    "are not all-clears. When unsure, all_clear is true. Reply with JSON "
+    "only: steps, one entry per given step, in the same order, with the "
+    "step copied exactly and all_clear."
 )
-# A step that reads a number off a display is a reading, not a
-# verdict, so it stays even when it names the food.
-READING_WORDS = re.compile(r"\b(thermometer|display|reads?|reading)\b", re.IGNORECASE)
 
 
 class TaskError(Exception):
     pass
 
 
-def is_safety_step(step):
-    return bool(SAFETY_WORDS.search(step)) and not READING_WORDS.search(step)
+def judge_steps(steps, ask_json, text_part):
+    """Which steps are all-clears, by intent: a list of booleans, one
+    per step. Fails closed: a failed call, or a step it leaves
+    unjudged, counts as an all-clear."""
+    if not steps:
+        return []
+    try:
+        answer = ask_json(
+            CLASSIFY_PROMPT,
+            [text_part("\n".join(steps))],
+            CLASSIFY_SCHEMA,
+            CLASSIFY_SCHEMA_NAME,
+            max_tokens=MAX_TOKENS,
+        )
+        judged = {}
+        for item in answer.get("steps") or []:
+            if isinstance(item, dict) and isinstance(item.get("step"), str):
+                key = _clean_step(item["step"])
+                verdict = item.get("all_clear")
+                # A step judged twice keeps its safer verdict.
+                judged[key] = judged.get(key, False) or verdict is not False
+    except Exception:
+        return [True] * len(steps)
+    return [judged.get(step, True) for step in steps]
 
 
 def _clean_step(step):
@@ -141,19 +195,21 @@ def compose_steps(task, ask_json, text_part):
     if not isinstance(answer, dict):
         raise TaskError("The model's answer was not a list of steps.")
 
-    steps, left_out = [], []
+    written = []
     for raw in answer.get("steps") or []:
         step = _clean_step(raw)
-        if not step or step in steps:
-            continue
-        if is_safety_step(step):
+        if step and step not in written:
+            written.append(step)
+    written = written[:MAX_STEPS]
+    steps, left_out = [], []
+    for step, all_clear in zip(written, judge_steps(written, ask_json, text_part)):
+        if all_clear:
             left_out.append(step.rstrip("?"))
         else:
             steps.append(step)
     for raw in answer.get("left_out") or []:
         if isinstance(raw, str) and " ".join(raw.split()):
             left_out.append(" ".join(raw.split())[:MAX_STEP_CHARS])
-    steps = steps[:MAX_STEPS]
     if not steps:
         raise TaskError(
             "No step of that job can be checked by eye here. Safety checks "

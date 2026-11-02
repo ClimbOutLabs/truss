@@ -465,13 +465,16 @@ night", "assemble the bookshelf", "chicken curry") and sends it to
 no photo) writes two to eight steps, each a yes/no question a glance
 can settle, and the guide starts on them (`task_steps.py`).
 
-A guide never makes a safety call by eye. The model is told to leave
-out any step whose yes would be an all-clear on a stove, pills or
-medicine, or whether food is cooked through, and a word list catches
-any such step it writes anyway; what was left out is spoken first
-("Not checked in this guide: ..."). Those belong in a standing question
-with its two looks. Doneness becomes a reading off a probe
-thermometer's display ("Does the thermometer read 74 or more?").
+A guide never makes a safety call by eye, judged by intent rather
+than by a list of objects. The writing call is told to leave out any
+step whose yes would tell the person something is now safe (off, out,
+unplugged, locked, taken, cooked through). A second words-only call
+then judges each written step the same way, and every all-clear is
+moved out; if that call fails or skips a step, the step is left out
+(fail closed). What was left out is spoken first ("Not checked in this
+guide: ..."). Those belong in a standing question with its two looks.
+Doneness becomes a reading off a probe thermometer's display ("Does
+the thermometer read 74 or more?"), which the person judges.
 
 Start, skip and stop calls that carry `"phone": true` (the Desk's do)
 also queue their lines for the phone, which speaks them from its alert

@@ -25,7 +25,7 @@ for _name in ("TRUSS_META_API_KEY", "TRUSS_META_BASE_URL", "TRUSS_META_MODEL"):
     os.environ.pop(_name, None)
 
 import task_steps  # noqa: E402
-from task_steps import TaskError, compose_steps, is_safety_step, left_out_line  # noqa: E402
+from task_steps import TaskError, compose_steps, judge_steps, left_out_line  # noqa: E402
 
 
 def check(name, cond):
@@ -39,10 +39,37 @@ def text_part(text):
     return {"type": "text", "text": text}
 
 
-def asker(answer, calls=None):
+# The stand-in for the intent judge: a step is an all-clear when its
+# text is in this set. The real judge is the model; these tests check
+# what the code does with its verdicts, not the model's judgement.
+ALL_CLEARS = {
+    "Is the stove off?",
+    "Is the iron unplugged?",
+    "Is the heater switched off?",
+    "Is the candle out?",
+    "Is the kettle unplugged?",
+    "Does the oven display read off?",
+    "Is the back door locked?",
+    "Is the chicken cooked through?",
+}
+
+
+def asker(answer, calls=None, judge="intent"):
+    """answer is the writing call's reply. judge is "intent" (judge by
+    ALL_CLEARS), "fail" (the judging call raises), "skip" (it judges
+    nothing), or a dict of step -> verdict."""
     def ask_json(system, content, schema, schema_name, max_tokens=None):
         if calls is not None:
-            calls.append({"system": system, "content": content, "schema": schema})
+            calls.append({"name": schema_name, "system": system, "content": content})
+        if schema_name == task_steps.CLASSIFY_SCHEMA_NAME:
+            steps = content[0]["text"].split("\n")
+            if judge == "fail":
+                raise RuntimeError("judge down")
+            if judge == "skip":
+                return {"steps": [], "_model": "muse-spark-test"}
+            table = judge if isinstance(judge, dict) else {s: s in ALL_CLEARS for s in steps}
+            return {"steps": [{"step": s, "all_clear": table[s]} for s in steps if s in table],
+                    "_model": "muse-spark-test"}
         if isinstance(answer, Exception):
             raise answer
         return dict(answer, _model="muse-spark-test")
@@ -52,8 +79,8 @@ def asker(answer, calls=None):
 LOCK_UP = {
     "title": "Lock up",
     "steps": [
-        "Is the back door bolt across",
-        "Are the living room windows shut?",
+        "Are the living room curtains drawn",
+        "Is the back door locked?",
         "Is the stove off?",
         "Is the porch light on?",
     ],
@@ -65,29 +92,50 @@ def test_steps_come_back_cleaned():
     calls = []
     plan = compose_steps("  lock up   for the night ", asker(LOCK_UP, calls), text_part)
     check("the job's words are sent, trimmed", calls[0]["content"] == [text_part("The job: lock up for the night")])
-    check("no photo is sent", all(p["type"] == "text" for p in calls[0]["content"]))
-    check("a step without a question mark gets one", plan["steps"][0] == "Is the back door bolt across?")
+    check("no photo is sent", all(p["type"] == "text" for c in calls for p in c["content"]))
+    check("two calls: write, then judge", [c["name"] for c in calls] == ["guide_task", "guide_step_intent"])
+    check("a step without a question mark gets one", plan["steps"][0] == "Are the living room curtains drawn?")
     check("the title is kept", plan["title"] == "Lock up")
     check("the answering model is named", plan["model"] == "muse-spark-test")
 
 
-def test_a_safety_step_is_moved_out():
+def test_all_clears_are_moved_out_by_the_judge():
     plan = compose_steps("lock up", asker(LOCK_UP), text_part)
-    check("the stove step is not a guide step", "Is the stove off?" not in plan["steps"])
-    check("it is named as left out", plan["left_out"] == ["Is the stove off"])
-    check("the others stand, in order", plan["steps"] == [
-        "Is the back door bolt across?",
-        "Are the living room windows shut?",
+    check("the all-clears are not guide steps", plan["steps"] == [
+        "Are the living room curtains drawn?",
         "Is the porch light on?",
     ])
+    check("they are named as left out, in order", plan["left_out"] == ["Is the back door locked", "Is the stove off"])
 
 
-def test_a_thermometer_reading_stays():
-    check("doneness by eye is a safety step", is_safety_step("Is the chicken cooked through?"))
-    check("a thermometer reading is not", not is_safety_step("Does the thermometer read 74 or more?"))
-    check("pills by eye are a safety step", is_safety_step("Did you take your pills?"))
-    check("a plain step is not", not is_safety_step("Are the onions golden brown?"))
-    check("a word inside another word does not count", not is_safety_step("Is the gasket seated?"))
+def test_each_hazard_the_review_named_is_left_out():
+    for step in sorted(ALL_CLEARS):
+        answer = {"title": "t", "steps": ["Is the shelf level?", step], "left_out": []}
+        plan = compose_steps("a job", asker(answer), text_part)
+        check(f"left out: {step}", plan["steps"] == ["Is the shelf level?"] and plan["left_out"] == [step.rstrip("?")])
+
+
+def test_a_thermometer_reading_stays_when_judged_a_reading():
+    answer = {"title": "Curry", "steps": ["Does the thermometer read 74 or more?"], "left_out": []}
+    plan = compose_steps("chicken curry", asker(answer), text_part)
+    check("the reading is a step", plan["steps"] == ["Does the thermometer read 74 or more?"])
+    check("the judge is told a thermometer reading is not an all-clear",
+          "thermometer" in task_steps.CLASSIFY_PROMPT and "not an all-clear" in task_steps.CLASSIFY_PROMPT)
+
+
+def test_the_judge_fails_closed():
+    steps = ["Is the shelf level?", "Is the porch light on?"]
+    check("a failed judging call leaves every step out",
+          judge_steps(steps, asker({}, judge="fail"), text_part) == [True, True])
+    check("an unjudged step is an all-clear",
+          judge_steps(steps, asker({}, judge="skip"), text_part) == [True, True])
+    check("a missing verdict on one step leaves that one out",
+          judge_steps(steps, asker({}, judge={"Is the shelf level?": False}), text_part) == [False, True])
+    try:
+        compose_steps("build a shelf", asker({"title": "s", "steps": steps, "left_out": []}, judge="fail"), text_part)
+        check("no judge, no guide", False)
+    except TaskError as e:
+        check("no judge, no guide, said plainly", "standing question" in str(e))
 
 
 def test_model_left_out_is_kept_and_spoken():
@@ -114,9 +162,9 @@ def test_failures_are_plain():
         check("a failed call says so", str(e) == "Muse Spark did not answer, so no steps were written.")
     try:
         compose_steps("make dinner", asker({"title": "x", "steps": ["Is the stove off?"], "left_out": []}), text_part)
-        check("only safety steps raises", False)
+        check("only all-clears raises", False)
     except TaskError as e:
-        check("only safety steps is refused plainly", "standing question" in str(e))
+        check("only all-clears is refused plainly", "standing question" in str(e))
 
 
 def test_steps_are_capped_and_deduplicated():
@@ -256,8 +304,10 @@ def test_stop_with_phone_replaces_the_queue():
 
 if __name__ == "__main__":
     test_steps_come_back_cleaned()
-    test_a_safety_step_is_moved_out()
-    test_a_thermometer_reading_stays()
+    test_all_clears_are_moved_out_by_the_judge()
+    test_each_hazard_the_review_named_is_left_out()
+    test_a_thermometer_reading_stays_when_judged_a_reading()
+    test_the_judge_fails_closed()
     test_model_left_out_is_kept_and_spoken()
     test_failures_are_plain()
     test_steps_are_capped_and_deduplicated()

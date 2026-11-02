@@ -519,7 +519,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def handle_desk(self):
-        """The Mac page for planting questions, laying out her day,
+        """The Mac page for planting questions, laying out the day,
         reading answers, and sending a saved photo as a capture. One
         static file; everything it does goes through the endpoints
         below, so it changes nothing about how checks are made."""
@@ -907,8 +907,9 @@ class TrussHandler(BaseHTTPRequestHandler):
 
     def handle_guide_task(self):
         """Start a guide from a named job: POST JSON {"task": "lock up
-        for the night"}. The model writes the steps (see task_steps.py),
-        leaving out any safety call by eye, and the guide starts on
+        for the night"}. The model writes the steps and a second call
+        judges each by intent (see task_steps.py), leaving out any
+        safety all-clear by eye, and the guide starts on
         them. The reply carries the steps and what was left out; with
         "phone": true the opening lines are queued for the phone."""
         body = self._guide_body()
