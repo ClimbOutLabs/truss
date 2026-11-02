@@ -30,6 +30,7 @@ import history
 from phone_watch import WatchDesk
 from plant_compile import Compiler, compile_folder, needs_compile
 from questions import QuestionStore, SafetyLooksNeeded
+import settings
 
 # Get the Wi-Fi interface address
 def get_wifi_address():
@@ -303,6 +304,67 @@ def status():
 # memory; while a guide is active, captures go to it instead of the loop.
 GUIDE = {"session": None}
 
+def set_checker(value):
+    """Switch who answers the checks: "endpoint" (Muse Spark, with its
+    fallback) or "aman". Read at every check, so it takes effect on
+    the next one."""
+    global CHECKER
+    CHECKER = "aman" if value == "aman" else "endpoint"
+
+
+def settings_view():
+    out = settings.view()
+    out["checker"] = CHECKER
+    return out
+
+
+def test_meta():
+    """(ok, text) for the Settings tab's Muse Spark test: one short
+    words-only call to Muse Spark alone, never its fallback."""
+    try:
+        cfg = endpoint.meta_config_from_env()
+    except endpoint.EndpointError as e:
+        return False, str(e)
+    if cfg is None:
+        return False, "No Meta Model API key is saved."
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    try:
+        reply = endpoint.ask_json(
+            "You are a connection test. Answer in one word.",
+            [endpoint.text_part("What color is a clear daytime sky?")],
+            schema, "connection_test", config=cfg, max_tokens=1024,
+        )
+    except endpoint.EndpointError as e:
+        return False, f"{cfg.model} did not answer: {e}"
+    return True, f"{reply['_model']} answered."
+
+
+def test_aman():
+    """(ok, text) for the Settings tab's Aman test: sign in and list
+    a few chats. Makes no check and starts no turn."""
+    if not (os.environ.get("AMAN_TOKEN") or "").strip():
+        return False, "No Aman sign-in token is saved."
+    if not (os.environ.get("AMAN_CHECK_SESSION_ID") or "").strip():
+        return False, "No Aman check chat is saved."
+    try:
+        base, token, _session, _timeout = aman_check._config()
+        status_code, _text = aman_check._request(
+            "GET", f"{base}/api/v1/sessions?limit=5", token, 10
+        )
+    except aman_check._NoCheck:
+        return False, "Aman did not answer at that address."
+    if status_code == 200:
+        return True, f"Aman at {base} took the sign-in token."
+    if status_code in (401, 403):
+        return False, "Aman refused the sign-in token. It may have expired."
+    return False, f"Aman answered with an error (status {status_code})."
+
+
 # The Desk's start and stop for the phone's watching (see phone_watch.py).
 WATCH = WatchDesk()
 
@@ -356,6 +418,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_json(status())
         elif path == "/watch":
             self.send_json(WATCH.view())
+        elif path == "/settings":
+            self.send_json(settings_view())
         else:
             self.send_error(404, "Not Found")
 
@@ -375,6 +439,14 @@ class TrussHandler(BaseHTTPRequestHandler):
             return
         if path == "/watch/phone":
             self.handle_watch_phone()
+            return
+        # Settings carry keys: saved and tested off the write lock (a
+        # test can take seconds), and only from the Desk's own page.
+        if path == "/settings":
+            self.handle_settings_save()
+            return
+        if path == "/settings/test":
+            self.handle_settings_test()
             return
         with WRITE_LOCK:
             self._do_post(path)
@@ -535,6 +607,73 @@ class TrussHandler(BaseHTTPRequestHandler):
             return
         self.send_json(view)
         print(f"POST /watch -> ask the phone to {'start' if on else 'stop'} watching")
+
+    def _from_desk(self):
+        """True for a JSON request from the Desk's own page. A page on
+        another site cannot send JSON here without asking first (the
+        server never says yes), and a browser names its page's origin,
+        which must be this server. Anything else is refused, so no web
+        page can change or test the keys."""
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self.send_error(415, "Settings take a JSON body.")
+            return False
+        # The Host must be an address, not a name: a site whose name
+        # was pointed at this Mac would otherwise pass as same-origin.
+        host = urlparse(f"//{self.headers.get('Host') or ''}").hostname or ""
+        if host != "localhost" and not re.fullmatch(r"[0-9.]+|[0-9a-f:]+", host):
+            self.send_error(403, "Open the Desk by the Mac's address to change settings.")
+            return False
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            o = urlparse(origin)
+            if o.netloc.lower() != (self.headers.get("Host") or "").lower():
+                self.send_error(403, "Settings can only be changed from the Desk itself.")
+                return False
+        return True
+
+    def handle_settings_save(self):
+        """Save settings from the Desk: POST JSON with any of meta_key,
+        aman_base, aman_token, aman_session, checker, clear. Keys are
+        never echoed back or printed."""
+        if not self._from_desk():
+            return
+        try:
+            data = self._json_body()
+        except (ValueError, UnicodeDecodeError):
+            self.send_error(400, "Body must be a JSON object.")
+            return
+        try:
+            settings.save(data)
+        except settings.SettingsError as e:
+            self.send_error(400, str(e))
+            return
+        if isinstance(data, dict) and data.get("checker") in settings.CHECKERS:
+            set_checker(data["checker"])
+        names = sorted(k for k in (data if isinstance(data, dict) else {}) if k != "clear")
+        print(f"POST /settings -> saved {', '.join(names) or 'nothing'}")
+        self.send_json(settings_view())
+
+    def handle_settings_test(self):
+        """Try a connection: POST JSON {"what": "meta"} asks Muse Spark
+        one words-only question (no photo); {"what": "aman"} signs in
+        to Aman and lists its chats. Returns {"ok", "text", "seconds"};
+        the text never carries a key."""
+        if not self._from_desk():
+            return
+        try:
+            data = self._json_body()
+            what = data.get("what") if isinstance(data, dict) else None
+        except (ValueError, UnicodeDecodeError):
+            what = None
+        if what not in ("meta", "aman"):
+            self.send_error(400, 'Body must be JSON like {"what": "meta"}.')
+            return
+        started = time.monotonic()
+        ok, text = test_meta() if what == "meta" else test_aman()
+        seconds = round(time.monotonic() - started, 1)
+        print(f"POST /settings/test {what} -> {'ok' if ok else 'failed'} ({seconds} s)")
+        self.send_json({"ok": ok, "text": text, "seconds": seconds})
 
     def handle_watch_phone(self):
         """The phone checks in with how its watching stands and gets
@@ -1017,6 +1156,24 @@ def _sweep_forever():
 def main():
     host = get_wifi_address()
     port = 8792
+
+    # Settings saved from the Desk (see settings.py) go into the
+    # environment before anything is asked.
+    try:
+        saved_checker, applied = settings.apply_saved()
+    except settings.SettingsError as e:
+        saved_checker, applied = None, []
+        print(e)
+    if applied:
+        print(f"Saved Desk settings used: {', '.join(applied)} ({settings.view()['file']}).")
+    if saved_checker:
+        set_checker(saved_checker)
+    if CHECKER == "aman":
+        print("Checks will be made by Aman.")
+    else:
+        _where = endpoint.describe_from_env()
+        if _where["model"]:
+            print(f"Checks go to {_where['model']} at {_where['base_url']}.")
 
     threading.Thread(target=_sweep_forever, daemon=True).start()
     compile_waiting()
