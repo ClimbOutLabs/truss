@@ -97,12 +97,6 @@ class FakeModel:
                         fake.fail_next -= 1
                         return self._send(500, {"error": "boom"})
                     reply = {"verdict": fake.verdict, "reason": "The knobs point up.", "missing": ""}
-                    schema = body.get("response_format", {}).get("json_schema", {}).get("schema", {})
-                    if "knobs_in_view" in schema.get("properties", {}):
-                        # A stove question: the knob report has to back the verdict.
-                        position = "off" if fake.verdict == "yes" else "on"
-                        reply = dict(reply, knobs_in_view="all",
-                                     knobs=[{"where": "front left", "position": position}])
                 self._send(200, {
                     "choices": [{"message": {"content": json.dumps(reply)}, "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": 1000, "completion_tokens": 100},

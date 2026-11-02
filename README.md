@@ -151,7 +151,7 @@ How to bring the models up on a DGX Spark:
 
 ## Eval
 
-`eval/` is a harness of 20 staged household questions, five of them safety
+`eval/` is a harness of 21 staged household questions, five of them safety
 questions (stove, oven, front door, tonight's pills, hair straightener)
 where a false yes is a false all-clear. Frames are split into tuning and
 held-out; prompts are tuned on tuning only, and numbers are reported on

@@ -47,8 +47,7 @@ REF_NO = TMP / "ref-no.jpg"
 REF_NO.write_bytes(NO_BYTES)
 
 TQ = '"' * 3
-# The generic checks below ask about the front door: a stove question
-# is held to its knobs (see test_knobs.py) and needs the knob schema.
+# The generic checks below ask about the front door.
 YES = {"verdict": "yes", "reason": "The deadbolt thumb turn is horizontal.", "missing": ""}
 CANNOT = {
     "verdict": "cannot_tell",
