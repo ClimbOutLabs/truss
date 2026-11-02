@@ -6,7 +6,7 @@
 <title>Truss Desk</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
 <style>
-/* The Mac side of Truss: plant questions, lay out her day, read the
+/* The Mac side of Truss: plant questions, lay out the day, read the
    answers, and send a saved photo as if the glasses took it. Served
    by server.py at /desk; every call goes to the server's own
    endpoints. Same Paper and ink palette as the phone app. */
@@ -36,15 +36,11 @@ h2{font-size:16px;font-weight:600;margin:0}
 .label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .spread{justify-content:space-between}
-/* her day */
+/* the day */
 .slot{display:grid;grid-template-columns:62px 1fr;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
 .slot:first-child{border-top:0}
 .t{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:500}
 .slot b{font-weight:600;font-size:14px;display:block}
-.templates{display:flex;flex-direction:column;gap:6px}
-.tpl{all:unset;cursor:pointer;border:1px dashed var(--line);border-radius:10px;padding:9px 12px;color:var(--ink)}
-.tpl:hover,.tpl:focus-visible{border-style:solid;border-color:var(--muted)}
-.tpl span{display:block;color:var(--muted);font-size:12px}
 /* lists */
 .tabs{display:flex;gap:18px;border-bottom:1px solid var(--line)}
 .tab{all:unset;cursor:pointer;padding-bottom:8px;color:var(--muted);font-weight:500}
@@ -92,17 +88,17 @@ input[type=text],input[type=time],input[type=number],input[type=date]{font:inher
   <header>
     <div>
       <h1>Truss Desk</h1>
-      <div class="muted">Plant her questions, lay out her day, and read what the glasses saw.</div>
+      <div class="muted">Plant your questions, lay out your day, and read what the glasses saw.</div>
     </div>
     <div class="status" id="status"><span><span class="dot"></span>Reaching the server…</span></div>
   </header>
 
   <div class="grid">
     <section class="panel" aria-labelledby="day-h">
-      <div class="row spread"><h2 id="day-h">Her day</h2><span class="note" id="today"></span></div>
+      <div class="row spread"><h2 id="day-h">Sample day</h2><span class="note" id="today"></span></div>
+      <p class="note" style="margin:0">An example routine. Plant a step to start watching it; steps already planted show how they stand.</p>
       <div id="day"></div>
-      <div class="label">Add to her day</div>
-      <div class="templates" id="templates"></div>
+      <div id="also"></div>
     </section>
 
     <section class="panel">
@@ -126,7 +122,7 @@ input[type=text],input[type=time],input[type=number],input[type=date]{font:inher
       <h2 id="plant-h">Plant a question</h2>
       <form id="plant" autocomplete="off">
         <div style="display:flex;flex-direction:column;gap:14px">
-          <label class="field"><span class="label">In her words</span>
+          <label class="field"><span class="label">In your own words</span>
             <input type="text" id="p-text" placeholder="Did I take my night pills?" required></label>
 
           <div class="field"><span class="label">Kind</span>
@@ -148,10 +144,10 @@ input[type=text],input[type=time],input[type=number],input[type=date]{font:inher
 
           <label class="row note"><input type="checkbox" id="p-safety"> A wrong answer would do harm (the stove, pills)</label>
 
-          <label class="field" id="look-at-field" hidden><span class="label">What to look at, if she misses it</span>
+          <label class="field" id="look-at-field" hidden><span class="label">What to look at, if it is missed</span>
             <input type="text" id="p-look" placeholder="the {weekday} PM compartment"></label>
 
-          <div class="field"><span class="label">Looks, from her own home</span>
+          <div class="field"><span class="label">Looks, from your own home</span>
             <div class="drops">
               <label class="drop" id="drop-yes"><span>Drop or choose<br>what <b>yes</b> looks like</span><input type="file" accept="image/jpeg" id="f-yes"></label>
               <label class="drop" id="drop-no"><span>Drop or choose<br>what <b>no</b> looks like</span><input type="file" accept="image/jpeg" id="f-no"></label>
@@ -252,7 +248,7 @@ async function loadStatus() {
   }
 }
 
-// ---- questions and her day ----------------------------------------------
+// ---- questions and the day ----------------------------------------------
 let QUESTIONS = [];
 let SHOWN = "";
 async function loadQuestions() {
@@ -275,7 +271,7 @@ function renderQuestions() {
   const live = QUESTIONS.filter((q) => q.state !== "retired");
   const retired = QUESTIONS.filter((q) => q.state === "retired");
   if (!QUESTIONS.length) {
-    $("tab-questions").innerHTML = `<div class="empty">No questions yet. Plant one on the right, or add one to her day.</div>`;
+    $("tab-questions").innerHTML = `<div class="empty">No questions yet. Plant one on the right, or plant a step of the sample day.</div>`;
     return;
   }
   const row = (q) => {
@@ -319,34 +315,60 @@ function alertInline(text) {
   $("tab-questions").insertAdjacentHTML("afterbegin", `<div class="msg err">${esc(text)}</div>`);
 }
 
+// The sample day: an example routine in time order. A step is planted
+// when each of its questions is in the store and not retired; a step
+// not yet planted is one click away. Planting a one-question step
+// fills the form, so its looks can be dropped in first; the bedtime
+// round plants its three questions at once, and they take their looks
+// in the Questions list.
+const SAMPLE = [
+  {time: "8:00 AM", name: "Morning pills", hint: "Did I do it, 8 to 9 AM",
+   texts: ["Did I take my morning pills?"],
+   fill: {text: "Did I take my morning pills?", kind: "done", when: "window", after: "08:00", until: "09:00", safety: true, look: "the {weekday} AM compartment"}},
+  {time: "12:30 PM", name: "Lights off after lunch", hint: "Is it so now, every 15 min until yes",
+   texts: ["Are the kitchen lights off?"],
+   fill: {text: "Are the kitchen lights off?", kind: "state", when: "interval", minutes: 15, safety: false}},
+  {time: "8:00 PM", name: "Bedtime round", hint: "Stove, front door, tonight's pills, in walk order",
+   texts: ["Is the stove off?", "Is the front door locked?", "Is tonight's pill compartment empty?"], round: true},
+  {time: "9:00 PM", name: "Night pills", hint: "Did I do it, 9 to 10 PM",
+   texts: ["Did I take my night pills?"],
+   fill: {text: "Did I take my night pills?", kind: "done", when: "window", after: "21:00", until: "22:00", safety: true, look: "the {weekday} PM compartment"}},
+];
+const norm = (t) => String(t || "").trim().toLowerCase();
+
 function renderDay() {
   const live = QUESTIONS.filter((q) => q.state !== "retired");
-  const timed = live.filter((q) => q.pattern && q.pattern.after).sort((a, b) => a.pattern.after.localeCompare(b.pattern.after));
-  const allDay = live.filter((q) => !q.pattern || !q.pattern.after);
-  const slot = (t, q) => {
-    const [pill] = stateText(q);
-    return `<div class="slot"><span class="t">${esc(t)}</span><div><b>${esc(q.question)}</b><span class="muted">${esc(whenText(q.pattern))} · ${esc(pill.toLowerCase())}</span></div></div>`;
-  };
-  let html = allDay.map((q) => slot("All day", q)).join("") + timed.map((q) => slot(clock(q.pattern.after), q)).join("");
-  $("day").innerHTML = html || `<div class="empty">Her day is empty. Add a step below.</div>`;
+  const byText = new Map(live.map((q) => [norm(q.question), q]));
+  const inSample = new Set();
+  $("day").innerHTML = SAMPLE.map((step, i) => {
+    const qs = step.texts.map((t) => byText.get(norm(t)));
+    qs.forEach((q) => q && inSample.add(q.slug));
+    let status;
+    if (qs.every(Boolean)) {
+      status = qs.map((q) => {
+        const [pill] = stateText(q);
+        return step.texts.length > 1 ? `${esc(q.question)} ${esc(pill.toLowerCase())}` : esc(pill.toLowerCase());
+      }).join("<br>");
+      status = `<span class="muted">${esc(step.hint)}<br>${status}</span>`;
+    } else {
+      status = `<span class="muted">${esc(step.hint)}</span><button class="btn2" style="margin-top:6px" data-step="${i}">Plant</button>`;
+    }
+    return `<div class="slot"><span class="t">${esc(step.time)}</span><div><b>${esc(step.name)}</b>${status}</div></div>`;
+  }).join("");
+  const others = live.filter((q) => !inSample.has(q.slug));
+  $("also").innerHTML = others.length
+    ? `<div class="label" style="margin:4px 0 2px">Also watched</div>` + others.map((q) => {
+        const [pill] = stateText(q);
+        const t = q.pattern && q.pattern.after ? clock(q.pattern.after) : "All day";
+        return `<div class="slot"><span class="t">${esc(t)}</span><div><b>${esc(q.question)}</b><span class="muted">${esc(whenText(q.pattern))} · ${esc(pill.toLowerCase())}</span></div></div>`;
+      }).join("")
+    : "";
 }
 
-// Common steps in her day. Each one fills the planting form, so the
-// looks can be dropped in before anything is planted; the bedtime
-// round plants its three questions at once.
-const TEMPLATES = [
-  {name: "Morning pills", hint: "Did I do it, 8 to 9 AM", fill: {text: "Did I take my morning pills?", kind: "done", when: "window", after: "08:00", until: "09:00", safety: true, look: "the {weekday} AM compartment"}},
-  {name: "Night pills", hint: "Did I do it, 9 to 10 PM", fill: {text: "Did I take my night pills?", kind: "done", when: "window", after: "21:00", until: "22:00", safety: true, look: "the {weekday} PM compartment"}},
-  {name: "Stove off after cooking", hint: "Is it so now, every 15 min until yes", fill: {text: "Is the stove off?", kind: "state", when: "interval", minutes: 15, safety: true}},
-  {name: "Bedtime round", hint: "Stove, front door, tonight's pills, in walk order", round: true},
-];
-function renderTemplates() {
-  $("templates").innerHTML = TEMPLATES.map((t, i) => `<button class="tpl" data-tpl="${i}">${esc(t.name)}<span>${esc(t.hint)}</span></button>`).join("");
-}
-$("templates").addEventListener("click", async (ev) => {
-  const b = ev.target.closest("[data-tpl]");
+$("day").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-step]");
   if (!b) return;
-  const t = TEMPLATES[Number(b.dataset.tpl)];
+  const t = SAMPLE[Number(b.dataset.step)];
   if (t.round) {
     showMsg("p-msg", "Planting the bedtime round…");
     try {
@@ -363,11 +385,11 @@ $("templates").addEventListener("click", async (ev) => {
   document.querySelector(`input[name=when][value=${f.when}]`).checked = true;
   if (f.after) { $("p-after").value = f.after; $("p-after-n").value = f.after; }
   if (f.until) $("p-until").value = f.until;
-  if (f.minutes != null) $("p-minutes").value = f.minutes;
+  if (f.minutes != null) { $("p-minutes").value = f.minutes; $("p-minutes").dataset.touched = "1"; }
+  syncForm();
   $("p-safety").checked = !!f.safety;
   $("p-look").value = f.look || "";
-  syncForm();
-  showMsg("p-msg", "Filled in. Drop in her yes and no looks, then start watching.");
+  showMsg("p-msg", f.safety ? "Filled in. Drop in the yes and no looks, then start watching." : "Filled in. Drop in the looks if you have them, then start watching.");
   $("p-text").focus();
 });
 
@@ -560,7 +582,6 @@ function refresh() {
   if (TAB === "answers") loadAnswers();
   if (TAB === "alerts") loadAlerts();
 }
-renderTemplates();
 syncForm();
 loadStatus().then(() => { refresh(); });
 setInterval(refresh, 15000);

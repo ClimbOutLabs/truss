@@ -52,10 +52,11 @@ Open `http://<the address the server prints>:8792/desk` in a browser on
 the Mac. It is one static page (`desk.html`) that only calls the
 endpoints listed above, so it changes nothing about how checks are made.
 
-- **Her day**: the standing questions laid out by time, plus one-click
-  steps (morning pills, night pills, stove after cooking, the bedtime
-  round) that fill in the planting form.
-- **Plant a question**: her words, the kind, when to check, the safety
+- **Sample day**: an example routine (morning pills, the bedtime round,
+  night pills) laid out by time, showing which steps are planted and
+  how each stands; a step not yet planted is one click away. Other
+  questions are listed under it.
+- **Plant a question**: the question in the wearer's words, the kind, when to check, the safety
   flag, and the yes and no looks dragged in from Photos as JPEGs. A
   question still waiting for looks (the bedtime round plants without
   them) takes them in the Questions list.
@@ -295,7 +296,7 @@ a description of photos that are no longer there. A compile that
 fails is retried after 30 seconds, 2 minutes, and 10 minutes, and at
 startup the server compiles any question that has both looks but no
 `looks.txt`. The compile never runs on a contributor-tier model,
-because it sends photos of her home. The call goes
+because it sends photos of the wearer's home. The call goes
 through the checker endpoint (`endpoint.py`), so it uses the same
 `TRUSS_BASE_URL` and `TRUSS_MODEL` as the checks: llama-server on the
 DGX by default, or the Meta Model API with no code change. A compile
@@ -315,16 +316,16 @@ store lock, so it could race a look being re-shot.
 ## Done questions
 
 A state question asks how things are: is the stove off. A done
-question watches for a thing she has to do, inside a time window:
+question watches for a thing the wearer has to do, inside a time window:
 take the night pills between 9 and 10, feed the dog between 8 and
 10 in the morning. It is planted like any question, with a "done"
 kind and a window pattern (see `questions.py`), and it is checked
-against her own reference looks like any question.
+against its own reference looks like any question.
 
-If a check sees her do it, the loop remembers the time and keeps
-the photo as the witness. If she goes back to the same place later
+If a check sees it done, the loop remembers the time and keeps
+the photo as the witness. If the wearer goes back to the same place later
 that day, about to do it again, one reminder is spoken: that is
-already done, and the time she did it. The reminder is spoken
+already done, and the time it was done. The reminder is spoken
 once, and its photo is kept as evidence like any firing.
 
 If the window closes and the loop never saw it done, that is not
@@ -336,7 +337,7 @@ be spoken stays pending and is offered again on the next poll. The
 only thing that ever clears an alert is that confirmation.
 
 An alert never says the thing was not done, because a missed witness
-is not a missed act: she may have done it with the glasses off. It
+is not a missed act: it may have been done with the glasses off. It
 says how much of the window was watched, read from the frames that
 were actually checked for that question, never from frames merely
 arriving (`coverage.py`; every check of a done question that returns
@@ -357,7 +358,7 @@ A question planted with `"safety": true` (the stove, the pills) is
 one where a wrong word does harm. A done question is a safety
 question unless planted with `"safety": false`. "You didn't take your pills" after
 a missed witness is how Truss would cause the double dose it exists
-to prevent, so a safety alert directs her to look and never tells her
+to prevent, so a safety alert says where to look and never says
 to act: "Check the Tuesday PM compartment first, before you act on
 this. When I see it, I'll tell you what's there." The thing to look at is
 the optional `"look_at"` phrase given at planting; `{weekday}` in it
@@ -371,7 +372,7 @@ refused at planting.
 
 After a safety miss, a state check is owed for the rest of that day.
 The next frame that shows the thing is checked as it is now, against
-her own reference looks, and the result is spoken once as a
+its own reference looks, and the result is spoken once as a
 description ("Here is what I see now: the Tuesday PM compartment is
 empty"), with the frame kept as evidence. A cannot_tell, or a yes or
 no with no description behind it, is silent, and the check waits for
@@ -405,18 +406,18 @@ Every sentence the check loop speaks lives in a template table in
 - A firing names the time it was seen and what was seen: "Is the
   stove off? Yes, as of 9:41 PM. All four knobs point to off." A done
   question's firing says "I saw it at 1:02 PM".
-- The redo reminder (the stopped reach) says what she did, in her
-  own words said back to her, when, and that it was seen: "You took
+- The redo reminder (the stopped reach) says what was done, in the
+  wearer's own words said back, when, and that it was seen: "You took
   your night pills at 1:02 PM. I saw you." A done question that does
   not open "Did I ..." gets "That is already done. You did it at
   1:02 PM. I saw you." So does one whose next word is not a known
   verb ("Did I already take ..."). In History the reminder shows the witness
-  photo, the one of her doing it.
+  photo, the one of it being done.
 - The refusal, below.
 
 ## The refusal
 
-A safety question (the stove) that cannot be read from where she is
+A safety question (the stove) that cannot be read from where the wearer is
 says so out loud, instead of staying silent: "Is the stove off? I
 can't tell. I can't see the four knobs on the front of the stove
 from here." It is spoken when all of these hold:

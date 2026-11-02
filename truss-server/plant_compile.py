@@ -301,7 +301,7 @@ def _refuse_contributor(endpoint):
     if "contributor" in model.lower():
         raise CompileError(
             f"The model is set to {model}, a tier that trains on what it is "
-            "sent. Her photos never go there, so nothing was compiled."
+            "sent. The photos never go there, so nothing was compiled."
         )
     return config
 
