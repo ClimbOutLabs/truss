@@ -245,7 +245,9 @@ photo decides it, even when that detail cannot be read. A pot at a
 rolling boil or a lit flame shows the stove is on whatever its knobs
 look like (the Nov 1 live run said `cannot_tell` four times with the
 chicken boiling, because the knobs were unreadable). The absence of a
-sign (no flame, no steam, no light) is never a sign on its own. There
+sign (no flame, no steam, no light) is never a sign on its own, and
+every question, safety flag or not, holds an all-clear (off, closed,
+locked, done) to the deciding detail or something as conclusive. There
 are no per-object rules in code: every question gets the same schema
 and the same prompt.
 

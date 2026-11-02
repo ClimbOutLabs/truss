@@ -206,8 +206,10 @@ questions:
   # Intent over literal (2026-11-02 live run): the stove was on with a
   # flame and a boiling pot, the knobs unreadable, and every check said
   # cannot_tell. A clear direct sign of the state answers the question.
-  # Not marked safety: a wrong yes here is not an all-clear; the costly
-  # error is a miss (no while a burner is on), reported per question.
+  # Here the all-clear is a NO, so a wrong no is the costly error. It is
+  # not marked safety only because the scorer counts a safety question's
+  # false all-clear as a wrong yes; read q21's miss rate (no while a
+  # burner is on) as its false all-clear rate.
   - id: q21
     slug: stove-on
     group: kitchen

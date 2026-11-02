@@ -28,9 +28,10 @@ A check answers what the question means, not only the one detail the
 plant-time compile named. Any clear, direct sign of the asked state in
 the photo decides it (a visible flame shows a stove is on even when
 its knobs cannot be read); the absence of a sign (no flame, no light)
-never does. For a safety question the all-clear answer needs the
-deciding detail itself, or something just as conclusive, clearly
-seen. There are no per-object rules in code: this is the prompt's job,
+never does. For every question, safety flag or not, an all-clear
+answer (off, closed, locked, done) needs the deciding detail itself,
+or something just as conclusive, clearly seen; a safety question is
+told so a second time, more firmly. There are no per-object rules in code: this is the prompt's job,
 for every question alike.
 
 A check with no references at all (the guide) runs as single with no
@@ -83,6 +84,11 @@ SYSTEM_PROMPT = (
     "you answer from it, missing is an empty string. The absence of a "
     "sign, such as no flame, no steam or no light, is never a sign on "
     "its own. "
+    "An all-clear answer, one saying the thing is off, closed, locked, "
+    "unplugged, empty, absent or done, needs the deciding detail itself, "
+    "or something just as conclusive, clearly seen; the absence of signs "
+    "never gives it. Without that, answer cannot_tell and name the "
+    "deciding detail in missing. "
     "When the question compares a number shown on a display with a "
     "threshold, such as a heart rate above 160, read the number, name it "
     "in the reason, and compare it; an unreadable number is cannot_tell. "

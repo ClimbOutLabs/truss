@@ -56,8 +56,19 @@ def test_prompt_asks_for_the_intent():
     check("prompt: an absence is not a sign", "absence of a sign" in p)
     check("prompt: answering from a sign leaves missing empty",
           "when you answer from it, missing is an empty string" in p)
+    check("prompt: every question holds an all-clear to the deciding detail",
+          "An all-clear answer" in p and "the absence of signs never gives it" in p)
     check("looks: the usual detail, not the only evidence",
           "not the only evidence" in verdict.LOOKS_INSTRUCTION)
+
+
+def test_an_unflagged_question_still_gets_the_all_clear_rule():
+    # Typed questions are planted without the safety flag.
+    _, stub = ask(OFF_Q, {"verdict": "cannot_tell", "reason": "Knobs turned away.",
+                          "missing": "the knobs"})
+    check("unflagged stove: no safety instruction", verdict.SAFETY_INSTRUCTION not in stub.system())
+    check("unflagged stove: the all-clear rule is still sent",
+          "An all-clear answer" in stub.system())
 
 
 def test_safety_holds_the_all_clear_only():
@@ -126,6 +137,7 @@ def test_compile_names_the_usual_detail_not_the_only_one():
 if __name__ == "__main__":
     test_no_question_gets_its_own_rule()
     test_prompt_asks_for_the_intent()
+    test_an_unflagged_question_still_gets_the_all_clear_rule()
     test_safety_holds_the_all_clear_only()
     test_a_sign_answers_when_the_detail_is_unreadable()
     test_the_guards_still_hold()
