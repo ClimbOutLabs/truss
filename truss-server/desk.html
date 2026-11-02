@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Truss Desk</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* The Mac side of Truss: plant questions, lay out her day, read the
+   answers, and send a saved photo as if the glasses took it. Served
+   by server.py at /desk; every call goes to the server's own
+   endpoints. Same Paper and ink palette as the phone app. */
+:root{
+  --ground:#F6F6F4; --ink:#141414; --muted:#6B6B6B; --card:#FFFFFF; --line:#E6E6E2;
+  --sky:#E9EDF1; --on-sky:#34495E; --apricot:#F4ECE7; --on-apricot:#8C4A2F; --sage:#EFEFEB;
+  --ok:#5B8A5E; --error-soft:#FFDAD6; --on-error:#410002;
+  --sans:"Hanken Grotesk", -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark){:root{
+  --ground:#121212; --ink:#ECECE8; --muted:#9A9A96; --card:#1B1B1A; --line:#2C2C2A;
+  --sky:#1E252C; --on-sky:#B7C7D6; --apricot:#2A201B; --on-apricot:#E2A98F; --sage:#222220;
+  --error-soft:#3A1A17; --on-error:#FFB4AB; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:13px/1.45 var(--sans);padding:24px 20px 48px}
+.wrap{max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+header{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px}
+h1{font-size:28px;font-weight:600;margin:0;letter-spacing:-.01em}
+h2{font-size:16px;font-weight:600;margin:0}
+.muted{color:var(--muted)}
+.status{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-variant-numeric:tabular-nums}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:1px}
+.dot.ok{background:var(--ok)} .dot.bad{background:var(--on-apricot)}
+.grid{display:grid;grid-template-columns:280px minmax(0,1fr) 340px;gap:20px;align-items:start}
+@media (max-width:1050px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.spread{justify-content:space-between}
+/* her day */
+.slot{display:grid;grid-template-columns:62px 1fr;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.slot:first-child{border-top:0}
+.t{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:500}
+.slot b{font-weight:600;font-size:14px;display:block}
+.templates{display:flex;flex-direction:column;gap:6px}
+.tpl{all:unset;cursor:pointer;border:1px dashed var(--line);border-radius:10px;padding:9px 12px;color:var(--ink)}
+.tpl:hover,.tpl:focus-visible{border-style:solid;border-color:var(--muted)}
+.tpl span{display:block;color:var(--muted);font-size:12px}
+/* lists */
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line)}
+.tab{all:unset;cursor:pointer;padding-bottom:8px;color:var(--muted);font-weight:500}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom:2px solid var(--ink)}
+.tab:focus-visible{outline:2px solid var(--muted);outline-offset:3px}
+.item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+.item:first-child{border-top:0}
+.qt{font-size:16px;font-weight:600}
+.pill{font-size:12px;padding:3px 10px;border-radius:99px;background:var(--sage);color:var(--muted);white-space:nowrap;font-weight:500}
+.pill.live{background:var(--sky);color:var(--on-sky)}
+.pill.fired{background:var(--ink);color:var(--ground)}
+.pill.warn{background:var(--apricot);color:var(--on-apricot)}
+.ans{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.ans:first-child{border-top:0}
+.ans img,.ans .ph{width:96px;height:72px;object-fit:cover;border-radius:6px;background:var(--sage);display:block}
+.empty{color:var(--muted);padding:12px 0}
+/* forms */
+label.field{display:flex;flex-direction:column;gap:6px}
+input[type=text],input[type=time],input[type=number],input[type=date]{font:inherit;font-size:14px;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:var(--ground);width:100%}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg label{flex:1;text-align:center;cursor:pointer}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg span{display:block;padding:8px 4px;color:var(--muted);font-weight:500}
+.seg input:checked+span{background:var(--ink);color:var(--ground)}
+.seg input:focus-visible+span{outline:2px solid var(--muted);outline-offset:-2px}
+.drops{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.drop{position:relative;border:1px dashed var(--line);border-radius:10px;aspect-ratio:4/3;display:grid;place-items:center;text-align:center;color:var(--muted);padding:8px;cursor:pointer;overflow:hidden}
+.drop.has{border-style:solid}
+.drop.over{border-color:var(--ink)}
+.drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.btn{font:inherit;font-weight:600;font-size:14px;cursor:pointer;background:var(--ink);color:var(--ground);border:0;border-radius:10px;padding:11px 14px}
+.btn2{font:inherit;font-weight:600;cursor:pointer;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+.btn:disabled,.btn2:disabled{opacity:.45;cursor:default}
+.link{all:unset;cursor:pointer;color:var(--muted);text-decoration:underline;font-size:12px}
+.note{font-size:12px;color:var(--muted)}
+.msg{border-radius:10px;padding:10px 12px;background:var(--ground);border:1px solid var(--line)}
+.msg.err{background:var(--error-soft);color:var(--on-error);border-color:transparent}
+.say{font-size:14px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Truss Desk</h1>
+      <div class="muted">Plant her questions, lay out her day, and read what the glasses saw.</div>
+    </div>
+    <div class="status" id="status"><span><span class="dot"></span>Reaching the server…</span></div>
+  </header>
+
+  <div class="grid">
+    <section class="panel" aria-labelledby="day-h">
+      <div class="row spread"><h2 id="day-h">Her day</h2><span class="note" id="today"></span></div>
+      <div id="day"></div>
+      <div class="label">Add to her day</div>
+      <div class="templates" id="templates"></div>
+    </section>
+
+    <section class="panel">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tab="questions">Questions</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="answers">Answers</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="alerts">Alerts</button>
+      </div>
+      <div id="tab-questions"></div>
+      <div id="tab-answers" hidden>
+        <div class="row" style="margin-bottom:6px"><label class="row note">Day <input type="date" id="day-pick" style="width:auto"></label></div>
+        <div id="answers"></div>
+      </div>
+      <div id="tab-alerts" hidden>
+        <p class="note">Missed-window alerts wait here until the phone speaks them. Only the phone clears them.</p>
+        <div id="alerts"></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="plant-h">
+      <h2 id="plant-h">Plant a question</h2>
+      <form id="plant" autocomplete="off">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <label class="field"><span class="label">In her words</span>
+            <input type="text" id="p-text" placeholder="Did I take my night pills?" required></label>
+
+          <div class="field"><span class="label">Kind</span>
+            <div class="seg">
+              <label><input type="radio" name="kind" value="state" checked><span>Is it so now</span></label>
+              <label><input type="radio" name="kind" value="done"><span>Did I do it</span></label>
+            </div></div>
+
+          <div class="field"><span class="label">When to check</span>
+            <div class="seg">
+              <label><input type="radio" name="when" value="interval" checked><span>Every few min</span></label>
+              <label><input type="radio" name="when" value="nightly"><span>Each night</span></label>
+              <label><input type="radio" name="when" value="window"><span>Window</span></label>
+            </div>
+            <div class="row" id="w-interval"><input type="number" id="p-minutes" min="0" step="1" value="15" style="width:90px"><span class="note">minutes apart (0 checks every photo)</span></div>
+            <div class="row" id="w-nightly" hidden><span class="note">from</span><input type="time" id="p-after-n" value="20:00" style="width:auto"><span class="note">until it answers</span></div>
+            <div class="row" id="w-window" hidden><input type="time" id="p-after" value="21:00" style="width:auto"><span class="note">to</span><input type="time" id="p-until" value="22:00" style="width:auto"></div>
+          </div>
+
+          <label class="row note"><input type="checkbox" id="p-safety"> A wrong answer would do harm (the stove, pills)</label>
+
+          <label class="field" id="look-at-field" hidden><span class="label">What to look at, if she misses it</span>
+            <input type="text" id="p-look" placeholder="the {weekday} PM compartment"></label>
+
+          <div class="field"><span class="label">Looks, from her own home</span>
+            <div class="drops">
+              <label class="drop" id="drop-yes"><span>Drop or choose<br>what <b>yes</b> looks like</span><input type="file" accept="image/jpeg" id="f-yes"></label>
+              <label class="drop" id="drop-no"><span>Drop or choose<br>what <b>no</b> looks like</span><input type="file" accept="image/jpeg" id="f-no"></label>
+            </div>
+            <span class="note" id="looks-note">Both looks are needed for a safety or done question.</span>
+          </div>
+
+          <button class="btn" type="submit" id="p-go">Start watching</button>
+          <div class="msg" id="p-msg" hidden></div>
+        </div>
+      </form>
+
+      <h2 style="margin-top:8px">Try it without the glasses</h2>
+      <p class="note" style="margin:0">Sends a saved JPEG exactly as the phone would. The real checks run (a few seconds each) and a firing is real: it is logged and can witness a done question.</p>
+      <div class="row">
+        <label class="btn2" style="flex:1;position:relative;text-align:center">
+          <span id="r-name">Choose photo…</span>
+          <input type="file" accept="image/jpeg" id="f-replay" style="position:absolute;inset:0;opacity:0;cursor:pointer">
+        </label>
+        <button class="btn2" id="r-go" disabled>Send</button>
+      </div>
+      <div class="msg say" id="r-msg" hidden></div>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// The server's errors come back as an HTML page whose message is the
+// plain sentence the server wrote; show that sentence.
+async function errorText(resp) {
+  const body = await resp.text().catch(() => "");
+  const m = body.match(/Message:\s*([^<]*)/);
+  return (m && m[1].trim()) || `The server said ${resp.status}.`;
+}
+async function getJSON(url) {
+  const r = await fetch(url, {cache: "no-store"});
+  if (!r.ok) throw new Error(await errorText(r));
+  return r.json();
+}
+async function postJSON(url, obj) {
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(obj)});
+  if (!r.ok) throw new Error(await errorText(r));
+  return r.json();
+}
+async function postImage(url, file) {
+  const fd = new FormData();
+  fd.append("image", file, file.name || "photo.jpg");
+  const r = await fetch(url, {method: "POST", body: fd});
+  if (!r.ok) throw new Error(await errorText(r));
+  return r.json();
+}
+
+function clock(hhmm) {
+  if (!hhmm) return "";
+  const [h, m] = hhmm.split(":").map(Number);
+  const ap = h >= 12 ? "PM" : "AM";
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${ap}`;
+}
+function whenText(p) {
+  if (!p) return "";
+  if (p.kind === "interval") return p.minutes ? `every ${p.minutes} min` : "every photo";
+  if (p.kind === "nightly") return `each night from ${clock(p.after)}`;
+  if (p.kind === "window") return `${clock(p.after)} to ${clock(p.until)}`;
+  return "";
+}
+function stateText(q) {
+  if (q.state === "retired") return ["Retired", ""];
+  if (q.state === "planting") return ["Needs looks", "warn"];
+  if (q.kind === "done" && q.miss_pending) return ["Missed", "warn"];
+  if (q.kind === "done" && q.witness_time) return [`Seen ${q.witness_time}`, "fired"];
+  if (q.state === "answered") {
+    const at = q.answered_at ? new Date(q.answered_at) : null;
+    return [at ? `Yes ${at.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}` : "Answered", "fired"];
+  }
+  return ["Watching", "live"];
+}
+
+// ---- status -------------------------------------------------------------
+async function loadStatus() {
+  try {
+    const s = await getJSON("/status");
+    const ago = (x) => x == null ? "never" : x.seconds_ago < 90 ? `${x.seconds_ago} s ago` : `${Math.round(x.seconds_ago / 60)} min ago`;
+    const ok = !s.config_error;
+    $("status").innerHTML =
+      `<span><span class="dot ${ok ? "ok" : "bad"}"></span>${esc(ok ? (s.model || s.checker) : s.config_error)}</span>` +
+      `<span>Phone polled ${ago(s.last_poll)}</span>` +
+      `<span>Last photo ${ago(s.last_capture)}</span>`;
+    const d = new Date(s.now);
+    $("today").textContent = d.toLocaleDateString([], {weekday: "short", month: "short", day: "numeric"});
+    if (!$("day-pick").value) $("day-pick").value = s.now.slice(0, 10);
+    if (s.plant_minutes != null && !$("p-minutes").dataset.touched) $("p-minutes").value = s.plant_minutes;
+  } catch (e) {
+    $("status").innerHTML = `<span><span class="dot bad"></span>Cannot reach the server</span>`;
+  }
+}
+
+// ---- questions and her day ----------------------------------------------
+let QUESTIONS = [];
+let SHOWN = "";
+async function loadQuestions() {
+  try {
+    QUESTIONS = (await getJSON("/questions")).questions;
+    // Re-draw only on a change, so a look being chosen in the list
+    // is not swept away by the timed refresh.
+    const now = JSON.stringify(QUESTIONS);
+    if (now === SHOWN) return;
+    SHOWN = now;
+  } catch (e) {
+    SHOWN = "";
+    $("tab-questions").innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+    return;
+  }
+  renderQuestions();
+  renderDay();
+}
+function renderQuestions() {
+  const live = QUESTIONS.filter((q) => q.state !== "retired");
+  const retired = QUESTIONS.filter((q) => q.state === "retired");
+  if (!QUESTIONS.length) {
+    $("tab-questions").innerHTML = `<div class="empty">No questions yet. Plant one on the right, or add one to her day.</div>`;
+    return;
+  }
+  const row = (q) => {
+    const [pill, cls] = stateText(q);
+    const bits = [q.kind === "done" ? "Did I do it" : "Is it so now"];
+    if (q.safety) bits.push("safety");
+    bits.push(whenText(q.pattern));
+    bits.push(q.has_ref_yes && q.has_ref_no ? "both looks" : q.has_ref_yes ? "yes look only" : q.has_ref_no ? "no look only" : "no looks");
+    const retire = q.state === "retired" ? "" : ` · <button class="link" data-retire="${esc(q.slug)}">Stop watching</button>`;
+    // A question still planting takes its looks right here.
+    const add = q.state !== "planting" ? "" : `<div class="row" style="margin-top:6px">` +
+      ["yes", "no"].map((k) => `<label class="btn2" style="position:relative">${(k === "yes" ? q.has_ref_yes : q.has_ref_no) ? "Replace" : "Add"} ${k} look<input type="file" accept="image/jpeg" data-look="${k}" data-slug="${esc(q.slug)}" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label>`).join("") + `</div>`;
+    return `<div class="item"><div><div class="qt">${esc(q.question)}</div><div class="muted">${esc(bits.join(" · "))}${retire}</div>${add}</div><span class="pill ${cls}">${esc(pill)}</span></div>`;
+  };
+  let html = live.map(row).join("") || `<div class="empty">Nothing is being watched.</div>`;
+  if (retired.length) html += `<details style="margin-top:8px"><summary class="note" style="cursor:pointer">${retired.length} retired</summary>${retired.map(row).join("")}</details>`;
+  $("tab-questions").innerHTML = html;
+}
+$("tab-questions").addEventListener("click", async (ev) => {
+  const slug = ev.target.dataset && ev.target.dataset.retire;
+  if (!slug) return;
+  const btn = ev.target;
+  if (btn.dataset.armed !== "1") {
+    btn.dataset.armed = "1";
+    btn.textContent = "Click again to stop watching";
+    setTimeout(() => { btn.dataset.armed = ""; btn.textContent = "Stop watching"; }, 4000);
+    return;
+  }
+  try { await postJSON("/questions/retire", {slug}); } catch (e) { alertInline(e.message); }
+  loadQuestions();
+});
+$("tab-questions").addEventListener("change", async (ev) => {
+  const input = ev.target;
+  if (!input.dataset || !input.dataset.look || !input.files[0]) return;
+  try {
+    await postImage(`/plant/ref?slug=${encodeURIComponent(input.dataset.slug)}&kind=${input.dataset.look}`, input.files[0]);
+  } catch (e) { alertInline(e.message); return; }
+  loadQuestions();
+});
+function alertInline(text) {
+  $("tab-questions").insertAdjacentHTML("afterbegin", `<div class="msg err">${esc(text)}</div>`);
+}
+
+function renderDay() {
+  const live = QUESTIONS.filter((q) => q.state !== "retired");
+  const timed = live.filter((q) => q.pattern && q.pattern.after).sort((a, b) => a.pattern.after.localeCompare(b.pattern.after));
+  const allDay = live.filter((q) => !q.pattern || !q.pattern.after);
+  const slot = (t, q) => {
+    const [pill] = stateText(q);
+    return `<div class="slot"><span class="t">${esc(t)}</span><div><b>${esc(q.question)}</b><span class="muted">${esc(whenText(q.pattern))} · ${esc(pill.toLowerCase())}</span></div></div>`;
+  };
+  let html = allDay.map((q) => slot("All day", q)).join("") + timed.map((q) => slot(clock(q.pattern.after), q)).join("");
+  $("day").innerHTML = html || `<div class="empty">Her day is empty. Add a step below.</div>`;
+}
+
+// Common steps in her day. Each one fills the planting form, so the
+// looks can be dropped in before anything is planted; the bedtime
+// round plants its three questions at once.
+const TEMPLATES = [
+  {name: "Morning pills", hint: "Did I do it, 8 to 9 AM", fill: {text: "Did I take my morning pills?", kind: "done", when: "window", after: "08:00", until: "09:00", safety: true, look: "the {weekday} AM compartment"}},
+  {name: "Night pills", hint: "Did I do it, 9 to 10 PM", fill: {text: "Did I take my night pills?", kind: "done", when: "window", after: "21:00", until: "22:00", safety: true, look: "the {weekday} PM compartment"}},
+  {name: "Stove off after cooking", hint: "Is it so now, every 15 min until yes", fill: {text: "Is the stove off?", kind: "state", when: "interval", minutes: 15, safety: true}},
+  {name: "Bedtime round", hint: "Stove, front door, tonight's pills, in walk order", round: true},
+];
+function renderTemplates() {
+  $("templates").innerHTML = TEMPLATES.map((t, i) => `<button class="tpl" data-tpl="${i}">${esc(t.name)}<span>${esc(t.hint)}</span></button>`).join("");
+}
+$("templates").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-tpl]");
+  if (!b) return;
+  const t = TEMPLATES[Number(b.dataset.tpl)];
+  if (t.round) {
+    showMsg("p-msg", "Planting the bedtime round…");
+    try {
+      const r = await postJSON("/plant/bedtime", {});
+      const notes = (r.notes || []).join(" ");
+      showMsg("p-msg", `Planted: ${r.questions.join(", ")}. Each still needs its yes and no looks: add them in the Questions list. ${notes}`);
+    } catch (e) { showMsg("p-msg", e.message, true); }
+    loadQuestions();
+    return;
+  }
+  const f = t.fill;
+  $("p-text").value = f.text;
+  document.querySelector(`input[name=kind][value=${f.kind}]`).checked = true;
+  document.querySelector(`input[name=when][value=${f.when}]`).checked = true;
+  if (f.after) { $("p-after").value = f.after; $("p-after-n").value = f.after; }
+  if (f.until) $("p-until").value = f.until;
+  if (f.minutes != null) $("p-minutes").value = f.minutes;
+  $("p-safety").checked = !!f.safety;
+  $("p-look").value = f.look || "";
+  syncForm();
+  showMsg("p-msg", "Filled in. Drop in her yes and no looks, then start watching.");
+  $("p-text").focus();
+});
+
+// ---- answers and alerts ---------------------------------------------------
+async function loadAnswers() {
+  const day = $("day-pick").value;
+  try {
+    const r = await getJSON(`/answers${day ? `?day=${encodeURIComponent(day)}` : ""}`);
+    if (!r.answers.length) { $("answers").innerHTML = `<div class="empty">No answers on this day.</div>`; return; }
+    $("answers").innerHTML = r.answers.map((a) => {
+      const img = a.evidence
+        ? `<a href="/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(a.evidence)}" target="_blank" rel="noopener"><img loading="lazy" alt="Evidence photo" src="/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(a.evidence)}"></a>`
+        : `<div class="ph"></div>`;
+      const kind = {answer: "Yes", redo: "Redo reminder", cannot_tell: "Cannot tell", state_check: "Check after a miss"}[a.kind] || "";
+      return `<div class="ans">${img}<div><b>${esc(a.question)}</b><div>${esc(kind)} at ${esc(a.time.slice(0, 5))}</div><div class="muted">${esc(a.text)}</div></div></div>`;
+    }).join("");
+  } catch (e) { $("answers").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+}
+$("day-pick").addEventListener("change", loadAnswers);
+
+async function loadAlerts() {
+  try {
+    const r = await getJSON("/alerts");
+    $("alerts").innerHTML = r.alerts.length
+      ? r.alerts.map((a) => `<div class="item"><div>${esc(a.line)}</div><span class="pill warn">Waiting</span></div>`).join("")
+      : `<div class="empty">No alerts waiting.</div>`;
+  } catch (e) { $("alerts").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+}
+
+let TAB = "questions";
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
+  TAB = t.dataset.tab;
+  document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x === t)));
+  ["questions", "answers", "alerts"].forEach((n) => { $(`tab-${n}`).hidden = n !== TAB; });
+  refresh();
+}));
+
+// ---- planting -------------------------------------------------------------
+function showMsg(id, text, err) {
+  const el = $(id);
+  el.hidden = !text;
+  el.className = `msg${err ? " err" : ""}${id === "r-msg" ? " say" : ""}`;
+  el.textContent = text || "";
+}
+function syncForm() {
+  const when = document.querySelector("input[name=when]:checked").value;
+  $("w-interval").hidden = when !== "interval";
+  $("w-nightly").hidden = when !== "nightly";
+  $("w-window").hidden = when !== "window";
+  const done = document.querySelector("input[name=kind]:checked").value === "done";
+  if (done) $("p-safety").checked = true;
+  $("look-at-field").hidden = !done;
+}
+document.querySelectorAll("input[name=when],input[name=kind]").forEach((r) => r.addEventListener("change", syncForm));
+$("p-minutes").addEventListener("input", () => { $("p-minutes").dataset.touched = "1"; });
+
+const LOOKS = {yes: null, no: null};
+function setLook(kind, file) {
+  if (!file) return;
+  if (!/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
+    showMsg("p-msg", "Looks must be JPEG photos. In Photos, use File > Export as JPEG.", true);
+    return;
+  }
+  LOOKS[kind] = file;
+  const drop = $(`drop-${kind}`);
+  drop.classList.add("has");
+  const old = drop.querySelector("img");
+  if (old) { URL.revokeObjectURL(old.src); old.remove(); }
+  const img = document.createElement("img");
+  img.alt = `${kind} look`;
+  img.src = URL.createObjectURL(file);
+  drop.insertBefore(img, drop.querySelector("input"));
+}
+["yes", "no"].forEach((kind) => {
+  const drop = $(`drop-${kind}`);
+  $(`f-${kind}`).addEventListener("change", (e) => setLook(kind, e.target.files[0]));
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); setLook(kind, e.dataTransfer.files[0]); });
+});
+function clearLooks() {
+  ["yes", "no"].forEach((kind) => {
+    LOOKS[kind] = null;
+    const drop = $(`drop-${kind}`);
+    drop.classList.remove("has");
+    const img = drop.querySelector("img");
+    if (img) { URL.revokeObjectURL(img.src); img.remove(); }
+    $(`f-${kind}`).value = "";
+  });
+}
+
+$("plant").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const text = $("p-text").value.trim();
+  if (!text) return;
+  const kind = document.querySelector("input[name=kind]:checked").value;
+  const when = document.querySelector("input[name=when]:checked").value;
+  const safety = $("p-safety").checked;
+  let pattern;
+  if (when === "interval") pattern = {kind: "interval", minutes: Number($("p-minutes").value || 0)};
+  else if (when === "nightly") pattern = {kind: "nightly", after: $("p-after-n").value};
+  else pattern = {kind: "window", after: $("p-after").value, until: $("p-until").value};
+  if ((safety || kind === "done") && !(LOOKS.yes && LOOKS.no)) {
+    showMsg("p-msg", "A safety or done question needs both looks before it can start. Drop in the yes and the no photo.", true);
+    return;
+  }
+  const body = {text, kind, pattern, safety};
+  const look = $("p-look").value.trim();
+  if (kind === "done" && look) body.look_at = look;
+  $("p-go").disabled = true;
+  try {
+    showMsg("p-msg", "Planting…");
+    const r = await postJSON("/plant/question", body);
+    let state = r.state;
+    for (const k of ["yes", "no"]) {
+      if (LOOKS[k]) state = (await postImage(`/plant/ref?slug=${encodeURIComponent(r.slug)}&kind=${k}`, LOOKS[k])).state;
+    }
+    if (state === "planting") state = (await postJSON("/plant/finish", {slug: r.slug})).state;
+    showMsg("p-msg", `Watching now: ${text}`);
+    $("p-text").value = "";
+    $("p-look").value = "";
+    clearLooks();
+  } catch (e) {
+    showMsg("p-msg", e.message, true);
+  } finally {
+    $("p-go").disabled = false;
+    loadQuestions();
+  }
+});
+
+// ---- replay a photo ---------------------------------------------------------
+let REPLAY = null;
+$("f-replay").addEventListener("change", (e) => {
+  REPLAY = e.target.files[0] || null;
+  $("r-name").textContent = REPLAY ? REPLAY.name : "Choose photo…";
+  $("r-go").disabled = !REPLAY;
+});
+$("r-go").addEventListener("click", async () => {
+  if (!REPLAY) return;
+  $("r-go").disabled = true;
+  showMsg("r-msg", "Checking the photo against what is due…");
+  const started = Date.now();
+  try {
+    const r = await postImage("/capture", REPLAY);
+    const secs = ((Date.now() - started) / 1000).toFixed(1);
+    const said = (r.speak || []).filter(Boolean);
+    if (said.length) showMsg("r-msg", `Mannie would say (${secs} s): “${said.join(" ")}”`);
+    else if (r.guide) showMsg("r-msg", `A guide is running, so the photo went to it (${secs} s). Nothing to say.`);
+    else showMsg("r-msg", `Nothing fired (${secs} s). The photo was not kept.`);
+  } catch (e) {
+    showMsg("r-msg", e.message, true);
+  } finally {
+    $("r-go").disabled = false;
+    refresh();
+  }
+});
+
+// ---- refresh --------------------------------------------------------------
+function refresh() {
+  loadStatus();
+  loadQuestions();
+  if (TAB === "answers") loadAnswers();
+  if (TAB === "alerts") loadAlerts();
+}
+renderTemplates();
+syncForm();
+loadStatus().then(() => { refresh(); });
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

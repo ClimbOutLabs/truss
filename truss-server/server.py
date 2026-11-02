@@ -62,6 +62,7 @@ ALERTS = AlertStore(Path(__file__).parent / "alerts")
 # these to say how much of a window was really watched.
 # The day folders the check loop keeps answers and evidence in.
 LOG_DIR = Path(__file__).parent / "log"
+DESK_PAGE = Path(__file__).parent / "desk.html"
 CHECKS = CheckLog(LOG_DIR)
 
 
@@ -317,6 +318,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             message = "Truss server is running.\n"
             self.wfile.write(message.encode())
             print(f"GET / -> 200 OK")
+        elif path == "/desk":
+            self.handle_desk()
         elif path == "/questions":
             self.handle_questions()
         elif path == "/alerts":
@@ -369,6 +372,23 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_plant_finish()
         else:
             self.send_error(404, "Not Found")
+
+    def handle_desk(self):
+        """The Mac page for planting questions, laying out her day,
+        reading answers, and sending a saved photo as a capture. One
+        static file; everything it does goes through the endpoints
+        below, so it changes nothing about how checks are made."""
+        try:
+            page = DESK_PAGE.read_bytes()
+        except OSError:
+            self.send_error(404, "The desk page is missing from truss-server.")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(page)
+        print("GET /desk -> 200 OK")
 
     def handle_questions(self):
         """List the standing questions and their states."""
@@ -938,6 +958,7 @@ def main():
     compile_waiting()
     server = ThreadingHTTPServer((host, port), TrussHandler)
     print(f"\nTruss server starting on {host}:{port}")
+    print(f"Truss Desk (plant questions from this Mac): http://{host}:{port}/desk")
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")
     print(f"Press Ctrl+C to stop\n")
     
