@@ -606,7 +606,15 @@ def _ask_one_inner(cfg, system, content, schema, schema_name, max_tokens):
     usage = {"input_tokens": 0, "output_tokens": 0}
     use_format = True
     failure, failure_kind = None, "invalid"
+    started = time.monotonic()
     for attempt in range(2):
+        if attempt == 1:
+            # A retry can double a check's time; the log says why, so a
+            # slow check is never a mystery.
+            report(
+                f"  {cfg.model}: {failure} Asking once more "
+                f"({time.monotonic() - started:.1f} s spent so far)."
+            )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise EndpointError("The model endpoint did not finish in time.", kind="timeout")
