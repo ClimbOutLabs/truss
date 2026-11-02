@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""
+The Desk's start and stop for the phone's watching.
+
+    python3 test_phone_watch.py
+"""
+
+import json
+import sys
+import threading
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import os  # noqa: E402
+for _name in ("TRUSS_META_API_KEY", "TRUSS_META_BASE_URL", "TRUSS_META_MODEL"):
+    os.environ.pop(_name, None)
+
+import phone_watch  # noqa: E402
+import server as server_module  # noqa: E402
+
+
+def check(name, ok):
+    print(("PASS " if ok else "FAIL ") + name)
+    if not ok:
+        raise SystemExit(1)
+
+
+class Clock:
+    def __init__(self):
+        self.now = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.now
+
+
+def test_store():
+    clock = Clock()
+    desk = phone_watch.WatchDesk(clock)
+    check("no request and no phone at first", desk.view() == {"request": None, "phone": None})
+    reply = desk.report({"watching": False}, "10.0.0.5")
+    check("a check-in with no request gets none", reply["request"] is None)
+
+    first = desk.ask(True)["request"]
+    check("a start request is on", first["on"] is True and first["age_seconds"] == 0)
+    clock.now += timedelta(seconds=7)
+    reply = desk.report({"watching": False, "glasses": True, "every": 30}, "10.0.0.5")
+    check("the phone sees the request and its age", reply["request"]["id"] == first["id"] and reply["request"]["age_seconds"] == 7)
+
+    second = desk.ask(False)["request"]
+    check("each request has a new id", second["id"] != first["id"] and second["on"] is False)
+
+    view = desk.view()
+    check("the phone's state is kept", view["phone"]["glasses"] is True and view["phone"]["every"] == 30)
+    check("a phone just heard from is reachable", view["phone"]["reachable"] is True)
+    clock.now += timedelta(seconds=phone_watch.PHONE_QUIET_SECONDS + 1)
+    check("a quiet phone is not reachable", desk.view()["phone"]["reachable"] is False)
+
+    for bad in (None, "yes", 1):
+        try:
+            desk.ask(bad)
+            check(f"ask({bad!r}) is refused", False)
+        except ValueError:
+            check(f"ask({bad!r}) is refused", True)
+    check("a refused ask leaves the request", desk.view()["request"]["id"] == second["id"])
+    try:
+        desk.report([1], "x")
+        check("a non-object check-in is refused", False)
+    except ValueError:
+        check("a non-object check-in is refused", True)
+    desk.report({"watching": "yes", "every": True}, "x")
+    p = desk.view()["phone"]
+    check("only real true counts and a bool is no cadence", p["watching"] is False and p["every"] is None)
+
+
+def _post(port, path, body):
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}", data=body, method="POST",
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def test_http():
+    server_module.WATCH = phone_watch.WatchDesk()
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        # Held write lock: the watch routes must not wait behind a capture.
+        with server_module.WRITE_LOCK:
+            asked = _post(port, "/watch", json.dumps({"on": True}).encode())
+            check("POST /watch leaves a start request", asked["request"]["on"] is True)
+            reply = _post(port, "/watch/phone", json.dumps({"watching": False, "glasses": True}).encode())
+            check("POST /watch/phone returns it", reply["request"]["id"] == asked["request"]["id"])
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/watch") as resp:
+            view = json.loads(resp.read())
+        check("GET /watch shows the phone", view["phone"]["glasses"] is True and view["phone"]["reachable"])
+        for body in (b"not json", json.dumps({"on": "yes"}).encode()):
+            try:
+                _post(port, "/watch", body)
+                check(f"bad body {body!r} is refused", False)
+            except urllib.error.HTTPError as e:
+                check(f"bad body {body!r} is refused", e.code == 400)
+        check("the start request still stands", server_module.WATCH.view()["request"]["id"] == asked["request"]["id"])
+    finally:
+        httpd.shutdown()
+
+
+if __name__ == "__main__":
+    test_store()
+    test_http()
+    print("ALL PASS")

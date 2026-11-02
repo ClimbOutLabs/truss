@@ -90,13 +90,19 @@ input[type=text],input[type=time],input[type=number],input[type=date]{font:inher
       <h1>Truss Desk</h1>
       <div class="muted">Plant your questions, lay out your day, and read what the glasses saw.</div>
     </div>
-    <div class="status" id="status"><span><span class="dot"></span>Reaching the server…</span></div>
+    <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+      <div class="status" id="status"><span><span class="dot"></span>Reaching the server…</span></div>
+      <div class="row" style="justify-content:flex-end">
+        <span class="muted" id="phone"><span class="dot"></span>Phone not heard from yet</span>
+        <button class="btn2" id="phone-go">Start watching on the phone</button>
+      </div>
+    </div>
   </header>
 
   <div class="grid">
     <section class="panel" aria-labelledby="day-h">
       <div class="row spread"><h2 id="day-h">Sample day</h2><span class="note" id="today"></span></div>
-      <p class="note" style="margin:0">An example routine. Plant a step to start watching it; steps already planted show how they stand.</p>
+      <p class="note" style="margin:0">An example routine. Plant a step to start watching it; steps already planted show how they stand. Planting also starts watching on the phone.</p>
       <div id="day"></div>
       <div id="also"></div>
     </section>
@@ -307,7 +313,9 @@ $("tab-questions").addEventListener("change", async (ev) => {
   const input = ev.target;
   if (!input.dataset || !input.dataset.look || !input.files[0]) return;
   try {
-    await postImage(`/plant/ref?slug=${encodeURIComponent(input.dataset.slug)}&kind=${input.dataset.look}`, input.files[0]);
+    const r = await postImage(`/plant/ref?slug=${encodeURIComponent(input.dataset.slug)}&kind=${input.dataset.look}`, input.files[0]);
+    // The question is watched from now on: have the phone watching too.
+    if (r.state === "standing") await askPhone(true);
   } catch (e) { alertInline(e.message); return; }
   loadQuestions();
 });
@@ -508,7 +516,7 @@ $("plant").addEventListener("submit", async (ev) => {
       if (LOOKS[k]) state = (await postImage(`/plant/ref?slug=${encodeURIComponent(r.slug)}&kind=${k}`, LOOKS[k])).state;
     }
     if (state === "planting") state = (await postJSON("/plant/finish", {slug: r.slug})).state;
-    showMsg("p-msg", `Watching now: ${text}`);
+    showMsg("p-msg", `Watching now: ${text}. ${await askPhone(true)}`);
     $("p-text").value = "";
     $("p-look").value = "";
     clearLooks();
@@ -575,9 +583,55 @@ $("r-go").addEventListener("click", async () => {
   }
 });
 
+// ---- the phone's watching ---------------------------------------------------
+// Watching runs in the phone app. The Desk leaves a start or stop
+// request on the server; the phone picks it up within a few seconds
+// while the Truss app is open, and starts once the glasses connect.
+let PHONE = null;
+async function askPhone(on) {
+  try {
+    PHONE = await postJSON("/watch", {on});
+    renderPhone();
+    return on ? "Asked the phone to start watching." : "Asked the phone to stop watching.";
+  } catch (e) {
+    return `Couldn't ask the phone to ${on ? "start" : "stop"} watching: ${e.message}`;
+  }
+}
+function phoneText(w) {
+  const p = w && w.phone;
+  const req = w && w.request;
+  if (!p) return ["", "Phone not heard from yet. Open the Truss app on the phone."];
+  if (!p.reachable) return ["bad", `Phone not heard from for ${p.seconds_ago < 90 ? p.seconds_ago + " s" : Math.round(p.seconds_ago / 60) + " min"}. Open the Truss app on the phone.`];
+  if (p.watching && p.away) return ["bad", "Phone is watching, waiting for the glasses"];
+  if (p.watching) return ["ok", `Phone is watching${p.every ? ` every ${p.every} s` : ""}`];
+  if (p.pending) return ["", "Phone will start watching once the glasses connect"];
+  if (req && req.on && req.age_seconds < 20) return ["", "Asking the phone to start…"];
+  return ["", "Phone is not watching"];
+}
+function renderPhone() {
+  const [cls, text] = phoneText(PHONE);
+  $("phone").innerHTML = `<span class="dot ${cls}"></span>${esc(text)}`;
+  const watching = !!(PHONE && PHONE.phone && PHONE.phone.reachable && PHONE.phone.watching);
+  const pending = !!(PHONE && PHONE.phone && PHONE.phone.reachable && PHONE.phone.pending);
+  $("phone-go").textContent = watching || pending ? "Stop watching on the phone" : "Start watching on the phone";
+  $("phone-go").dataset.on = watching || pending ? "0" : "1";
+}
+async function loadPhone() {
+  try { PHONE = await getJSON("/watch"); } catch (e) { PHONE = null; }
+  renderPhone();
+}
+$("phone-go").addEventListener("click", async () => {
+  $("phone-go").disabled = true;
+  const said = await askPhone($("phone-go").dataset.on !== "0");
+  $("phone").insertAdjacentText("beforeend", ` · ${said}`);
+  setTimeout(() => { $("phone-go").disabled = false; loadPhone(); }, 3000);
+});
+setInterval(loadPhone, 4000);
+
 // ---- refresh --------------------------------------------------------------
 function refresh() {
   loadStatus();
+  loadPhone();
   loadQuestions();
   if (TAB === "answers") loadAnswers();
   if (TAB === "alerts") loadAlerts();

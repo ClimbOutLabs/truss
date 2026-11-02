@@ -47,6 +47,14 @@ data class DayAnswers(val day: String, val answers: List<AnswerItem>)
 /** One missed-window alert as GET /alerts reports it: an id and the line to
  * speak. The alert stays on the laptop until ackAlert confirms it was spoken. */
 data class MissAlert(val id: String, val line: String)
+
+/** The Desk's latest start (on) or stop request for watching, as POST /watch/phone
+ * returns it. Each request has a fresh id; ageSeconds is how long ago it was made. */
+data class WatchRequest(val id: String, val on: Boolean, val ageSeconds: Int)
+
+/** What a watch check-in returns: the Desk's latest request, or null, and how old a
+ * request may be and still be acted on. */
+data class WatchCheckIn(val request: WatchRequest?, val freshSeconds: Int)
 class LaptopClient(laptopIp: String) {
 
   private val base: String
@@ -207,6 +215,25 @@ class LaptopClient(laptopIp: String) {
    * confirmation did not land and the alert will be offered again. */
   fun ackAlert(id: String) {
     postJson("/alerts/ack", JSONObject().put("id", id), POLL_READ_TIMEOUT_MS)
+  }
+
+  /** POST /watch/phone: tell the laptop how watching stands here, so the Desk can show
+   * it, and get back the Desk's latest start or stop request. */
+  fun watchCheckIn(watching: Boolean, away: Boolean, glasses: Boolean, pending: Boolean, every: Int): WatchCheckIn {
+    val payload =
+        JSONObject()
+            .put("watching", watching)
+            .put("away", away)
+            .put("glasses", glasses)
+            .put("pending", pending)
+            .put("every", every)
+    val reply = JSONObject(postJson("/watch/phone", payload, POLL_READ_TIMEOUT_MS))
+    val item = reply.optJSONObject("request")
+    val request =
+        item?.let {
+          WatchRequest(id = it.getString("id"), on = it.getBoolean("on"), ageSeconds = it.optInt("age_seconds", 0))
+        }
+    return WatchCheckIn(request, reply.optInt("fresh_seconds", 600))
   }
 
   /** POST /tts with a JSON body. Returns the WAV bytes the server sends back. */

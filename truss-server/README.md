@@ -45,6 +45,9 @@ The server will:
 - `GET /status` - The server's clock and zone, how checks will be made, the live-test settings in force, and when the phone app last polled and last sent a photo (read by `preflight.py`)
 - `GET /alerts` - List the missed-window alerts still waiting to be spoken
 - `POST /alerts/ack` - Confirm one alert was spoken, JSON `{"id": "..."}`; the only way an alert clears
+- `POST /watch` - The Desk asks the phone to start or stop watching, JSON `{"on": true}`
+- `POST /watch/phone` - The phone checks in every few seconds with how its watching stands and gets the Desk's latest request back
+- `GET /watch` - The Desk's latest request and the phone's last check-in
 
 ## Truss Desk
 
@@ -68,6 +71,15 @@ endpoints listed above, so it changes nothing about how checks are made.
   refused while any safety or done question is watched (an old photo
   would otherwise mark tonight's pills done or the stove off), and it
   takes a second click to send.
+- **Watching on the phone**: the photo loop runs in the phone app, so
+  the Desk asks the phone through the server (`phone_watch.py`).
+  Planting a question, or a question getting its last look, asks the
+  phone to start; the button at the top starts or stops it by hand,
+  and the line beside it says how the phone stands. The phone picks a
+  request up within a few seconds while the Truss app is open, and
+  starts once the glasses and the laptop are both connected. Each
+  request is acted on once, so Stop on the phone is not overruled, and
+  one older than ten minutes is ignored.
 
 ## Live test settings
 
