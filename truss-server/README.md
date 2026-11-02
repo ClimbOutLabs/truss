@@ -34,6 +34,7 @@ The server will:
 - `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}` with optional `"kind"`, `"pattern"`, `"safety"` (true or false), and `"look_at"`, returns the slug and the next prompt
 - `POST /plant/bedtime` - Plant the bedtime round (stove, front door, tonight's pills) in walk order, JSON with optional `"after"` and `"gap_minutes"`
 - `POST /guide/start` - Start a guided job, JSON `{"title": "...", "steps": ["Is the water shut off?", ...]}`, returns the first step as a line to speak
+- `POST /guide/task` - Start a guided job from its name, JSON `{"task": "lock up for the night"}`; the model writes the steps (see "Guided tasks")
 - `POST /guide/skip` - Skip the guide's current step
 - `POST /guide/stop` - Stop the guide at once; nothing is kept
 - `GET /guide/status` - The guide's state, step, and current step
@@ -48,6 +49,7 @@ The server will:
 - `POST /watch` - The Desk asks the phone to start or stop watching, JSON `{"on": true}`
 - `POST /watch/phone` - The phone checks in every few seconds with how its watching stands and gets the Desk's latest request back
 - `GET /watch` - The Desk's latest request and the phone's last check-in
+- `GET /latest` - The glasses' latest view as a JPEG, held in memory only, for taking a look from the Desk; 404 when none came in the last two minutes
 - `GET /settings` - What the Desk's Settings tab shows: whether the Meta key and the Aman token are set (never their values), the Aman address and check chat, and who answers the checks
 - `POST /settings` - Save settings from the Desk, JSON with any of `meta_key`, `aman_base`, `aman_token`, `aman_session`, `checker` (`endpoint` or `aman`), `clear`; JSON only, and only from the Desk's own page at the Mac's address
 - `POST /settings/test` - Try a connection, JSON `{"what": "meta"}` (one words-only Muse Spark call, no photo) or `{"what": "aman"}` (signs in and lists a few chats, no check)
@@ -455,6 +457,33 @@ standing questions. A yes advances, a no is silent, two cannot-tells
 in a row speak the step again, and the wearer can skip a step or stop
 at any moment. The guide keeps no photos; a finished job leaves one
 line in the day's answer log, a stopped one leaves nothing.
+
+### Guided tasks
+
+The Desk's Guide tab takes a job in plain words ("lock up for the
+night", "assemble the bookshelf", "chicken curry") and sends it to
+`POST /guide/task`. One words-only call to the model (Muse Spark first,
+no photo) writes two to eight steps, each a yes/no question a glance
+can settle, and the guide starts on them (`task_steps.py`).
+
+A guide never makes a safety call by eye, judged by intent rather
+than by a list of objects. The writing call is told to leave out any
+step whose yes would tell the person something is now safe (off, out,
+unplugged, locked, taken, cooked through). A second words-only call
+then judges each written step the same way, and every all-clear is
+moved out; if that call fails or skips a step, the step is left out
+(fail closed). What was left out is spoken first ("Not checked in this
+guide: ..."). Those belong in a standing question with its two looks.
+Doneness becomes a reading off a probe thermometer's display ("Does
+the thermometer read 74 or more?"), which the person judges.
+
+Start, skip and stop calls that carry `"phone": true` (the Desk's do)
+also queue their lines for the phone, which speaks them from its alert
+poll (`GET /alerts`, ids starting `guide-`, cleared by `POST
+/alerts/ack`), so the first step reaches the glasses within about half
+a minute. A capture whose reply speaks a newer guide line drops any
+older one still queued, and a stop drops them all. Like the guide,
+the queue is in memory: a restart forgets both.
 
 ## What Mannie says
 
