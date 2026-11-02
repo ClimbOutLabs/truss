@@ -8,9 +8,10 @@ endpoint checker.
     python3 check_once.py PHOTO "Is the stove off?" --looks "Knobs up means off."
 
 The endpoint comes from the same environment the server reads
-(TRUSS_BASE_URL, TRUSS_MODEL, TRUSS_API_KEY, TRUSS_TIMEOUT_S; see
-endpoint.py), so pointing this at the Meta Model API is the same
-command with different variables. Prints the result as JSON.
+(TRUSS_META_API_KEY for Muse Spark first, TRUSS_BASE_URL, TRUSS_MODEL,
+TRUSS_API_KEY, TRUSS_TIMEOUT_S; see endpoint.py), and is routed the
+same way, fallback included. Prints the result as JSON; its "model"
+names the model that answered.
 """
 
 import argparse
@@ -37,8 +38,13 @@ def main():
     looks = args.looks
     if looks is None and args.yes:
         looks = verdict.read_looks(Path(args.yes).parent)
-    cfg = endpoint.config_from_env()
-    print(f"Asking {cfg.model} at {cfg.base_url}, {args.mode} mode.", file=sys.stderr)
+    where = endpoint.describe_from_env()
+    if where["config_error"]:
+        print(where["config_error"], file=sys.stderr)
+    line = f"Asking {where['model']} at {where['base_url']}"
+    if where["fallback_model"]:
+        line += f", falling back to {where['fallback_model']} at {where['fallback_base_url']}"
+    print(f"{line}, {args.mode} mode.", file=sys.stderr)
     result = verdict.check(
         args.photo,
         args.question,
@@ -46,7 +52,6 @@ def main():
         ref_yes=args.yes,
         ref_no=args.no,
         looks=looks,
-        config=cfg,
     )
     print(json.dumps(result, indent=2))
 

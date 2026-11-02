@@ -12,9 +12,10 @@ first, without being asked, and the photo that answered it is kept on your
 own laptop as evidence. Photos that answer nothing are deleted.
 
 Built for the Meta Global AI Developer Hackathon (Indie track, "Build for
-Your World"). Truss uses Meta models only: every check, every plant-time
-compile and every evidence outline goes to a Meta model, and in the demo
-all of them run on hardware in the home.
+Your World"). Truss uses Meta models only: every check and every
+plant-time compile goes to Muse Spark 1.3 over the Meta Model API, with
+Muse Glimmer 30B on hardware in the home as an optional fallback, and
+evidence outlines come from SAM 3.1, also in the home.
 
 ## Who it is for
 
@@ -102,13 +103,15 @@ stove.
   evidence photos beside it. Only questions that are due ever see a photo,
   and a question rests once it has fired. See
   [`truss-server/README.md`](truss-server/README.md).
-- **Checking.** One OpenAI-compatible `chat/completions` endpoint with
-  image inputs and a strict JSON schema reply. By default it is Muse
-  Glimmer 30B under llama.cpp's `llama-server` on an NVIDIA DGX Spark on
-  the home network. The same code runs against the Meta Model API by
-  changing two settings (`TRUSS_BASE_URL`, `TRUSS_MODEL`).
+- **Checking.** One OpenAI-compatible `chat/completions` call with image
+  inputs and a strict JSON schema reply. With `TRUSS_META_API_KEY` set,
+  as in the demo, it goes to Muse Spark 1.3 over the Meta Model API. If
+  the API fails and `TRUSS_BASE_URL` points at Muse Glimmer 30B under
+  llama.cpp's `llama-server` on an NVIDIA DGX Spark in the home, that
+  answers instead, and Muse Spark rests for five minutes after an outage.
+  Every answer line names the model that answered.
 - **Plant-time compile.** When a question has both reference photos, one
-  call to the same model writes `looks.txt` (in words, what tells this
+  call to the same route writes `looks.txt` (in words, what tells this
   home's yes-look from its no-look, such as the knob positions) and
   `prompts.txt` (two or three short noun phrases for SAM: `stove`,
   `pill organizer`). Checks then read the current photo plus `looks.txt`.
@@ -122,18 +125,29 @@ stove.
 
 ### Where your data goes
 
-Photos go from the glasses to the phone to the laptop, and from the laptop
-to the DGX for the check. All three are in the home. A photo no question
-fires on is deleted after its check. Nothing is uploaded to any cloud
-service in the demo configuration.
+Photos go from the glasses to the phone to the laptop. From the laptop,
+each photo that a due question is checked against goes to Meta's Model
+API (Muse Spark), together with the question's words and, at planting,
+its two reference photos. That is the one place anything leaves the home.
+The API account runs on the hackathon's free credits, and Meta's billing
+page says that while free credits are in use, content may be used for
+product improvement. So in the demo configuration, those photos and
+words can be used by Meta. Only due questions ever see a photo, and a
+question rests once it has fired, so few photos go. Anyone who wants
+nothing to leave the home leaves `TRUSS_META_API_KEY` unset: every call
+then goes to Glimmer on the DGX, the same code.
+
+The kept record stays on the laptop: evidence photos and the answer log
+are plain files there. A photo no question fires on is deleted from the
+laptop after its check. SAM outlines run on the DGX, in the home.
 
 ## Meta models used
 
 | Model | Where it runs | What it does | Status |
 |---|---|---|---|
-| **Muse Glimmer 30B** (open weights, `meta-models/Muse-Glimmer-30B-GGUF`, Q4_K_M with its mmproj and dflash drafter) | Locally, llama.cpp `llama-server` on an NVIDIA DGX Spark | Every check, and the plant-time compile | Running; answers real glasses photos end to end |
+| **Muse Spark 1.3** (Meta Model API, standard tier `muse-spark-1.3`) | Meta's API | Every check, and the plant-time compile | <!-- TODO: live result --> _Wired; first live run pending_ |
+| **Muse Glimmer 30B** (open weights, `meta-models/Muse-Glimmer-30B-GGUF`, Q4_K_M with its mmproj and dflash drafter) | Locally, llama.cpp `llama-server` on an NVIDIA DGX Spark | Optional fallback when the API fails; every call when no Meta key is set | Answered real glasses photos end to end before the API key arrived |
 | **SAM 3.1** (open weights, `facebook/sam3.1`; SAM 3 as fallback) | Locally, a small HTTP service on the same DGX (`dgx/sam/`) | Outlines the object in kept evidence photos | <!-- TODO: SAM acceptance result --> _Kit built; live result pending_ |
-| **Muse Spark 1.3** (Meta Model API, standard tier `muse-spark-1.3`) | Meta's API | Optional: the same checker code with different settings | <!-- TODO: used or not --> _Not used in the demo_ |
 
 Rules Truss holds itself to:
 
@@ -142,8 +156,9 @@ Rules Truss holds itself to:
 - Never the Muse Spark contributor tier, which trains on what it is sent.
   Any model name containing `contributor` is refused in code before
   anything is sent.
-- An API key is never sent over plain HTTP to another machine, so the
-  local `llama-server` runs without one.
+- The Meta key is only ever sent over https to the Meta Model API. It is
+  never sent to the fallback, never logged and never in the repo; the
+  local `llama-server` runs without a key.
 
 How to bring the models up on a DGX Spark:
 [`dgx/RUNBOOK.md`](dgx/RUNBOOK.md) (Glimmer) and
@@ -233,17 +248,20 @@ seconds from arriving at the laptop to Glimmer's verdict, and about
 
 You need an Android phone, Meta glasses with Developer Mode on in the Meta
 AI app, a Mac on the same network (the server uses macOS `say`,
-`afconvert` and the `en0` interface), and a machine that can serve Muse
-Glimmer 30B (an NVIDIA DGX Spark here).
+`afconvert` and the `en0` interface), and a Meta Model API key, or a
+machine that can serve Muse Glimmer 30B (an NVIDIA DGX Spark here).
 
-1. Serve Glimmer: `./dgx/bringup.sh all` on the DGX
-   ([`dgx/RUNBOOK.md`](dgx/RUNBOOK.md)).
+1. Optional, the local fallback: serve Glimmer with
+   `./dgx/bringup.sh all` on the DGX ([`dgx/RUNBOOK.md`](dgx/RUNBOOK.md)).
 2. Optional, the evidence outline: `./dgx/sam/setup.sh all` on the DGX
    ([`dgx/sam/RUNBOOK.md`](dgx/sam/RUNBOOK.md)).
-3. On the Mac:
+3. On the Mac, with the key read from the keychain so it is never typed
+   into a file or a chat:
 
    ```bash
-   export TRUSS_BASE_URL=http://<dgx-ip>:8080/v1
+   export TRUSS_META_API_KEY="$(security find-generic-password -s truss-meta -w)"
+   # optional fallback: export TRUSS_BASE_URL=http://<dgx-ip>:8080/v1
+   python3 truss-server/endpoint.py --smoke
    python3 truss-server/server.py
    ```
 

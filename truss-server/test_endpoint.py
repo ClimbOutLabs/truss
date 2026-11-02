@@ -25,6 +25,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+# A Meta key exported in this shell must never send a test's request
+# to the real API.
+for _name in ("TRUSS_META_API_KEY", "TRUSS_META_BASE_URL", "TRUSS_META_MODEL"):
+    os.environ.pop(_name, None)
 
 import endpoint  # noqa: E402
 import verdict  # noqa: E402
@@ -75,7 +79,8 @@ class StubModel:
     finish_reason) tuple, or an int (an HTTP error status with no body
     worth reading). The last reply repeats."""
 
-    def __init__(self, replies, delay=0, redirect_to=None):
+    def __init__(self, replies, delay=0, redirect_to=None, models=("muse-glimmer-30b",)):
+        self.models = list(models)
         self.replies = list(replies)
         self.delay = delay
         self.redirect_to = redirect_to
@@ -99,6 +104,13 @@ class StubModel:
                     self.wfile.write(data)
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # the client gave up first, as the timeout test means it to
+
+            def do_GET(self):
+                # llama-server's model list, which the fallback check reads.
+                if self.path.endswith("/models"):
+                    self._send(200, {"data": [{"id": m} for m in stub.models]})
+                else:
+                    self._send(404, {})
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
@@ -186,6 +198,7 @@ def env(**values):
     names = [
         "TRUSS_BASE_URL", "TRUSS_MODEL", "TRUSS_API_KEY", "TRUSS_TIMEOUT_S",
         "MODEL_API_KEY", "TRUSS_CHECKER", "TRUSS_CHECK_MODE", "TRUSS_MAX_TOKENS",
+        "TRUSS_META_API_KEY", "TRUSS_META_BASE_URL", "TRUSS_META_MODEL", "TRUSS_META_TIMEOUT_S",
     ]
     saved = {k: os.environ.get(k) for k in names}
     for k in names:
@@ -582,6 +595,162 @@ def test_answer_log_names_the_model():
     check("log: the answer line names the model", "| model: muse-glimmer-30b" in text)
 
 
+# -- Muse Spark over the Meta Model API first, Glimmer as fallback ------------
+
+
+@contextlib.contextmanager
+def meta_at(stub_or_base, model="muse-spark-1.3", key=KEY, timeout=10):
+    """Point the Meta config at a local stub. meta_config_from_env
+    itself only allows https; the routing around it is what is tested."""
+    base = getattr(stub_or_base, "base", stub_or_base)
+    saved_get, saved_report = endpoint.meta_config_from_env, endpoint.report
+    lines = []
+    endpoint.meta_config_from_env = lambda: endpoint.EndpointConfig(base, model, key, timeout)
+    endpoint.report = lines.append
+    endpoint.reset_rest()
+    try:
+        yield lines
+    finally:
+        endpoint.meta_config_from_env, endpoint.report = saved_get, saved_report
+        endpoint.reset_rest()
+
+
+def test_meta_config_from_env():
+    with env():
+        check("meta: off without a key", endpoint.meta_config_from_env() is None)
+        check("meta: unchanged routing without a key",
+              endpoint.fallback_config_from_env().model == "muse-glimmer-30b")
+    with env(TRUSS_META_API_KEY=KEY):
+        c = endpoint.meta_config_from_env()
+        check("meta: default base is the Meta API", c.base_url == "https://api.meta.ai/v1")
+        check("meta: default model is muse-spark-1.3", c.model == "muse-spark-1.3")
+        check("meta: default timeout", c.timeout_s == endpoint.DEFAULT_META_TIMEOUT_S)
+        check("meta: no fallback unless TRUSS_BASE_URL is set",
+              endpoint.fallback_config_from_env() is None)
+        d = endpoint.describe_from_env()
+        check("meta: status names Muse Spark and no fallback",
+              d["model"] == "muse-spark-1.3" and d["fallback_model"] is None and not d["config_error"])
+        check("meta: the key is never in the description", KEY not in json.dumps(d))
+    with env(TRUSS_META_API_KEY=KEY, TRUSS_BASE_URL="http://192.0.2.1:8080/v1"):
+        d = endpoint.describe_from_env()
+        check("meta: an explicit TRUSS_BASE_URL is the fallback",
+              d["fallback_model"] == "muse-glimmer-30b"
+              and d["fallback_base_url"] == "http://192.0.2.1:8080/v1")
+    with env(TRUSS_META_API_KEY=KEY, TRUSS_META_BASE_URL="http://api.meta.ai/v1"):
+        try:
+            endpoint.meta_config_from_env()
+            refused = False
+        except endpoint.EndpointError as e:
+            refused = e.kind == "config" and KEY not in str(e)
+        check("meta: a plain-http base URL is refused", refused)
+    with env(TRUSS_META_API_KEY=KEY, TRUSS_META_MODEL="muse-spark-1.3-contributor"):
+        try:
+            endpoint.meta_config_from_env()
+            refused = False
+        except endpoint.EndpointError:
+            refused = True
+        check("meta: the contributor tier is refused", refused)
+    with StubModel([YES]) as glimmer, env(TRUSS_META_API_KEY=KEY,
+                                          TRUSS_META_MODEL="muse-spark-1.3-contributor",
+                                          TRUSS_BASE_URL=glimmer.base):
+        lines = []
+        saved = endpoint.report
+        endpoint.report = lines.append
+        endpoint.reset_rest()
+        try:
+            result = verdict.check(FRAME, "Is the front door locked?")
+        finally:
+            endpoint.report = saved
+        check("meta: a contributor Meta model is never asked; the fallback is",
+              result["model"] == "muse-glimmer-30b" and any("not used" in l for l in lines))
+        check("meta: the key never reached the fallback",
+              all("authorization" not in r["headers"] for r in glimmer.requests))
+
+
+def test_meta_answers_first():
+    with StubModel([YES]) as spark, StubModel([CANNOT]) as glimmer, \
+            env(TRUSS_BASE_URL=glimmer.base), meta_at(spark) as lines:
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("meta first: Muse Spark answered", result["verdict"] == "yes")
+    check("meta first: the result names muse-spark-1.3", result["model"] == "muse-spark-1.3")
+    check("meta first: Glimmer was not asked", glimmer.requests == [])
+    check("meta first: the key went to Muse Spark",
+          spark.requests[0]["headers"].get("authorization") == f"Bearer {KEY}")
+    check("meta first: nothing to report", lines == [])
+
+
+def test_meta_failure_falls_back_and_rests():
+    with StubModel([500]) as spark, StubModel([YES]) as glimmer, \
+            env(TRUSS_BASE_URL=glimmer.base), meta_at(spark) as lines:
+        first = verdict.check(FRAME, "Is the front door locked?")
+        second = verdict.check(FRAME, "Is the front door locked?")
+        spark_calls = len(spark.requests)
+    check("fallback: Glimmer answered", first["verdict"] == "yes")
+    check("fallback: the result names Glimmer", first["model"] == "muse-glimmer-30b")
+    check("fallback: the log line names both models",
+          len(lines) == 1 and "muse-spark-1.3 failed" in lines[0] and "muse-glimmer-30b" in lines[0])
+    check("fallback: the log line never carries the key", KEY not in " ".join(lines))
+    check("fallback: Muse Spark rests after an HTTP error", spark_calls == 1)
+    check("fallback: the next check goes straight to Glimmer", second["model"] == "muse-glimmer-30b")
+    check("fallback: the key never reached Glimmer",
+          all("authorization" not in r["headers"] for r in glimmer.requests))
+
+
+def test_meta_bad_reply_falls_back_without_rest():
+    with StubModel(["not json"]) as spark, StubModel([YES]) as glimmer, \
+            env(TRUSS_BASE_URL=glimmer.base), meta_at(spark):
+        result = verdict.check(FRAME, "Is the front door locked?")
+        check("bad reply: Muse Spark is not rested", not endpoint._resting())
+    check("bad reply: Glimmer answered", result["model"] == "muse-glimmer-30b"
+          and result["verdict"] == "yes")
+
+
+def test_meta_without_fallback():
+    with StubModel([500]) as spark, env(), meta_at(spark) as lines:
+        os.environ["TRUSS_META_API_KEY"] = KEY
+        first = verdict.check(FRAME, "Is the front door locked?")
+        second = verdict.check(FRAME, "Is the front door locked?")
+        calls = len(spark.requests)
+    check("no fallback: cannot_tell, never a guess", first["verdict"] == "cannot_tell")
+    check("no fallback: names muse-spark-1.3", first["model"] == "muse-spark-1.3")
+    check("no fallback: Muse Spark is never rested when nothing else can answer",
+          second["verdict"] == "cannot_tell" and calls == 2)
+    check("no fallback: nothing reported as a fallback", lines == [])
+
+
+def test_fallback_must_serve_a_meta_model():
+    with StubModel([500]) as spark, StubModel([YES], models=["deepseek-v4-flash-vision"]) as other, \
+            env(TRUSS_BASE_URL=other.base), meta_at(spark) as lines:
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("fallback guard: a non-Meta model behind TRUSS_BASE_URL is never asked",
+          other.requests == [] and result["verdict"] == "cannot_tell")
+    check("fallback guard: the result names Muse Spark", result["model"] == "muse-spark-1.3")
+    check("fallback guard: the log says why", any("not a Meta model" in l for l in lines))
+    with StubModel([500, YES]) as spark, StubModel([YES], models=["deepseek-v4-flash-vision"]) as other, \
+            env(TRUSS_BASE_URL=other.base), meta_at(spark):
+        verdict.check(FRAME, "Is the front door locked?")
+        check("fallback guard: Muse Spark is not rested when the fallback cannot stand in",
+              not endpoint._resting())
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("fallback guard: the next call asks Muse Spark again and gets its answer",
+          result["model"] == "muse-spark-1.3" and result["verdict"] == "yes")
+    check("fallback guard: the non-Meta fallback never got a check",
+          not any(r["path"].endswith("/chat/completions") for r in other.requests))
+    with StubModel([500]) as spark, \
+            StubModel([YES], models=["/models/Muse-Glimmer-30B-Q4_K_M.gguf"]) as glimmer, \
+            env(TRUSS_BASE_URL=glimmer.base), meta_at(spark):
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("fallback guard: llama-server's file name counts as Glimmer",
+          result["model"] == "muse-glimmer-30b" and result["verdict"] == "yes")
+
+
+def test_no_model_at_all():
+    with env(TRUSS_META_API_KEY=KEY, TRUSS_META_BASE_URL="http://nope/v1"):
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("no model: cannot_tell", result["verdict"] == "cannot_tell" and result["failure"] == "config")
+    check("no model: the key is not in the reason", KEY not in result["reason"])
+
+
 # -- review round 1: thinking, truncation, and unexplained verdicts -----------
 
 DRAFT_THEN_CUT = (
@@ -701,7 +870,7 @@ def test_key_only_over_https_or_loopback():
     check("key: https allowed", allowed("https://api.meta.ai/v1"))
     check("key: loopback http allowed", allowed("http://127.0.0.1:8080/v1"))
     check("key: localhost allowed", allowed("http://localhost:8080/v1"))
-    check("key: plain http to the LAN refused", not allowed("http://192.168.1.20:8080/v1"))
+    check("key: plain http to the LAN refused", not allowed("http://192.0.2.1:8080/v1"))
     check("key: plain http to a name refused", not allowed("http://dgx.local:8080/v1"))
 
 
@@ -769,4 +938,11 @@ if __name__ == "__main__":
     test_key_only_over_https_or_loopback()
     test_result_says_which_looks_were_used()
     test_unknown_model_is_logged_as_unknown()
+    test_meta_config_from_env()
+    test_meta_answers_first()
+    test_meta_failure_falls_back_and_rests()
+    test_meta_bad_reply_falls_back_without_rest()
+    test_meta_without_fallback()
+    test_fallback_must_serve_a_meta_model()
+    test_no_model_at_all()
     print("ALL PASS")

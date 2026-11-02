@@ -17,6 +17,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+# A Meta key exported in this shell must never send a test's request
+# to the real API.
+import os  # noqa: E402
+for _name in ("TRUSS_META_API_KEY", "TRUSS_META_BASE_URL", "TRUSS_META_MODEL"):
+    os.environ.pop(_name, None)
 
 import plant_compile  # noqa: E402
 from plant_compile import (  # noqa: E402
@@ -282,7 +287,7 @@ def test_contributor_tier_refused():
         folder = planted_folder(tmp)
         fake = StandardEndpoint(answer=STOVE_ANSWER)
         check("standard tier compiles", compile_question(folder, endpoint=fake)["ok"])
-        check("the config is passed through", isinstance(fake.calls[0]["config"], Standard))
+        check("no config is pinned; the endpoint routes the call", fake.calls[0]["config"] is None)
 
 
 def test_needs_both_looks():

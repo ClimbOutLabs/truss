@@ -290,20 +290,25 @@ def looks_fingerprint(folder):
 def _refuse_contributor(endpoint):
     """The compile sends both photos of her home. The contributor tier
     trains on what it is sent, so a compile never runs on it, whatever
-    the endpoint is set to. Returns the config to call with, or None
-    when the endpoint has no config of its own (ask_json then uses
-    its default)."""
-    config_from_env = getattr(endpoint, "config_from_env", None)
-    if config_from_env is None:
-        return None
-    config = config_from_env()
-    model = getattr(config, "model", "") or ""
-    if "contributor" in model.lower():
-        raise CompileError(
-            f"The model is set to {model}, a tier that trains on what it is "
-            "sent. The photos never go there, so nothing was compiled."
-        )
-    return config
+    the endpoint is set to. Always returns None: ask_json then routes
+    the call itself (Muse Spark first when the Meta key is set, see
+    endpoint.py), and refuses a contributor tier there too."""
+    for name in ("config_from_env", "meta_config_from_env"):
+        get = getattr(endpoint, name, None)
+        if get is None:
+            continue
+        try:
+            config = get()
+        except Exception:
+            # A setup problem is ask_json's to report, naming the model.
+            continue
+        model = getattr(config, "model", "") or ""
+        if "contributor" in model.lower():
+            raise CompileError(
+                f"The model is set to {model}, a tier that trains on what it is "
+                "sent. The photos never go there, so nothing was compiled."
+            )
+    return None
 
 
 def compile_question(folder, endpoint=None, lock=None):

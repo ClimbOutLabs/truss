@@ -334,8 +334,11 @@ def check(
     else:
         used_looks = "text" if looks else "none"
     try:
-        cfg = config or endpoint.config_from_env()
-        model = cfg.model
+        # With no config of its own, the call goes where endpoint.py
+        # routes it (Muse Spark first when the Meta key is set), and
+        # the model that answered is the one named.
+        cfg = config
+        model = cfg.model if cfg is not None else endpoint.describe_from_env()["model"]
         if mode not in MODES:
             raise endpoint.EndpointError(f"The check mode {mode!r} is not known.", kind="config")
         if (ref_yes is None) != (ref_no is None):
@@ -353,6 +356,7 @@ def check(
         reply = endpoint.ask_json(
             system, content, schema, schema_name, config=cfg, max_tokens=max_tokens()
         )
+        model = reply.get("_model") or model
         usage["spark_input_tokens"] = reply["_usage"]["input_tokens"]
         usage["spark_output_tokens"] = reply["_usage"]["output_tokens"]
         verdict = reply["verdict"]
@@ -381,6 +385,7 @@ def check(
         if verdict != "cannot_tell":
             missing = ""
     except endpoint.EndpointError as e:
+        model = getattr(e, "model", None) or model
         verdict, reason, failure = "cannot_tell", f"{e} So no check was made.", e.kind
     except Exception:
         verdict, reason, failure = (
