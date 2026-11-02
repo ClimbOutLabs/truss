@@ -85,6 +85,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 .block{border-top:1px solid var(--line);padding-top:24px;max-width:560px}
 .okt{color:var(--ok);font-weight:500} .badt{color:var(--on-apricot);font-weight:500}
 [hidden]{display:none!important}
+.checking{font-size:13px;color:var(--muted);margin:-8px 0 16px}
 </style>
 </head>
 <body>
@@ -96,6 +97,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
       <button class="btn2" id="phone-go">Start watching</button>
     </div>
   </header>
+  <p class="checking" id="checking" hidden></p>
 
   <nav role="tablist">
     <button class="tab" role="tab" aria-selected="true" data-tab="today">Today</button>
@@ -317,6 +319,18 @@ async function loadStatus() {
     STATUS = {unreachable: true};
   }
   renderBanners();
+  renderChecking();
+}
+
+// A check can take most of a minute; say so, so the page never looks
+// frozen. When one finishes, its answer is fetched straight away.
+let WAS_CHECKING = false;
+function renderChecking() {
+  const c = STATUS && STATUS.checking;
+  $("checking").hidden = !c;
+  if (c) $("checking").textContent = `Checking a photo: \u201c${c.question}\u201d (${c.seconds} s so far)`;
+  if (WAS_CHECKING && !c) { loadQuestions(); if (TAB === "answers") loadAnswers(); }
+  WAS_CHECKING = !!c;
 }
 
 // ---- the day ----------------------------------------------------------------
@@ -677,7 +691,7 @@ $("phone-go").addEventListener("click", async () => {
   if (said.startsWith("Couldn't")) { openTab("today"); showMsg("msg-today", said, true); }
   setTimeout(() => { $("phone-go").disabled = false; loadPhone(); }, 3000);
 });
-setInterval(loadPhone, 4000);
+setInterval(() => { loadPhone(); loadStatus(); }, 4000);
 
 // ---- settings -----------------------------------------------------------------
 // Keys go to the server and are never shown again: the page only learns
@@ -757,7 +771,10 @@ function refresh() {
 }
 syncForm();
 loadStatus().then(() => { refresh(); });
-setInterval(() => { loadStatus(); loadQuestions(); loadAlerts(); }, 15000);
+setInterval(() => { loadQuestions(); loadAlerts(); }, 15000);
+// A tab in the background has its timers slowed to once a minute by the
+// browser; catch up the moment it is looked at again.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 </script>
 </body>
 </html>
