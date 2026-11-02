@@ -977,6 +977,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     watchJob =
         viewModelScope.launch {
           var failures = 0
+          var aways = 0
           try {
             while (true) {
               // While a question's looks are being taken, the camera is left to
@@ -1002,6 +1003,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 if (watchStopAsked) break
                 if (ok == null) {
+                  // A revoked camera permission can look like the glasses ending the
+                  // session, so after a few aways in a row the permission is asked again.
+                  aways += 1
+                  if (aways % 3 == 0) cameraGranted = false
                   // Off, folded or out of reach: not a failure. Watching keeps trying on its usual beat and
                   // carries on by itself once the glasses are back.
                   if (_uiState.value.watchAwaySince == null) {
@@ -1012,6 +1017,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                   delay(_uiState.value.watchEverySeconds * 1000L)
                   continue
                 }
+                aways = 0
                 if (_uiState.value.watchAwaySince != null) {
                   watchRecord("back")
                   _uiState.update { it.copy(watchAwaySince = null) }
