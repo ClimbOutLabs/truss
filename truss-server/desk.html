@@ -129,7 +129,7 @@ input[type=text],input[type=time],input[type=number],input[type=date]{font:inher
       <form id="plant" autocomplete="off">
         <div style="display:flex;flex-direction:column;gap:14px">
           <label class="field"><span class="label">In your own words</span>
-            <input type="text" id="p-text" placeholder="Did I take my night pills?" required></label>
+            <input type="text" id="p-text" placeholder="Did I take my night pills?"></label>
 
           <div class="field"><span class="label">Kind</span>
             <div class="seg">
@@ -161,7 +161,7 @@ input[type=text],input[type=time],input[type=number],input[type=date]{font:inher
             <span class="note" id="looks-note">Both looks are needed for a safety or done question.</span>
           </div>
 
-          <button class="btn" type="submit" id="p-go">Start watching</button>
+          <button class="btn" type="submit" id="p-go">Start watching what's planted</button>
           <div class="msg" id="p-msg" hidden></div>
         </div>
       </form>
@@ -399,6 +399,7 @@ $("day").addEventListener("click", async (ev) => {
   $("p-look").value = f.look || "";
   showMsg("p-msg", f.safety ? "Filled in. Drop in the yes and no looks, then start watching." : "Filled in. Drop in the looks if you have them, then start watching.");
   $("p-text").focus();
+  syncGo();
 });
 
 // ---- answers and alerts ---------------------------------------------------
@@ -492,7 +493,13 @@ function clearLooks() {
 $("plant").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = $("p-text").value.trim();
-  if (!text) return;
+  if (!text) {
+    // No new question: start the phone watching what is already planted.
+    const live = QUESTIONS.filter((q) => q.state !== "retired" && q.state !== "planting").length;
+    if (!live) { showMsg("p-msg", "Nothing is planted yet. Type a question, or plant a step of the sample day.", true); return; }
+    showMsg("p-msg", `${await askPhone(true)} It watches the ${live} planted question${live === 1 ? "" : "s"}.`);
+    return;
+  }
   const kind = document.querySelector("input[name=kind]:checked").value;
   const when = document.querySelector("input[name=when]:checked").value;
   const safety = $("p-safety").checked;
@@ -518,6 +525,7 @@ $("plant").addEventListener("submit", async (ev) => {
     if (state === "planting") state = (await postJSON("/plant/finish", {slug: r.slug})).state;
     showMsg("p-msg", `Watching now: ${text}. ${await askPhone(true)}`);
     $("p-text").value = "";
+    syncGo();
     $("p-look").value = "";
     clearLooks();
   } catch (e) {
@@ -582,6 +590,13 @@ $("r-go").addEventListener("click", async () => {
     refresh();
   }
 });
+
+// The one button plants and starts when a question is typed, and only
+// starts the phone watching what is planted when the box is empty.
+function syncGo() {
+  $("p-go").textContent = $("p-text").value.trim() ? "Plant and start watching" : "Start watching what's planted";
+}
+$("p-text").addEventListener("input", syncGo);
 
 // ---- the phone's watching ---------------------------------------------------
 // Watching runs in the phone app. The Desk leaves a start or stop
