@@ -418,7 +418,7 @@ $("tab-today").addEventListener("click", async (ev) => {
   if (g) {
     g.disabled = true;
     try {
-      const view = await glassesView();
+      const view = await glassesView(() => showMsg("msg-today", "Waiting for a fresh view from the glasses…"));
       const r = await postImage(`/plant/ref?slug=${encodeURIComponent(g.dataset.slug)}&kind=${g.dataset.glasses}`, view.file);
       showMsg("msg-today", `Took the ${g.dataset.glasses} look from the glasses' view ${view.ago} s ago.`);
       if (r.state === "standing") {
@@ -545,27 +545,47 @@ function setLook(kind, file) {
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); setLook(kind, e.dataTransfer.files[0]); });
 });
-// The glasses' latest view (GET /latest), as a File. The phone sends a
-// view every few seconds while it is watching; with no fresh view the
-// phone is asked to start, and the error says to try again.
-async function glassesView() {
-  const r = await fetch("/latest", {cache: "no-store"});
-  if (!r.ok) {
-    if (r.status === 404) {
-      const said = await askPhone(true);
-      throw new Error(said.startsWith("Couldn't") ? said : "No view from the glasses yet. Asked the phone to start watching; try again in a few seconds.");
+// The glasses' view taken after the button was pressed (GET /latest),
+// as a File. The phone sends a view every few seconds while it is
+// watching, so this waits up to 15 s for one newer than the press: an
+// older frame could show the thing before it was set up, or be the
+// same frame as the other look. With no view at all the phone is
+// asked to start, and the error says to try again.
+async function glassesView(onWait) {
+  const pressed = Date.now();
+  while (true) {
+    const r = await fetch("/latest", {cache: "no-store"});
+    if (!r.ok && r.status !== 404) throw new Error(await errorText(r));
+    const waited = (Date.now() - pressed) / 1000;
+    if (r.ok) {
+      const ago = Number(r.headers.get("X-Seconds-Ago") || "999");
+      if (ago < waited) {
+        const blob = await r.blob();
+        return {file: new File([blob], `glasses-${Date.now()}.jpg`, {type: "image/jpeg"}), ago: ago.toFixed(0)};
+      }
     }
-    throw new Error(await errorText(r));
+    if (waited > 15) {
+      const said = await askPhone(true);
+      throw new Error(said.startsWith("Couldn't") ? said : "No new view came from the glasses in 15 s. Asked the phone to start watching; try again in a few seconds.");
+    }
+    if (onWait) onWait();
+    await new Promise((res) => setTimeout(res, 1000));
   }
-  const blob = await r.blob();
-  const ago = r.headers.get("X-Seconds-Ago") || "0";
-  return {file: new File([blob], `glasses-${Date.now()}.jpg`, {type: "image/jpeg"}), ago};
+}
+async function sameBytes(a, b) {
+  if (!a || !b || a.size !== b.size) return false;
+  const [x, y] = await Promise.all([a.arrayBuffer(), b.arrayBuffer()]);
+  const u = new Uint8Array(x), v = new Uint8Array(y);
+  for (let i = 0; i < u.length; i++) if (u[i] !== v[i]) return false;
+  return true;
 }
 document.querySelectorAll("[data-take]").forEach((b) => b.addEventListener("click", async () => {
   const kind = b.dataset.take;
   b.disabled = true;
   try {
-    const view = await glassesView();
+    const view = await glassesView(() => showMsg("p-msg", "Waiting for a fresh view from the glasses…"));
+    const other = LOOKS[kind === "yes" ? "no" : "yes"];
+    if (await sameBytes(view.file, other)) throw new Error(`That view is the same photo as the ${kind === "yes" ? "no" : "yes"} look. Change what the glasses see, then take it again.`);
     setLook(kind, view.file);
     showMsg("p-msg", `Took the ${kind} look from the glasses' view ${view.ago} s ago.`);
   } catch (e) { showMsg("p-msg", e.message, true); }
@@ -594,6 +614,10 @@ $("plant").addEventListener("submit", async (ev) => {
   if (when === "interval") pattern = {kind: "interval", minutes: Number($("p-minutes").value || 0)};
   else if (when === "nightly") pattern = {kind: "nightly", after: $("p-after-n").value};
   else pattern = {kind: "window", after: $("p-after").value, until: $("p-until").value};
+  if (await sameBytes(LOOKS.yes, LOOKS.no)) {
+    showMsg("p-msg", "The yes and no looks are the same photo. Take one of them again.", true);
+    return;
+  }
   if ((safety || kind === "done") && !(LOOKS.yes && LOOKS.no)) {
     showMsg("p-msg", "A safety or done question needs both photos before it can start. Drop in the yes and the no photo.", true);
     return;

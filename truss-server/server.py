@@ -517,7 +517,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Seconds-Ago", str(int(age)))
+        self.send_header("X-Seconds-Ago", f"{age:.1f}")
         self.end_headers()
         self.wfile.write(data)
 
@@ -1054,7 +1054,11 @@ class TrussHandler(BaseHTTPRequestHandler):
             
             file_size = len(image_data)
             _seen("capture", self.client_address[0])
-            keep_latest(image_data)
+            # Only the phone's own frames are the glasses' view. A
+            # browser always names its page in Origin, so a photo the
+            # Desk replays is never offered as a look.
+            if self.headers.get("Origin") is None:
+                keep_latest(image_data)
 
             response = {"bytes": file_size}
             session = GUIDE["session"]
