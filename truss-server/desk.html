@@ -100,6 +100,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
   <nav role="tablist">
     <button class="tab" role="tab" aria-selected="true" data-tab="today">Today</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="plant">Plant</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="guide">Guide</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="answers">Answers</button>
     <button class="tab end" role="tab" aria-selected="false" data-tab="settings">Settings</button>
   </nav>
@@ -169,6 +170,27 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
         <div class="msg say" id="r-msg" hidden></div>
       </div>
     </details>
+  </div>
+
+  <!-- Guide: a named job, walked step by step -->
+  <div id="tab-guide" class="pane" hidden>
+    <form id="g-form" class="form" autocomplete="off">
+      <label class="field"><span class="fl">Start a task</span>
+        <input type="text" id="g-task" placeholder="Lock up for the night" maxlength="200" required></label>
+      <span class="note">Truss writes the steps, speaks one at a time in the glasses, and moves on when a photo shows it done. It never confirms a safety check by eye: the stove, pills, or whether food is cooked through stay standing questions. For doneness, use a probe thermometer and it reads the number.</span>
+      <div><button class="btn" type="submit" id="g-go">Start</button></div>
+      <div class="msg" id="g-msg" hidden></div>
+    </form>
+    <section id="g-run" hidden>
+      <div class="spread"><h2 id="g-title"></h2><span class="muted" id="g-step"></span></div>
+      <div id="g-steps"></div>
+      <div class="note" id="g-left" hidden></div>
+      <div class="row">
+        <button class="btn2" id="g-skip">Skip this step</button>
+        <button class="btn2" id="g-stop">Stop</button>
+      </div>
+      <div class="msg" id="g-run-msg" hidden></div>
+    </section>
   </div>
 
   <!-- Answers -->
@@ -299,7 +321,7 @@ let TAB = "today";
 function openTab(name) {
   TAB = name;
   document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === name)));
-  ["today", "plant", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
+  ["today", "plant", "guide", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
   refresh();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => openTab(t.dataset.tab)));
@@ -746,12 +768,72 @@ $("s-aman-save").addEventListener("click", async () => {
 });
 $("s-aman-test").addEventListener("click", () => testSettings("aman", "s-aman-msg"));
 
+
+// ---- guide ----------------------------------------------------------------
+// A named job, walked step by step through the glasses. The steps are
+// spoken on the phone (the server queues them for it), not here.
+let GUIDE = null;
+let GUIDE_LEFT = [];
+async function loadGuide() {
+  try { GUIDE = await getJSON("/guide/status"); } catch (e) { GUIDE = null; }
+  renderGuide();
+}
+function renderGuide() {
+  const active = !!(GUIDE && GUIDE.active);
+  $("g-form").hidden = active;
+  $("g-run").hidden = !active;
+  if (!active) return;
+  $("g-title").textContent = GUIDE.title || "Guided task";
+  $("g-step").textContent = `Step ${GUIDE.step} of ${GUIDE.of}`;
+  const steps = GUIDE.steps || [];
+  $("g-steps").innerHTML = steps.map((q, i) => {
+    const n = i + 1;
+    const word = n < GUIDE.step ? ["Done", "yes"] : n === GUIDE.step ? ["Now", "live"] : ["", ""];
+    return `<div class="line"><span class="t">Step ${n}</span><div><div class="qt"${n === GUIDE.step ? "" : ' style="font-weight:500;color:var(--muted)"'}>${esc(q)}</div></div><span class="st ${word[1]}">${esc(word[0])}</span></div>`;
+  }).join("");
+  $("g-left").hidden = !GUIDE_LEFT.length;
+  $("g-left").textContent = GUIDE_LEFT.length ? `Not checked by eye: ${GUIDE_LEFT.join("; ")}.` : "";
+}
+$("g-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const task = $("g-task").value.trim();
+  if (!task) return;
+  $("g-go").disabled = true;
+  showMsg("g-msg", "Writing the steps…");
+  try {
+    const r = await postJSON("/guide/task", {task, phone: true});
+    GUIDE_LEFT = r.left_out || [];
+    showMsg("g-msg", "");
+    $("g-task").value = "";
+    if (!(PHONE && PHONE.phone && PHONE.phone.watching)) await askPhone(true);
+    showMsg("g-run-msg", "The phone speaks the first step on its next check, within about half a minute.");
+  } catch (e) {
+    showMsg("g-msg", e.message, true);
+  }
+  $("g-go").disabled = false;
+  loadGuide();
+});
+async function guideAct(what) {
+  try {
+    await postJSON(what === "stop" ? "/guide/stop" : "/guide/skip", {phone: true});
+    showMsg("g-run-msg", "");
+  } catch (e) {
+    showMsg("g-run-msg", e.message, true);
+  }
+  if (what === "stop") GUIDE_LEFT = [];
+  loadGuide();
+}
+$("g-skip").addEventListener("click", () => guideAct("skip"));
+$("g-stop").addEventListener("click", () => guideAct("stop"));
+setInterval(() => { if (TAB === "guide") loadGuide(); }, 4000);
+
 // ---- refresh --------------------------------------------------------------
 function refresh() {
   loadStatus();
   loadPhone();
   loadQuestions();
   loadAlerts();
+  if (TAB === "guide") loadGuide();
   if (TAB === "answers") loadAnswers();
   if (TAB === "settings") loadSettings();
 }

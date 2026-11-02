@@ -34,6 +34,7 @@ The server will:
 - `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}` with optional `"kind"`, `"pattern"`, `"safety"` (true or false), and `"look_at"`, returns the slug and the next prompt
 - `POST /plant/bedtime` - Plant the bedtime round (stove, front door, tonight's pills) in walk order, JSON with optional `"after"` and `"gap_minutes"`
 - `POST /guide/start` - Start a guided job, JSON `{"title": "...", "steps": ["Is the water shut off?", ...]}`, returns the first step as a line to speak
+- `POST /guide/task` - Start a guided job from its name, JSON `{"task": "lock up for the night"}`; the model writes the steps (see "Guided tasks")
 - `POST /guide/skip` - Skip the guide's current step
 - `POST /guide/stop` - Stop the guide at once; nothing is kept
 - `GET /guide/status` - The guide's state, step, and current step
@@ -455,6 +456,30 @@ standing questions. A yes advances, a no is silent, two cannot-tells
 in a row speak the step again, and the wearer can skip a step or stop
 at any moment. The guide keeps no photos; a finished job leaves one
 line in the day's answer log, a stopped one leaves nothing.
+
+### Guided tasks
+
+The Desk's Guide tab takes a job in plain words ("lock up for the
+night", "assemble the bookshelf", "chicken curry") and sends it to
+`POST /guide/task`. One words-only call to the model (Muse Spark first,
+no photo) writes two to eight steps, each a yes/no question a glance
+can settle, and the guide starts on them (`task_steps.py`).
+
+A guide never makes a safety call by eye. The model is told to leave
+out any step whose yes would be an all-clear on a stove, pills or
+medicine, or whether food is cooked through, and a word list catches
+any such step it writes anyway; what was left out is spoken first
+("Not checked in this guide: ..."). Those belong in a standing question
+with its two looks. Doneness becomes a reading off a probe
+thermometer's display ("Does the thermometer read 74 or more?").
+
+Start, skip and stop calls that carry `"phone": true` (the Desk's do)
+also queue their lines for the phone, which speaks them from its alert
+poll (`GET /alerts`, ids starting `guide-`, cleared by `POST
+/alerts/ack`), so the first step reaches the glasses within about half
+a minute. A capture whose reply speaks a newer guide line drops any
+older one still queued, and a stop drops them all. Like the guide,
+the queue is in memory: a restart forgets both.
 
 ## What Mannie says
 

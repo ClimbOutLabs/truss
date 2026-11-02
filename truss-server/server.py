@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +27,7 @@ import verdict
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
+import task_steps
 import history
 from phone_watch import WatchDesk
 from plant_compile import Compiler, compile_folder, needs_compile
@@ -304,6 +306,43 @@ def status():
 # memory; while a guide is active, captures go to it instead of the loop.
 GUIDE = {"session": None}
 
+# Guide lines waiting for the phone to speak, for a guide driven from
+# the Desk (whose own page cannot reach the glasses). They ride the
+# phone's alert poll as extra alerts with a "guide-" id and are cleared
+# by the same ack. In memory, like the guide: a restart forgets both.
+GUIDE_SAY = []
+GUIDE_SAY_LOCK = threading.Lock()
+# Held while a guide starts, skips or stops, so two at once cannot
+# both pass the "already running" check.
+GUIDE_LOCK = threading.Lock()
+
+
+def guide_say(lines, fresh=False):
+    """Queue one guide line for the phone. fresh drops what an older
+    guide left unspoken, so a stopped or replaced guide is never
+    heard after the fact."""
+    line = " ".join(s for s in lines if s).strip()
+    with GUIDE_SAY_LOCK:
+        if fresh:
+            GUIDE_SAY.clear()
+        if line:
+            GUIDE_SAY.append({"id": f"guide-{uuid.uuid4().hex[:12]}", "line": line})
+
+
+def guide_said(alert_id):
+    """Clear one spoken guide line. True when it was waiting."""
+    with GUIDE_SAY_LOCK:
+        for i, item in enumerate(GUIDE_SAY):
+            if item["id"] == alert_id:
+                del GUIDE_SAY[i]
+                return True
+    return False
+
+
+def guide_waiting():
+    with GUIDE_SAY_LOCK:
+        return [dict(item) for item in GUIDE_SAY]
+
 def set_checker(value):
     """Switch who answers the checks: "endpoint" (Muse Spark, with its
     fallback) or "aman". Read at every check, so it takes effect on
@@ -466,6 +505,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_questions_retire()
         elif path == "/guide/start":
             self.handle_guide_start()
+        elif path == "/guide/task":
+            self.handle_guide_task()
         elif path == "/guide/skip":
             self.handle_guide_skip()
         elif path == "/guide/stop":
@@ -586,7 +627,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         run_sweep()
         alerts = [
             {"id": a["id"], "line": a["line"]} for a in ALERTS.pending()
-        ]
+        ] + guide_waiting()
         self.send_json({"alerts": alerts})
         print(f"GET /alerts -> {len(alerts)} pending")
 
@@ -700,6 +741,13 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Body must be JSON with an alert id")
             return
         alert_id = data.get("id") if isinstance(data, dict) else None
+        if isinstance(alert_id, str) and alert_id.startswith("guide-"):
+            if not guide_said(alert_id):
+                self.send_error(404, "No pending alert with that id.")
+                return
+            self.send_json({"acked": alert_id})
+            print(f"POST /alerts/ack -> {alert_id}")
+            return
         if not ALERTS.ack(alert_id):
             self.send_error(404, "No pending alert with that id.")
             return
@@ -812,16 +860,39 @@ class TrussHandler(BaseHTTPRequestHandler):
             return None
         return body
 
+    def _start_guide(self, steps, title, phone, route, extra=None):
+        """Start a guide from checked steps, under GUIDE_LOCK. Sends
+        the reply (or the 400) and returns the session, or None."""
+        with GUIDE_LOCK:
+            session = GUIDE["session"]
+            if session is not None and session.state == "active":
+                self.send_error(400, "A guide is already running. Stop it first.")
+                return None
+            try:
+                session = Guide(steps, title=title, log_dir=Path(__file__).parent / "log")
+            except ValueError as e:
+                self.send_error(400, str(e))
+                return None
+            GUIDE["session"] = session
+            speak = session.start()
+            if extra and extra.get("left_out_line"):
+                speak = [extra["left_out_line"]] + speak
+            if phone:
+                guide_say(speak, fresh=True)
+        reply = {"speak": speak, "step": 1, "of": len(session.steps), "title": session.title}
+        if extra:
+            reply.update({k: v for k, v in extra.items() if k != "left_out_line"})
+        self.send_json(reply)
+        print(f"POST {route} -> {session.title}: {len(session.steps)} steps")
+        return session
+
     def handle_guide_start(self):
         """Start a guide: POST JSON {"title": ..., "steps": [...]}. Each
         step is a question a glance can settle. The reply carries the
-        first step's prompt as a line to speak."""
+        first step's prompt as a line to speak. With "phone": true the
+        line is also queued for the phone to speak (see GUIDE_SAY)."""
         body = self._guide_body()
         if body is None:
-            return
-        session = GUIDE["session"]
-        if session is not None and session.state == "active":
-            self.send_error(400, "A guide is already running. Stop it first.")
             return
         steps = body.get("steps")
         if not isinstance(steps, list) or not all(
@@ -829,33 +900,55 @@ class TrussHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400, "Steps must be a list of step questions.")
             return
+        self._start_guide(
+            steps, str(body.get("title") or "Guided job"),
+            body.get("phone") is True, "/guide/start",
+        )
+
+    def handle_guide_task(self):
+        """Start a guide from a named job: POST JSON {"task": "lock up
+        for the night"}. The model writes the steps (see task_steps.py),
+        leaving out any safety call by eye, and the guide starts on
+        them. The reply carries the steps and what was left out; with
+        "phone": true the opening lines are queued for the phone."""
+        body = self._guide_body()
+        if body is None:
+            return
+        session = GUIDE["session"]
+        if session is not None and session.state == "active":
+            self.send_error(400, "A guide is already running. Stop it first.")
+            return
         try:
-            session = Guide(
-                steps,
-                title=str(body.get("title") or "Guided job"),
-                log_dir=Path(__file__).parent / "log",
+            plan = task_steps.compose_steps(
+                body.get("task"), endpoint.ask_json, endpoint.text_part
             )
-        except ValueError as e:
+        except task_steps.TaskError as e:
+            print(f"POST /guide/task -> no steps: {e}")
             self.send_error(400, str(e))
             return
-        GUIDE["session"] = session
-        self.send_json(
-            {
-                "speak": session.start(),
-                "step": 1,
-                "of": len(session.steps),
-                "title": session.title,
-            }
+        self._start_guide(
+            plan["steps"], plan["title"], body.get("phone") is True, "/guide/task",
+            extra={
+                "steps": plan["steps"],
+                "left_out": plan["left_out"],
+                "model": plan["model"],
+                "left_out_line": task_steps.left_out_line(plan["left_out"]),
+            },
         )
-        print(f"POST /guide/start -> {session.title}: {len(session.steps)} steps")
 
     def handle_guide_skip(self):
         """Skip the current step, at the wearer's word."""
-        session = GUIDE["session"]
-        if session is None or session.state != "active":
-            self.send_error(400, "No guide is running.")
+        body = self._guide_body()
+        if body is None:
             return
-        speak = session.skip()
+        with GUIDE_LOCK:
+            session = GUIDE["session"]
+            if session is None or session.state != "active":
+                self.send_error(400, "No guide is running.")
+                return
+            speak = session.skip()
+            if body.get("phone") is True:
+                guide_say(speak, fresh=True)
         self.send_json(
             {"speak": speak, "state": session.state, "step": session.index + 1}
         )
@@ -863,11 +956,18 @@ class TrussHandler(BaseHTTPRequestHandler):
 
     def handle_guide_stop(self):
         """Stop the guide at once. Nothing is kept."""
-        session = GUIDE["session"]
-        if session is None or session.state != "active":
-            self.send_error(400, "No guide is running.")
+        body = self._guide_body()
+        if body is None:
             return
-        speak = session.stop()
+        with GUIDE_LOCK:
+            session = GUIDE["session"]
+            if session is None or session.state != "active":
+                self.send_error(400, "No guide is running.")
+                return
+            speak = session.stop()
+            # Whatever the guide had queued for the phone is dropped:
+            # a stopped guide is never heard after the fact.
+            guide_say(speak if body.get("phone") is True else [], fresh=True)
         self.send_json({"speak": speak, "state": session.state})
         print("POST /guide/stop -> stopped")
 
@@ -889,6 +989,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                     if session.state == "active"
                     else None
                 ),
+                "steps": list(session.steps),
             }
         )
 
@@ -1030,6 +1131,10 @@ class TrussHandler(BaseHTTPRequestHandler):
                 }
                 if guide_result["managed"]:
                     response["speak"] = guide_result["speak"]
+                    if guide_result["speak"]:
+                        # This reply speaks the newer line itself; an
+                        # older one still queued for the phone is stale.
+                        guide_say([], fresh=True)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
