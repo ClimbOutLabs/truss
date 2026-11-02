@@ -1089,8 +1089,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   // The id of the last Desk request acted on. Each request is acted on once, so
   // pressing Stop here after the Desk asked for watching is not undone at the next
-  // check-in.
-  private var deskHandledId: String? = null
+  // check-in. Kept in the app's preferences, so an app the phone closed and reopened
+  // does not take an old start for a new one.
+  private var deskHandledId: String? =
+      getApplication<Application>()
+          .getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+          .getString(KEY_DESK_HANDLED, null)
   private var deskAskedAt = 0L
   private var deskFreshMs = 600_000L
 
@@ -1141,6 +1145,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     val request = reply.request ?: return
     if (request.id == deskHandledId) return
     deskHandledId = request.id
+    getApplication<Application>()
+        .getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+        .edit()
+        .putString(KEY_DESK_HANDLED, request.id)
+        .apply()
     if (request.ageSeconds > reply.freshSeconds) return
     if (request.on) {
       if (_uiState.value.watching) return
@@ -1484,6 +1493,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     const val TEST_SENTENCE = "Hello, this is Mannie. I can hear you."
     private const val PREFS = "mannie"
     private const val KEY_LAPTOP_IP = "laptop_ip"
+    private const val KEY_DESK_HANDLED = "desk_handled_id"
     private const val STEP_TIMEOUT_MS = 15_000L
     private const val RETURN_TIMEOUT_MS = 15_000L
     private const val POLL_MS = 500L
