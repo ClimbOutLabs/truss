@@ -121,8 +121,9 @@ def test_refusal_detail():
     check("the knobs, as a phrase",
           checkloop.refusal_detail(KNOBS) == "the four knobs on the front of the stove")
     check("a bare noun gets an article", checkloop.refusal_detail("knobs") == "the knobs")
-    check("the stove check's own missing line is spoken as the thing",
-          checkloop.refusal_detail(verdict.KNOBS_MISSING) == "all of the stove's control knobs")
+    check("a missing line naming the thing is spoken as the thing",
+          checkloop.refusal_detail("All of the stove's control knobs, in clear view.")
+          == "all of the stove's control knobs")
     check("a sentence about the photo is not spoken inside the line",
           checkloop.refusal_detail("The knobs need to be in view.") is None)
     check("an action verb is never spoken", checkloop.refusal_detail("the knob you turn") is None)
@@ -260,10 +261,10 @@ def test_refusal_needs_every_condition():
         loop.process_frame(frame(captures, "a.jpg"))
         check(f"{name}: silent", spoken == [] and loop.presence_fn.calls == [])
     knobs_out = verdict_of("cannot_tell", "The knobs are not all in clear view.",
-                           verdict.KNOBS_MISSING, failure="inconsistent")
+                           "All of the stove's control knobs, in clear view.")
     tmp, store, slug, loop, spoken, clock, captures = refusal_rig([knobs_out], [seen])
     loop.process_frame(frame(captures, "a.jpg"))
-    check("the knob check's inconsistent catch is spoken as a refusal",
+    check("a cannot-tell naming the knobs is spoken as a refusal",
           spoken == ["Is the stove off? I can't tell. I can't see all of the stove's "
                      "control knobs from here."])
     tmp, store, slug, loop, spoken, clock, captures = refusal_rig([cannot], [seen])
@@ -305,6 +306,9 @@ def test_safety_instruction():
     system, _ = verdict._request(photo, STOVE, "single", None, None, None, safety=True)
     check("a safety check is held to the deciding detail",
           verdict.SAFETY_INSTRUCTION in system and "flame" in system)
+    check("a safety check holds the all-clear, not the danger, to it",
+          "all-clear" in verdict.SAFETY_INSTRUCTION
+          and "needs only a clear, direct sign" in verdict.SAFETY_INSTRUCTION)
     system, _ = verdict._request(photo, STOVE, "single", None, None, None)
     check("an ordinary check is not", verdict.SAFETY_INSTRUCTION not in system)
     check("missing is asked for as a short noun phrase",

@@ -391,10 +391,8 @@ def _refusable(entry, result):
         and entry.get("safety") is True
         and isinstance(result, dict)
         and result.get("verdict") == "cannot_tell"
-        # "inconsistent" is the stove check catching a yes its own knob
-        # report does not back (the knobs out of view): exactly the case
-        # to say out loud. Any other failure means no answer was made.
-        and result.get("failure") in (None, "", "inconsistent")
+        # Any failure means no answer was made.
+        and result.get("failure") in (None, "")
         and isinstance(result.get("missing"), str)
         and result["missing"].strip() != ""
     )

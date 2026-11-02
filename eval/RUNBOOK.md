@@ -18,7 +18,7 @@ you would naturally stand. Do the safety questions first:
 | `q04-oven-off` | Is the oven off? | dial at off | oven on, low |
 | `q15-hair-straightener-unplugged` | Is the hair straightener unplugged? | unplugged | plugged in, light on |
 
-The other 15 are in `eval/questions.yaml` (folder name = `id-slug`, e.g.
+The other 16 are in `eval/questions.yaml` (folder name = `id-slug`, e.g.
 `q13-tv-off`).
 
 Per question, aim for:
@@ -28,7 +28,10 @@ Per question, aim for:
   case (a burner on low, the door shut but unlocked).
 - **1 or 2 cannot_tell frames** on each safety question: the deciding detail is not
   in view (knobs out of frame, pill organizer lid closed, too dark). The right
-  answer there is cannot_tell, and a yes counts as a false all-clear.
+  answer there is cannot_tell, and a yes counts as a false all-clear. Keep the
+  burners off in these: a lit flame or a pot at a rolling boil answers the stove
+  question (it is on) even with the knobs out of frame. That is the intent case;
+  shoot it as a `no` frame for q01 and a `yes` frame for q21 (`q21-stove-on`).
 
 Where the photos come from: the Meta AI app saves glasses photos to the phone's
 gallery; or, with no questions standing on the Mac server, every photo the Truss
