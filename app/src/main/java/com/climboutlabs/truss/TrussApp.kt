@@ -587,10 +587,12 @@ private fun HeroCard(
       title = "Paused"
       subtitle = "The glasses are off. Watching carries on by itself when you put them back on."
     }
-    state.watching && state.watchAwaySince != null -> {
+    state.watchWaiting -> {
       title = "Waiting for the glasses"
+      val since = clock12(state.watchQuietSince)
       subtitle =
-          "They went quiet at ${clock12(state.watchAwaySince)}. If they are on, open the Meta AI " +
+          (if (since != null) "They went quiet at $since. " else "They went quiet. ") +
+              "If they are on, open the Meta AI " +
               "app for a moment to relink them. Watching carries on by itself when they are back."
     }
     state.watching -> {
@@ -668,7 +670,7 @@ private fun HeroCard(
           onSelect = onWatchEvery,
           onDark = false,
       )
-      if (state.watching && state.watchAwaySince != null && !state.glassesOff) {
+      if (state.watchWaiting && !state.glassesOff) {
         BigButton("Open Meta AI to reconnect", TrussIcons.Glasses, onOpenMetaAi, height = 52.dp)
       }
       if (state.watching) {

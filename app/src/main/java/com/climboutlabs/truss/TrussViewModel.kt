@@ -106,6 +106,8 @@ data class TrussUiState(
     val watching: Boolean = false,
     /** While watching: when the glasses went away (off, folded, out of reach), or null. */
     val watchAwaySince: String? = null,
+    /** HH:mm when the glasses last dropped out of the toolkit's device list, null while any is in range. */
+    val glassesGoneAt: String? = null,
     val watchEverySeconds: Int = 30,
     val watchSent: Int = 0,
     val watchSkipped: Int = 0,
@@ -126,6 +128,17 @@ data class TrussUiState(
   /** True once the glasses are registered with this app and one is in range. */
   val glassesReady: Boolean
     get() = registrationState == RegistrationState.REGISTERED && deviceNames.isNotEmpty()
+
+  /** Watching, but the glasses are gone: a photo came back away, or they left the
+   * device list (off Bluetooth) since the last beat. Home says so at once instead of
+   * waiting for the next photo to fail. A photo in progress is left alone, so a
+   * device-list blip while the glasses' Wi-Fi is joined does not flicker Home. */
+  val watchWaiting: Boolean
+    get() = watching && (watchAwaySince != null || (!glassesReady && !photoBusy))
+
+  /** When the glasses went quiet, for Home: the first of the two signs. */
+  val watchQuietSince: String?
+    get() = watchAwaySince ?: glassesGoneAt
 
   /** The glasses link in the brief's three words, derived from toolkit state. */
   val linkState: String
@@ -297,7 +310,18 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         }
         deviceNames.keys.retainAll(devices)
         deviceDon.keys.retainAll(devices)
-        _uiState.update { it.copy(deviceNames = deviceNames.values.toList()) }
+        val gone = deviceNames.isEmpty()
+        _uiState.update {
+          it.copy(
+              deviceNames = deviceNames.values.toList(),
+              glassesGoneAt =
+                  when {
+                    !gone -> null
+                    it.glassesGoneAt != null -> it.glassesGoneAt
+                    else -> SimpleDateFormat("HH:mm", Locale.US).format(Date())
+                  },
+          )
+        }
         updateGlassesOff()
       }
     }
@@ -1322,7 +1346,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** The app is in front again, as after a trip to the Meta AI app: if watching is
    * waiting for the glasses, try a photo now rather than at the next beat. */
   fun onAppForeground() {
-    if (_uiState.value.watching && _uiState.value.watchAwaySince != null) watchNudge.tryEmit(Unit)
+    if (_uiState.value.watchWaiting) watchNudge.tryEmit(Unit)
   }
 
   /** Stop watching. A photo already being taken finishes first, answer and all. */
@@ -1384,7 +1408,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           laptopClient()
               .watchCheckIn(
                   watching = now.watching,
-                  away = now.watchAwaySince != null,
+                  away = now.watchWaiting,
                   glasses = now.glassesReady,
                   pending = now.deskStartPending,
                   every = now.watchEverySeconds,

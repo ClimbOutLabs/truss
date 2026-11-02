@@ -100,6 +100,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
   <nav role="tablist">
     <button class="tab" role="tab" aria-selected="true" data-tab="today">Today</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="plant">Plant</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="guide">Guide</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="answers">Answers</button>
     <button class="tab end" role="tab" aria-selected="false" data-tab="settings">Settings</button>
   </nav>
@@ -140,10 +141,14 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 
       <div class="field"><span class="fl">What yes and no look like, from your own home</span>
         <div class="drops">
-          <label class="drop" id="drop-yes"><span>Drop the <b>yes</b> photo</span><input type="file" accept="image/jpeg" id="f-yes"></label>
-          <label class="drop" id="drop-no"><span>Drop the <b>no</b> photo</span><input type="file" accept="image/jpeg" id="f-no"></label>
+          <label class="drop" id="drop-yes"><span>Drop or choose<br>the <b>yes</b> photo</span><input type="file" accept="image/jpeg" id="f-yes"></label>
+          <label class="drop" id="drop-no"><span>Drop or choose<br>the <b>no</b> photo</span><input type="file" accept="image/jpeg" id="f-no"></label>
         </div>
-        <span class="note">Pills, the stove and other safety questions need both.</span>
+        <div class="drops">
+          <button type="button" class="btn2" data-take="yes">Take yes with the glasses</button>
+          <button type="button" class="btn2" data-take="no">Take no with the glasses</button>
+        </div>
+        <span class="note">Look at the thing as it is when the answer is yes, press Take yes, then the same for no. The glasses send a view every few seconds while the phone is watching. Pills, the stove and other safety questions need both.</span>
       </div>
 
       <label class="row muted"><input type="checkbox" id="p-safety"> A wrong answer would do harm</label>
@@ -169,6 +174,27 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
         <div class="msg say" id="r-msg" hidden></div>
       </div>
     </details>
+  </div>
+
+  <!-- Guide: a named job, walked step by step -->
+  <div id="tab-guide" class="pane" hidden>
+    <form id="g-form" class="form" autocomplete="off">
+      <label class="field"><span class="fl">Start a task</span>
+        <input type="text" id="g-task" placeholder="Lock up for the night" maxlength="200" required></label>
+      <span class="note">Truss writes the steps, speaks one at a time in the glasses, and moves on when a photo shows it done. It never confirms a safety check by eye: the stove, pills, or whether food is cooked through stay standing questions. For doneness, use a probe thermometer and it reads the number.</span>
+      <div><button class="btn" type="submit" id="g-go">Start</button></div>
+      <div class="msg" id="g-msg" hidden></div>
+    </form>
+    <section id="g-run" hidden>
+      <div class="spread"><h2 id="g-title"></h2><span class="muted" id="g-step"></span></div>
+      <div id="g-steps"></div>
+      <div class="note" id="g-left" hidden></div>
+      <div class="row">
+        <button class="btn2" id="g-skip">Skip this step</button>
+        <button class="btn2" id="g-stop">Stop</button>
+      </div>
+      <div class="msg" id="g-run-msg" hidden></div>
+    </section>
   </div>
 
   <!-- Answers -->
@@ -299,7 +325,7 @@ let TAB = "today";
 function openTab(name) {
   TAB = name;
   document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === name)));
-  ["today", "plant", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
+  ["today", "plant", "guide", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
   refresh();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => openTab(t.dataset.tab)));
@@ -404,11 +430,29 @@ function questionRow(q, time) {
   const stop = q.state === "retired" ? "" : ` · <button class="link quiet" data-retire="${esc(q.slug)}">Stop</button>`;
   // A question still planting takes its looks right here.
   const add = q.state !== "planting" ? "" : `<div class="row" style="margin-top:8px">` +
-    ["yes", "no"].map((k) => `<label class="btn2">${(k === "yes" ? q.has_ref_yes : q.has_ref_no) ? "Replace" : "Add"} ${k} look<input type="file" accept="image/jpeg" data-look="${k}" data-slug="${esc(q.slug)}" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label>`).join("") + `</div>`;
+    ["yes", "no"].map((k) => `<label class="btn2">${(k === "yes" ? q.has_ref_yes : q.has_ref_no) ? "Replace" : "Choose"} ${k} photo<input type="file" accept="image/jpeg" data-look="${k}" data-slug="${esc(q.slug)}" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label>`).join("") +
+    ["yes", "no"].map((k) => `<button class="btn2" data-glasses="${k}" data-slug="${esc(q.slug)}">Take ${k} with the glasses</button>`).join("") + `</div>`;
   return `<div class="line"><span class="t">${esc(time)}</span><div><div class="qt">${esc(q.question)}</div><div class="sub">${esc(bits.filter(Boolean).join(" · "))}${stop}</div>${add}</div><span class="st ${cls}">${esc(word)}</span></div>`;
 }
 
 $("tab-today").addEventListener("click", async (ev) => {
+  const g = ev.target.closest("[data-glasses]");
+  if (g) {
+    g.disabled = true;
+    try {
+      const view = await glassesView(() => showMsg("msg-today", "Waiting for a fresh view from the glasses…"));
+      const r = await postImage(`/plant/ref?slug=${encodeURIComponent(g.dataset.slug)}&kind=${g.dataset.glasses}`, view.file);
+      showMsg("msg-today", `Took the ${g.dataset.glasses} look from the glasses' view ${view.ago} s ago.`);
+      if (r.state === "standing") {
+        const said = await askPhone(true);
+        if (said.startsWith("Couldn't")) showMsg("msg-today", said, true);
+      }
+    } catch (e) { showMsg("msg-today", e.message, true); }
+    g.disabled = false;
+    SHOWN = "";
+    loadQuestions();
+    return;
+  }
   const retire = ev.target.closest("[data-retire]");
   if (retire) {
     if (retire.dataset.armed !== "1") {
@@ -523,6 +567,53 @@ function setLook(kind, file) {
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); setLook(kind, e.dataTransfer.files[0]); });
 });
+// The glasses' view taken after the button was pressed (GET /latest),
+// as a File. The phone sends a view every few seconds while it is
+// watching, so this waits up to 15 s for one newer than the press: an
+// older frame could show the thing before it was set up, or be the
+// same frame as the other look. With no view at all the phone is
+// asked to start, and the error says to try again.
+async function glassesView(onWait) {
+  const pressed = Date.now();
+  while (true) {
+    const r = await fetch("/latest", {cache: "no-store"});
+    if (!r.ok && r.status !== 404) throw new Error(await errorText(r));
+    const waited = (Date.now() - pressed) / 1000;
+    if (r.ok) {
+      const ago = Number(r.headers.get("X-Seconds-Ago") || "999");
+      if (ago < waited) {
+        const blob = await r.blob();
+        return {file: new File([blob], `glasses-${Date.now()}.jpg`, {type: "image/jpeg"}), ago: ago.toFixed(0)};
+      }
+    }
+    if (waited > 15) {
+      const said = await askPhone(true);
+      throw new Error(said.startsWith("Couldn't") ? said : "No new view came from the glasses in 15 s. Asked the phone to start watching; try again in a few seconds.");
+    }
+    if (onWait) onWait();
+    await new Promise((res) => setTimeout(res, 1000));
+  }
+}
+async function sameBytes(a, b) {
+  if (!a || !b || a.size !== b.size) return false;
+  const [x, y] = await Promise.all([a.arrayBuffer(), b.arrayBuffer()]);
+  const u = new Uint8Array(x), v = new Uint8Array(y);
+  for (let i = 0; i < u.length; i++) if (u[i] !== v[i]) return false;
+  return true;
+}
+document.querySelectorAll("[data-take]").forEach((b) => b.addEventListener("click", async () => {
+  const kind = b.dataset.take;
+  b.disabled = true;
+  try {
+    const view = await glassesView(() => showMsg("p-msg", "Waiting for a fresh view from the glasses…"));
+    const other = LOOKS[kind === "yes" ? "no" : "yes"];
+    if (await sameBytes(view.file, other)) throw new Error(`That view is the same photo as the ${kind === "yes" ? "no" : "yes"} look. Change what the glasses see, then take it again.`);
+    setLook(kind, view.file);
+    showMsg("p-msg", `Took the ${kind} look from the glasses' view ${view.ago} s ago.`);
+  } catch (e) { showMsg("p-msg", e.message, true); }
+  b.disabled = false;
+}));
+
 function clearLooks() {
   ["yes", "no"].forEach((kind) => {
     LOOKS[kind] = null;
@@ -545,6 +636,10 @@ $("plant").addEventListener("submit", async (ev) => {
   if (when === "interval") pattern = {kind: "interval", minutes: Number($("p-minutes").value || 0)};
   else if (when === "nightly") pattern = {kind: "nightly", after: $("p-after-n").value};
   else pattern = {kind: "window", after: $("p-after").value, until: $("p-until").value};
+  if (await sameBytes(LOOKS.yes, LOOKS.no)) {
+    showMsg("p-msg", "The yes and no looks are the same photo. Take one of them again.", true);
+    return;
+  }
   if ((safety || kind === "done") && !(LOOKS.yes && LOOKS.no)) {
     showMsg("p-msg", "A safety or done question needs both photos before it can start. Drop in the yes and the no photo.", true);
     return;
@@ -747,12 +842,72 @@ $("s-aman-save").addEventListener("click", async () => {
 });
 $("s-aman-test").addEventListener("click", () => testSettings("aman", "s-aman-msg"));
 
+
+// ---- guide ----------------------------------------------------------------
+// A named job, walked step by step through the glasses. The steps are
+// spoken on the phone (the server queues them for it), not here.
+let GUIDE = null;
+let GUIDE_LEFT = [];
+async function loadGuide() {
+  try { GUIDE = await getJSON("/guide/status"); } catch (e) { GUIDE = null; }
+  renderGuide();
+}
+function renderGuide() {
+  const active = !!(GUIDE && GUIDE.active);
+  $("g-form").hidden = active;
+  $("g-run").hidden = !active;
+  if (!active) return;
+  $("g-title").textContent = GUIDE.title || "Guided task";
+  $("g-step").textContent = `Step ${GUIDE.step} of ${GUIDE.of}`;
+  const steps = GUIDE.steps || [];
+  $("g-steps").innerHTML = steps.map((q, i) => {
+    const n = i + 1;
+    const word = n < GUIDE.step ? ["Done", "yes"] : n === GUIDE.step ? ["Now", "live"] : ["", ""];
+    return `<div class="line"><span class="t">Step ${n}</span><div><div class="qt"${n === GUIDE.step ? "" : ' style="font-weight:500;color:var(--muted)"'}>${esc(q)}</div></div><span class="st ${word[1]}">${esc(word[0])}</span></div>`;
+  }).join("");
+  $("g-left").hidden = !GUIDE_LEFT.length;
+  $("g-left").textContent = GUIDE_LEFT.length ? `Not checked by eye: ${GUIDE_LEFT.join("; ")}.` : "";
+}
+$("g-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const task = $("g-task").value.trim();
+  if (!task) return;
+  $("g-go").disabled = true;
+  showMsg("g-msg", "Writing the steps…");
+  try {
+    const r = await postJSON("/guide/task", {task, phone: true});
+    GUIDE_LEFT = r.left_out || [];
+    showMsg("g-msg", "");
+    $("g-task").value = "";
+    if (!(PHONE && PHONE.phone && PHONE.phone.watching)) await askPhone(true);
+    showMsg("g-run-msg", "The phone speaks the first step on its next check, within about half a minute.");
+  } catch (e) {
+    showMsg("g-msg", e.message, true);
+  }
+  $("g-go").disabled = false;
+  loadGuide();
+});
+async function guideAct(what) {
+  try {
+    await postJSON(what === "stop" ? "/guide/stop" : "/guide/skip", {phone: true});
+    showMsg("g-run-msg", "");
+  } catch (e) {
+    showMsg("g-run-msg", e.message, true);
+  }
+  if (what === "stop") GUIDE_LEFT = [];
+  loadGuide();
+}
+$("g-skip").addEventListener("click", () => guideAct("skip"));
+$("g-stop").addEventListener("click", () => guideAct("stop"));
+setInterval(() => { if (TAB === "guide") loadGuide(); }, 4000);
+
 // ---- refresh --------------------------------------------------------------
 function refresh() {
   loadStatus();
   loadPhone();
   loadQuestions();
   loadAlerts();
+  if (TAB === "guide") loadGuide();
   if (TAB === "answers") loadAnswers();
   if (TAB === "settings") loadSettings();
 }
