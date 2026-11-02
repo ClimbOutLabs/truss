@@ -346,6 +346,7 @@ function renderBanners() {
   const out = [];
   if (STATUS && STATUS.unreachable) out.push("Cannot reach the Truss server.");
   else if (STATUS && STATUS.config_error && STATUS.checker !== "aman") out.push(`No model can answer yet. ${STATUS.config_error} Add the Meta key in Settings.`);
+  if (STATUS && STATUS.checker === "aman") out.push("Checks are answered by Aman, not a Meta model. Switch to Muse Spark in Settings before a demo.");
   ALERTS.forEach((a) => out.push(`${a.line} The phone will say so next.`));
   $("banners").innerHTML = out.map((t) => `<div class="banner">${esc(t)}</div>`).join("");
 }

@@ -60,6 +60,11 @@ _source = {name: None for name in ENV}
 _saved = {}
 
 
+def _shown(p):
+    """The path with the home folder as ~, for messages."""
+    return str(p).replace(str(Path.home()), "~", 1)
+
+
 def _read_file():
     p = path()
     try:
@@ -67,13 +72,13 @@ def _read_file():
     except FileNotFoundError:
         return {}
     except OSError:
-        raise SettingsError(f"The settings file {p} could not be read.")
+        raise SettingsError(f"The settings file {_shown(p)} could not be read.")
     try:
         data = json.loads(raw)
     except ValueError:
-        raise SettingsError(f"The settings file {p} is not valid JSON, so it was not used.")
+        raise SettingsError(f"The settings file {_shown(p)} is not valid JSON, so it was not used.")
     if not isinstance(data, dict):
-        raise SettingsError(f"The settings file {p} is not a JSON object, so it was not used.")
+        raise SettingsError(f"The settings file {_shown(p)} is not a JSON object, so it was not used.")
     # Tighten a file someone loosened by hand.
     try:
         if p.stat().st_mode & 0o077:
@@ -110,7 +115,7 @@ def _write_file(data):
             raise
         os.chmod(p, 0o600)
     except OSError:
-        raise SettingsError(f"The settings could not be saved to {p}.")
+        raise SettingsError(f"The settings could not be saved to {_shown(p)}.")
 
 
 def apply_saved():
@@ -225,7 +230,7 @@ def saved_checker():
 
 def view():
     """What GET /settings shows. Never a secret's value."""
-    out = {"file": str(path()).replace(str(Path.home()), "~", 1)}
+    out = {"file": _shown(path())}
     for name, env in ENV.items():
         value = (os.environ.get(env) or "").strip()
         if name in SECRETS:
