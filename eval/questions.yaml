@@ -28,6 +28,7 @@ questions:
     yes_state: "All burners off, knobs at off."
     no_state: "One burner on."
     hard_negative: "Burner on a low simmer; a burner off but still glowing from recent use."
+    intent_case: "A lit flame or a pot at a rolling boil with the knobs out of view or unreadable: no (the stove is on), not cannot_tell."
     sam_prompts: ["stove burner", "stove knob"]
   - id: q02
     slug: front-door-locked
@@ -202,3 +203,19 @@ questions:
     hard_negative: "Top soil damp from a splash, dry underneath."
     scoring: "A verdict of cannot_tell scores as correct on every frame of this question. A confident yes or no does not."
     sam_prompts: ["houseplant soil", "plant pot"]
+  # Intent over literal (2026-11-02 live run): the stove was on with a
+  # flame and a boiling pot, the knobs unreadable, and every check said
+  # cannot_tell. A clear direct sign of the state answers the question.
+  # Here the all-clear is a NO, so a wrong no is the costly error. It is
+  # not marked safety only because the scorer counts a safety question's
+  # false all-clear as a wrong yes; read q21's miss rate (no while a
+  # burner is on) as its false all-clear rate.
+  - id: q21
+    slug: stove-on
+    group: kitchen
+    safety: false
+    question: "Is the stove on?"
+    yes_state: "A burner lit with a pot at a rolling boil; the knobs turned away or out of view."
+    no_state: "All burners off, knobs at off, in view."
+    hard_negative: "All burners off and the knobs out of view (cannot_tell, never no)."
+    sam_prompts: ["stove", "pot"]

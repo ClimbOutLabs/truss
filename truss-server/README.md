@@ -307,21 +307,18 @@ call with its words, and its yes look if it has one, that writes
 still outlined. It gets no `looks.txt`. If both looks arrive later,
 the full compile replaces it.
 
-A stove question ("Is the stove off?", "Did I leave the stove on?")
-is decided by the control knobs alone. Its check asks the model to
-report the knobs first (are all of them in view, and where each one it
-can see points: off, on, or unclear) and only then the verdict, and
-`verdict.py` holds the verdict to that report: any knob clearly on
-means the stove is on; every knob in view and off means it is off;
-anything else is `cannot_tell`, with the knobs named as what is
-missing. A dark burner or a cold pan never stands in for the knobs,
-and a verdict that disagrees with the model's own knob report is not
-used (failure `inconsistent`). The report rides in the result's
-`knobs` field. A stove with touch controls and no knobs always reads
-`cannot_tell` under this rule. A negated phrasing ("Is the stove not
-on?", "Did I forget to turn the stove off?") is not held to the knobs,
-because what its yes means is not guessed; plant it as "Is the stove
-off?" instead.
+A check answers what the question means, not only its most literal
+reading. The deciding detail in `looks.txt` is the usual way to tell,
+not the only one: any clear, direct sign of the asked state in the
+photo decides it, even when that detail cannot be read. A pot at a
+rolling boil or a lit flame shows the stove is on whatever its knobs
+look like (the Nov 1 live run said `cannot_tell` four times with the
+chicken boiling, because the knobs were unreadable). The absence of a
+sign (no flame, no steam, no light) is never a sign on its own, and
+every question, safety flag or not, holds an all-clear (off, closed,
+locked, done) to the deciding detail or something as conclusive. There
+are no per-object rules in code: every question gets the same schema
+and the same prompt.
 
 The compile runs in the background, so planting answers at once. A
 re-shot look deletes both files at once, before anything else can
@@ -460,10 +457,8 @@ from here." It is spoken when all of these hold:
 - the question is a safety state question (the bedtime round plants
   the stove and the pills compartment that way), with a compiled
   `prompts.txt`;
-- the model itself answered cannot_tell and named what it lacked, or
-  the stove check refused a yes its own knob report did not back
-  (failure `inconsistent`); a check that failed or timed out is never
-  spoken as a refusal;
+- the model itself answered cannot_tell and named what it lacked; a
+  check that failed or timed out is never spoken as a refusal;
 - one more plain check, "Is any part of the stove itself in this
   photo?", says yes, so a hallway frame where the stove is not stays
   silent (after a no, that question gets no presence check for a
@@ -476,10 +471,13 @@ short plain noun phrase with no action verb in it; otherwise the line
 is "Is the stove off? I can't tell from here." `TRUSS_REFUSALS=0`
 turns refusals off.
 
-A safety check is also held to the deciding detail itself: Glimmer is
-told that no flame, no glow or no light is not enough on its own to
-say yes. The first live run had answered "Is the stove off?" yes from
-"no blue flame is visible".
+A safety check holds its all-clear (the stove is off, the door is
+locked) to the deciding detail itself, or something just as
+conclusive: Glimmer is told that no flame, no glow or no light is not
+enough on its own. The first live run had answered "Is the stove off?"
+yes from "no blue flame is visible". The opposite answer, that the
+danger is there, needs only a clear, direct sign of it, such as a lit
+flame.
 
 ## Pre-flight
 

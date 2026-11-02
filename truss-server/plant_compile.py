@@ -87,8 +87,12 @@ SYSTEM_PROMPT = (
     "no_look: the same for the no photo. "
     "decides: one sentence naming the single visible detail that tells "
     "yes from no and where it is on the object, such as the positions "
-    "of the knobs on the front of the stove. A later check that cannot "
-    "see this detail must answer cannot_tell, so name it plainly. "
+    "of the knobs on the front of the stove. Name it plainly: a later "
+    "check reads it first. It is the usual way to tell, not the only one: "
+    "the question is about the real state of the thing, so a later check "
+    "that cannot see this detail may still answer from another clear, "
+    "direct sign of the same state, such as a lit flame showing the "
+    "stove is on, and otherwise answers cannot_tell. "
     "Describe only what is in the photos. Never guess."
 )
 
