@@ -987,9 +987,20 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   private suspend fun pollAlertsOnce() {
     if (_uiState.value.laptopIp.isBlank()) return
-    // A live hold keeps the camera open for as long as nothing new is in view, so an
-    // alert asks it to end rather than waiting for a gap that may be minutes away.
-    if (_uiState.value.liveHolding && !freeCameraFromWatch()) return
+    // A live hold keeps the camera open for as long as nothing new is in view. It is
+    // ended only when an alert is really waiting (the laptop may be out of reach from
+    // the glasses' network, and then the alert waits for the hold's own end).
+    if (_uiState.value.liveHolding) {
+      val waiting =
+          try {
+            withContext(Dispatchers.IO) { laptopClient().getAlerts() }.isNotEmpty()
+          } catch (e: CancellationException) {
+            throw e
+          } catch (e: Exception) {
+            false
+          }
+      if (!waiting || !freeCameraFromWatch()) return
+    }
     val state = _uiState.value
     // Never together: while a capture may be holding a toolkit camera
     // session, or the glasses audio is busy speaking, this cycle is

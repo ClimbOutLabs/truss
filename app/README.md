@@ -34,7 +34,7 @@ for a second, so the photo shows something new and is not blurred by a turning h
 Nothing in this knows what is in view; it compares thumbnails only. The beat setting
 becomes the shortest wait between looks. A hold ends without a photo, and the video
 closes, when a tapped photo, a planting look, a missed-window alert or a test sentence
-needs the glasses, or when watching stops. It also ends when the glasses stop the
+needs the glasses (an alert only when one is really waiting), or when watching stops. It also ends when the glasses stop the
 video themselves, or after three minutes with nothing new. **Timed photos** is the
 earlier way: a photo on every beat, each in its own short session. Whichever way is
 on, watching pauses while the glasses report they are off your face, and resumes when
