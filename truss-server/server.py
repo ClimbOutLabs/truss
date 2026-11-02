@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -226,6 +226,12 @@ def compile_waiting():
 # the glasses. In memory only: a restart forgets both until the next.
 APP_SEEN = {"poll": None, "capture": None}
 
+# The server answers each request on its own thread, so a quick read such as
+# GET /questions is not stuck behind a capture that takes 40 s checking every
+# due question. Requests that change state still run one at a time under this
+# lock, exactly as before.
+WRITE_LOCK = threading.Lock()
+
 
 def _seen(kind, address):
     APP_SEEN[kind] = {"at": datetime.now().astimezone(), "from": address}
@@ -289,8 +295,14 @@ class TrussHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(obj).encode())
 
     def do_GET(self):
-        """Handle GET requests."""
+        """Handle GET requests. Reads run alongside a capture (the stores
+        lock their own files); only the guide's status waits its turn,
+        since a capture can be changing the guide session."""
         path = urlparse(self.path).path
+        if path == "/guide/status":
+            with WRITE_LOCK:
+                self.handle_guide_status()
+            return
         if path == "/":
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -315,8 +327,17 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def do_POST(self):
-        """Handle POST requests."""
+        """Handle POST requests. Speech runs on its own; every other POST
+        changes state and runs one at a time, as it did when the whole
+        server was single threaded."""
         path = urlparse(self.path).path
+        if path == "/tts":
+            self.handle_tts()
+            return
+        with WRITE_LOCK:
+            self._do_post(path)
+
+    def _do_post(self, path):
         if path == "/capture":
             self.handle_capture()
         elif path == "/tts":
@@ -908,7 +929,7 @@ def main():
 
     threading.Thread(target=_sweep_forever, daemon=True).start()
     compile_waiting()
-    server = HTTPServer((host, port), TrussHandler)
+    server = ThreadingHTTPServer((host, port), TrussHandler)
     print(f"\nTruss server starting on {host}:{port}")
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")
     print(f"Press Ctrl+C to stop\n")

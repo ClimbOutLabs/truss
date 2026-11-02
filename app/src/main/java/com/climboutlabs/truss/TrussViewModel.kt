@@ -313,7 +313,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           spokenLines = emptyList(),
           photoElapsedMs = null,
           wifiReturn = null,
-          lastError = null,
+          // A quiet (watching) attempt leaves an error on screen until it is
+          // dismissed or replaced; a tapped photo starts clean.
+          lastError = if (quiet) it.lastError else null,
       )
     }
     return true

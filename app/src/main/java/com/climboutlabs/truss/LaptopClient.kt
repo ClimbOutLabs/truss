@@ -195,7 +195,7 @@ class LaptopClient(laptopIp: String) {
 
   /** GET /alerts: the missed-window alerts still waiting to be spoken. */
   fun getAlerts(): List<MissAlert> {
-    val array = JSONObject(getJson("/alerts")).getJSONArray("alerts")
+    val array = JSONObject(getJson("/alerts", POLL_READ_TIMEOUT_MS)).getJSONArray("alerts")
     return List(array.length()) { i ->
       val item = array.getJSONObject(i)
       MissAlert(id = item.getString("id"), line = item.getString("line"))
@@ -206,7 +206,7 @@ class LaptopClient(laptopIp: String) {
    * on a non-2xx answer, like the other calls here, so the caller knows the
    * confirmation did not land and the alert will be offered again. */
   fun ackAlert(id: String) {
-    postJson("/alerts/ack", JSONObject().put("id", id))
+    postJson("/alerts/ack", JSONObject().put("id", id), POLL_READ_TIMEOUT_MS)
   }
 
   /** POST /tts with a JSON body. Returns the WAV bytes the server sends back. */
@@ -231,8 +231,8 @@ class LaptopClient(laptopIp: String) {
 
   /** POST a JSON body and return the reply body. Throws with the real message on a
    * non-2xx answer, like the other calls here. */
-  private fun postJson(path: String, payload: JSONObject): String {
-    val connection = open(path)
+  private fun postJson(path: String, payload: JSONObject, readTimeoutMs: Int = READ_TIMEOUT_MS): String {
+    val connection = open(path, readTimeoutMs)
     try {
       connection.requestMethod = "POST"
       connection.doOutput = true
@@ -251,8 +251,8 @@ class LaptopClient(laptopIp: String) {
   }
 
   /** GET and return the reply body, with the same error shape as postJson. */
-  private fun getJson(path: String): String {
-    val connection = open(path)
+  private fun getJson(path: String, readTimeoutMs: Int = READ_TIMEOUT_MS): String {
+    val connection = open(path, readTimeoutMs)
     try {
       connection.requestMethod = "GET"
       val code = connection.responseCode
@@ -309,6 +309,9 @@ class LaptopClient(laptopIp: String) {
     // capture that is checking with the model and SAM; 90 s covers that wait.
     const val READ_TIMEOUT_MS = 90_000
     const val PING_READ_TIMEOUT_MS = 10_000
+    // The missed-alert poll holds the glasses audio while it waits, which keeps
+    // photos from starting; a slow poll is simply tried again later.
+    const val POLL_READ_TIMEOUT_MS = 15_000
     const val CAPTURE_READ_TIMEOUT_MS = 300_000
   }
 }
