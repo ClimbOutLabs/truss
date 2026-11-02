@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -410,8 +411,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     check(state.registrationState == RegistrationState.REGISTERED) {
       "Glasses are not connected. Press \"Connect glasses\" on the Connect screen first."
     }
-    check(state.deviceNames.isNotEmpty()) {
-      "No glasses are in range. Wake the glasses and try again."
+    if (state.deviceNames.isEmpty()) {
+      throw GlassesAwayException("No glasses are in range. Wake the glasses and try again.")
     }
 
     photoLog("Timer started.")
@@ -982,7 +983,13 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             while (true) {
               // While a question's looks are being taken, the camera is left to
               // the planting flow.
-              val ready = _uiState.value.glassesReady && _uiState.value.plantSlug == null
+              // While the glasses are away, a photo is still tried on every beat (and at
+              // once when the app comes back to the front): the device list can lag behind
+              // the Meta AI app, and a photo that works is what brings watching back.
+              val away = _uiState.value.watchAwaySince != null
+              val registered = _uiState.value.registrationState == RegistrationState.REGISTERED
+              val ready =
+                  (_uiState.value.glassesReady || (away && registered)) && _uiState.value.plantSlug == null
               if (!_uiState.value.glassesReady && _uiState.value.watchAwaySince == null) {
                 // The glasses dropped out of the device list: say so on Home.
                 watchRecord("away")
@@ -1014,7 +1021,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                     val since = SimpleDateFormat("HH:mm", Locale.US).format(Date())
                     _uiState.update { it.copy(watchAwaySince = since) }
                   }
-                  delay(_uiState.value.watchEverySeconds * 1000L)
+                  waitForBeat()
                   continue
                 }
                 aways = 0
@@ -1035,13 +1042,26 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                   break
                 }
               }
-              delay(_uiState.value.watchEverySeconds * 1000L)
+              waitForBeat()
             }
           } finally {
             watchRecord("stop")
             _uiState.update { it.copy(watching = false, watchAwaySince = null) }
           }
         }
+  }
+
+  /** Wakes the watch loop's wait early, for example when the app comes back to the front. */
+  private val watchNudge = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+  private suspend fun waitForBeat() {
+    withTimeoutOrNull(_uiState.value.watchEverySeconds * 1000L) { watchNudge.first() }
+  }
+
+  /** The app is in front again, as after a trip to the Meta AI app: if watching is
+   * waiting for the glasses, try a photo now rather than at the next beat. */
+  fun onAppForeground() {
+    if (_uiState.value.watching && _uiState.value.watchAwaySince != null) watchNudge.tryEmit(Unit)
   }
 
   /** Stop watching. A photo already being taken finishes first, answer and all. */

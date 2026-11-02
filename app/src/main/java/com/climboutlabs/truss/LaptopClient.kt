@@ -69,7 +69,7 @@ class LaptopClient(laptopIp: String) {
 
   /** GET / : returns the HTTP status code. Throws with the real message when unreachable. */
   fun ping(): Int {
-    val connection = open("/")
+    val connection = open("/", PING_READ_TIMEOUT_MS)
     try {
       connection.requestMethod = "GET"
       return connection.responseCode
@@ -117,7 +117,9 @@ class LaptopClient(laptopIp: String) {
    * escaping in the query. Returns the reply: slug, state, and the next prompt. */
   fun postPlantRef(jpeg: File, slug: String, kind: String): JSONObject {
     val body =
-        postMultipart("/plant/ref?slug=$slug&kind=$kind", "image", jpeg.name, "image/jpeg", jpeg.readBytes())
+        postMultipart(
+            "/plant/ref?slug=$slug&kind=$kind", "image", jpeg.name, "image/jpeg", jpeg.readBytes(),
+            CAPTURE_READ_TIMEOUT_MS)
     return JSONObject(body)
   }
 
@@ -303,7 +305,10 @@ class LaptopClient(laptopIp: String) {
 
   private companion object {
     const val CONNECT_TIMEOUT_MS = 5_000
-    const val READ_TIMEOUT_MS = 15_000
+    // The laptop serves one request at a time, so a quick call can queue behind a
+    // capture that is checking with the model and SAM; 90 s covers that wait.
+    const val READ_TIMEOUT_MS = 90_000
+    const val PING_READ_TIMEOUT_MS = 10_000
     const val CAPTURE_READ_TIMEOUT_MS = 300_000
   }
 }

@@ -77,6 +77,7 @@ class MainActivity : ComponentActivity() {
 
   override fun onStart() {
     super.onStart()
+    viewModel.onAppForeground()
     // First, ensure the app has the Android permissions the toolkit needs.
     permissionCheckLauncher.launch(PERMISSIONS)
   }
