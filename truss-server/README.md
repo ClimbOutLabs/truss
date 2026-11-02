@@ -48,6 +48,9 @@ The server will:
 - `POST /watch` - The Desk asks the phone to start or stop watching, JSON `{"on": true}`
 - `POST /watch/phone` - The phone checks in every few seconds with how its watching stands and gets the Desk's latest request back
 - `GET /watch` - The Desk's latest request and the phone's last check-in
+- `GET /settings` - What the Desk's Settings tab shows: whether the Meta key and the Aman token are set (never their values), the Aman address and check chat, and who answers the checks
+- `POST /settings` - Save settings from the Desk, JSON with any of `meta_key`, `aman_base`, `aman_token`, `aman_session`, `checker` (`endpoint` or `aman`), `clear`; JSON only, and only from the Desk's own page at the Mac's address
+- `POST /settings/test` - Try a connection, JSON `{"what": "meta"}` (one words-only Muse Spark call, no photo) or `{"what": "aman"}` (signs in and lists a few chats, no check)
 
 ## Truss Desk
 
@@ -55,22 +58,27 @@ Open `http://<the address the server prints>:8792/desk` in a browser on
 the Mac. It is one static page (`desk.html`) that only calls the
 endpoints listed above, so it changes nothing about how checks are made.
 
-- **Sample day**: an example routine (morning pills, the bedtime round,
-  night pills) laid out by time, showing which steps are planted and
-  how each stands; a step not yet planted is one click away. Other
-  questions are listed under it.
-- **Plant a question**: the question in the wearer's words, the kind, when to check, the safety
-  flag, and the yes and no looks dragged in from Photos as JPEGs. A
-  question still waiting for looks (the bedtime round plants without
-  them) takes them in the Questions list.
-- **Answers and alerts**: a day's answers with their evidence photos,
-  and the missed-window alerts waiting for the phone. Only the phone
-  clears an alert, because clearing means it was spoken.
-- **Try it without the glasses**: sends a saved JPEG to `POST /capture`
-  exactly as the phone does. It counts as a real sighting, so it is
-  refused while any safety or done question is watched (an old photo
-  would otherwise mark tonight's pills done or the stove off), and it
-  takes a second click to send.
+Four tabs, one job each:
+
+- **Today**: the whole day in one list, by time. Each planted question
+  shows when it is checked and how it stands in a word (Watching,
+  Needs looks, Missed, Yes). Sample steps not yet planted (morning
+  pills, lights off after lunch, the bedtime round, night pills) sit in
+  the same list, one click from planting. A question still waiting for
+  its looks (the bedtime round plants without them) takes them right
+  there. A missed-window alert shows as a banner until the phone has
+  spoken it; only the phone clears an alert.
+- **Plant**: the question in the wearer's words, the kind, when to
+  check, the yes and no looks dragged in from Photos as JPEGs, and the
+  safety flag. Folded below it, **Test with a saved photo** sends a
+  JPEG to `POST /capture` exactly as the phone does. It counts as a
+  real sighting, so it is refused while any safety or done question is
+  watched (an old photo would otherwise mark tonight's pills done or
+  the stove off), and it takes a second click to send.
+- **Answers**: a day's answers with their evidence photos.
+- **Settings**: the Meta Model API key for Muse Spark, the connection
+  to Aman (its address, sign-in token and check chat), and who answers
+  the checks, each with a Test button. See Settings below.
 - **Watching on the phone**: the photo loop runs in the phone app, so
   the Desk asks the phone through the server (`phone_watch.py`).
   Planting a question, or a question getting its last look, asks the
@@ -80,6 +88,24 @@ endpoints listed above, so it changes nothing about how checks are made.
   starts once the glasses and the laptop are both connected. Each
   request is acted on once, so Stop on the phone is not overruled, and
   one older than ten minutes is ignored.
+
+## Settings
+
+The Desk's Settings tab saves to `~/.truss/settings.json` on the Mac
+(`TRUSS_SETTINGS` names another file), never inside the repo. The
+folder is created `0700` and the file `0600`. On start the server puts
+each saved value into its environment under the usual name
+(`TRUSS_META_API_KEY`, `AMAN_BASE`, `AMAN_TOKEN`,
+`AMAN_CHECK_SESSION_ID`), and a saved value wins over one exported in
+the shell. A save takes effect at once, without a restart.
+
+Keys are never sent back to the page, printed or logged: the page only
+learns whether one is set and where it came from. A token saved for
+one Aman address is dropped when the address changes, unless a new
+token is typed with it. Settings can only be changed by a JSON request
+from the Desk itself, opened at the Mac's address, so no other web page
+can change or test them. Exporting the key from the keychain, as in
+the main README, still works and needs no Settings at all.
 
 ## Live test settings
 
