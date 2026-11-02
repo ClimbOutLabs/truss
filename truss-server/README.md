@@ -154,8 +154,11 @@ object outlined, found by SAM on the DGX from the question's compiled
 phrases (`prompts.txt`, one per line). The evidence photo is never
 changed; the copy goes beside it as `<evidence>_outline.jpg` in the
 day's log folder. It is off by default and runs in the background, so
-SAM can never delay or stop a spoken answer. A question with no
-`prompts.txt` gets no outline, said in the server's output.
+SAM can never delay or stop a spoken answer. Every checked question
+gets a `prompts.txt` (see the plant-time compile below); one that does
+not have it yet, because its compile is still running or failed, is
+outlined by the object words left in its question ("Is the TV on?"
+gives `tv`), said in the server's output.
 
 | Variable | Default | |
 |---|---|---|
@@ -237,6 +240,13 @@ question's folder:
   positions on the front of the stove. The single check mode reads
   it in place of the two photos, and a check that cannot see the
   deciding detail can name it as what is missing.
+
+A question started standing on fewer than both looks (its words decide
+it, like a number on a display) gets a smaller compile instead: one
+call with its words, and its yes look if it has one, that writes
+`prompts.txt` alone (one to three phrases), so a photo it fires on is
+still outlined. It gets no `looks.txt`. If both looks arrive later,
+the full compile replaces it.
 
 A stove question ("Is the stove off?", "Did I leave the stove on?")
 is decided by the control knobs alone. Its check asks the model to

@@ -88,6 +88,18 @@ def photo(tmp, name="frame.jpg"):
     return p
 
 
+def test_question_phrases():
+    check("the thing is left of the question", sam_client.question_phrases("Is the TV on?") == ["tv"])
+    check("question and state words dropped",
+          sam_client.question_phrases("Did I take my night pills?") == ["pills"])
+    check("place and lock words dropped",
+          sam_client.question_phrases("Is the back door locked?") == ["door"])
+    check("numbers dropped", sam_client.question_phrases("is my hr below 160") == ["hr"])
+    check("possessives dropped", sam_client.question_phrases("Is Sam's laptop closed?") == ["laptop"])
+    check("not text is nothing", sam_client.question_phrases(None) == [])
+    check("at most three", len(sam_client.question_phrases("cup plate fork knife spoon")) == 3)
+
+
 def test_read_prompts():
     tmp = Path(tempfile.mkdtemp())
     check("no prompts.txt reads as none", sam_client.read_prompts(tmp) == [])
@@ -187,6 +199,11 @@ def test_outliner_phrases_and_failures(cfg):
     check("the outline is logged with the phrases matched", "stove, gas stove" in logs[-1])
     check("no prompts means no call and no outline", out(src, entries[2:]) is None
           and "no prompts.txt" in logs[-1])
+    worded = {"slug": "is-the-tv-on", "question": "Is the TV on?", "ref_yes_path": str(c / "ref-yes.jpg")}
+    check("no prompts.txt falls back to the question's words", out.phrases_for([worded]) == ["tv"]
+          and "from its words: tv" in logs[-1])
+    check("compiled phrases win over the words",
+          out.phrases_for([dict(worded, ref_yes_path=str(a / "ref-yes.jpg"))]) == ["stove", "knob"])
     (c / "prompts.txt").write_text("boom\n")
     (tmp / "evidence_outline.jpg").unlink()
     where = out(src, entries[2:3])
@@ -324,6 +341,7 @@ def test_flag():
 
 if __name__ == "__main__":
     server, cfg = start_stub()
+    test_question_phrases()
     test_read_prompts()
     test_segment_sends_photo_phrases_and_key(cfg)
     test_outline_writes_only_on_a_match(cfg)

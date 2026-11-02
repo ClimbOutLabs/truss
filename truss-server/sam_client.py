@@ -29,6 +29,7 @@ so a slow or missing SAM never delays a spoken answer.
 import base64
 import json
 import os
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -86,6 +87,48 @@ def read_prompts(folder):
         phrase = " ".join(line.split())
         if phrase and phrase not in out:
             out.append(phrase)
+    return out
+
+
+# Words that never name the thing a question is about: question and
+# helper words, pronouns, small connecting words, and the verbs people
+# ask with. What is left of a question's words is the thing itself
+# ("is the tv on" leaves "tv"). Only a fallback for a question with no
+# compiled phrases yet; the plant-time compile names things far better.
+_QUESTION_WORDS = {
+    "is", "are", "was", "were", "be", "been", "being", "am", "do", "does",
+    "did", "done", "has", "have", "had", "can", "could", "will", "would",
+    "should", "shall", "may", "might", "must", "i", "me", "my", "mine",
+    "we", "our", "you", "your", "he", "she", "it", "its", "they", "them",
+    "there", "here", "what", "which", "who", "whom", "whose", "when",
+    "where", "why", "how", "any", "some", "all", "every", "each", "no",
+    "not", "yet", "still", "already", "now", "today", "tonight", "again",
+    "of", "in", "at", "to", "for", "from", "by", "with", "without", "into",
+    "onto", "over", "under", "above", "below", "behind", "near", "up",
+    "down", "out", "and", "or", "but", "if", "than", "then", "so", "too",
+    "very", "more", "less", "else", "anything", "something",
+    "take", "taken", "took", "put", "left", "leave", "turn", "lock",
+    "close", "shut", "open", "fed", "feed", "eat", "ate", "eaten", "get",
+    "got", "make", "made", "go", "gone", "went", "see", "seen", "look",
+    "looks", "showing", "show", "shows", "running", "run", "plugged",
+}
+
+
+def question_phrases(question):
+    """SAM phrases from a question's own words, for a question with no
+    compiled prompts.txt: each word left once the question words,
+    states, colors, and modifiers are dropped, at most three."""
+    from plant_compile import MODIFIER_WORDS, STATE_WORDS
+    if not isinstance(question, str):
+        return []
+    drop = _QUESTION_WORDS | STATE_WORDS | MODIFIER_WORDS
+    out = []
+    for word in re.findall(r"[a-z]+(?:'[a-z]+)?", question.lower()):
+        if "'" in word or len(word) < 2 or word in drop or word in out:
+            continue
+        out.append(word)
+        if len(out) == 3:
+            break
     return out
 
 
@@ -244,13 +287,21 @@ class EvidenceOutliner:
         self._slots = threading.BoundedSemaphore(max_in_flight)
 
     def phrases_for(self, entries):
+        """The fired questions' compiled phrases; for a question with
+        no prompts.txt yet, phrases from its own words."""
         phrases = []
         for entry in entries:
             try:
                 folder = Path(entry["ref_yes_path"]).parent
             except (KeyError, TypeError):
-                continue
-            for p in read_prompts(folder):
+                folder = None
+            found = read_prompts(folder) if folder is not None else []
+            if not found and isinstance(entry, dict):
+                found = question_phrases(entry.get("question"))
+                if found:
+                    self.log_fn(f"Outline phrases for {entry.get('slug', 'a question')} "
+                                f"from its words: {', '.join(found)} (no prompts.txt yet).")
+            for p in found:
                 if p not in phrases:
                     phrases.append(p)
         return phrases[:MAX_PHRASES]
@@ -258,7 +309,8 @@ class EvidenceOutliner:
     def __call__(self, evidence, entries):
         phrases = self.phrases_for(entries)
         if not phrases:
-            self.log_fn(f"No outline for {Path(evidence).name}: no prompts.txt for the questions that fired.")
+            self.log_fn(f"No outline for {Path(evidence).name}: no prompts.txt and no object "
+                        "named in the words of the questions that fired.")
             return None
         if not self._slots.acquire(blocking=False):
             self.log_fn(f"No outline for {Path(evidence).name}: SAM is still busy with earlier outlines.")

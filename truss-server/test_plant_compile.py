@@ -24,8 +24,11 @@ from plant_compile import (  # noqa: E402
     Compiler,
     clean_prompt,
     clean_prompts,
+    compile_folder,
+    compile_prompts,
     compile_question,
     compiled_looks,
+    needs_compile,
     compiled_prompts,
 )
 from questions import QuestionStore  # noqa: E402
@@ -293,6 +296,63 @@ def test_needs_both_looks():
         check("no model call made", fake.calls == [])
 
 
+def test_prompts_only_compile():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create("Is the TV on?")
+        folder = Path(tmp) / slug
+        check("no looks and no prompts.txt needs a compile", needs_compile(folder))
+        fake = FakeEndpoint(answer={"prompts": ["Black TV", "television", "screen"]})
+        result = compile_folder(folder, endpoint=fake)
+        check("words alone compile the SAM phrases", result["ok"]
+              and compiled_prompts(folder) == ["tv", "television", "screen"])
+        check("no looks.txt from the words alone", compiled_looks(folder) is None)
+        check("prompts-only schema used", fake.calls[0]["name"] == "plant_prompts")
+        check("the question's words are sent", fake.calls[0]["content"][0]["text"] == "Question: Is the TV on?")
+        check("no photo sent without a look",
+              not any(part["type"] == "image_url" for part in fake.calls[0]["content"]))
+        check("compiled, it needs no compile", not needs_compile(folder))
+
+        store.save_ref(slug, "yes", JPEG_YES)
+        check("a new yes look clears the phrases", compiled_prompts(folder) == []
+              and needs_compile(folder))
+        fake = FakeEndpoint(answer={"prompts": ["tv"]})
+        result = compile_folder(folder, endpoint=fake)
+        check("one phrase is enough without both looks", result["ok"] and compiled_prompts(folder) == ["tv"])
+        check("the yes look is sent", any(part["type"] == "image_url" for part in fake.calls[0]["content"]))
+
+        result = compile_prompts(folder, endpoint=FakeEndpoint(answer={"prompts": ["off"]}))
+        check("no usable phrase writes nothing", not result["ok"] and compiled_prompts(folder) == ["tv"])
+        result = compile_prompts(folder, endpoint=FakeEndpoint(error=RuntimeError("down")))
+        check("a failed call writes nothing", not result["ok"] and compiled_prompts(folder) == ["tv"])
+
+        store.save_ref(slug, "no", JPEG_NO)
+        check("both looks need the full compile", needs_compile(folder))
+        fake = FakeEndpoint(answer=STOVE_ANSWER)
+        compile_folder(folder, endpoint=fake)
+        check("both looks take the full compile", fake.calls[0]["name"] == "plant_compile"
+              and compiled_looks(folder) is not None)
+        result = compile_prompts(folder, endpoint=FakeEndpoint(answer={"prompts": ["tv"]}))
+        check("a late prompts-only compile never overwrites the full one",
+              not result["ok"] and compiled_prompts(folder) == ["stove", "stove knob"])
+
+
+def test_prompts_only_look_added_mid_call():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = QuestionStore(tmp)
+        slug = store.create("Is the TV on?")
+        folder = Path(tmp) / slug
+
+        class AddLookMidCall(FakeEndpoint):
+            def ask_json(self, *args, **kwargs):
+                store.save_ref(slug, "yes", JPEG_YES)
+                return super().ask_json(*args, **kwargs)
+
+        result = compile_prompts(folder, endpoint=AddLookMidCall(answer={"prompts": ["tv"]}), lock=store.lock)
+        check("a look added during the call writes nothing", not result["ok"]
+              and compiled_prompts(folder) == [])
+
+
 def test_missing_endpoint_module():
     real = plant_compile._load_endpoint
 
@@ -389,7 +449,7 @@ def test_planting_compiles():
         fake = FakeEndpoint(answer=STOVE_ANSWER)
         server_module.STORE = QuestionStore(tmp)
         server_module.COMPILER = Compiler(
-            lambda f: compile_question(f, endpoint=fake, lock=server_module.STORE.lock),
+            lambda f: compile_folder(f, endpoint=fake, lock=server_module.STORE.lock),
             report=lambda line: None,
             retry_delays=(),
         )
@@ -439,6 +499,31 @@ def test_planting_compiles():
             server_module.COMPILER.wait()
             check("startup compiles what was missed", compiled_looks(Path(tmp) / other) is not None)
             check("and only that", len(fake.calls) == 4)
+
+            # A question started standing on its words alone gets SAM
+            # phrases, at once and again at startup if they were lost.
+            fake.answer = {"prompts": ["television"]}
+            _, body = post(
+                base + "/plant/question",
+                json.dumps({"text": "Is the TV on?"}).encode(),
+                "application/json",
+            )
+            tv = body["slug"]
+            server_module.COMPILER.wait()
+            check("a planting question with no looks is not compiled", len(fake.calls) == 4)
+            post(base + "/plant/finish", json.dumps({"slug": tv}).encode(), "application/json")
+            server_module.COMPILER.wait()
+            check("starting it standing compiles its phrases",
+                  compiled_prompts(Path(tmp) / tv) == ["television"] and len(fake.calls) == 5)
+            (Path(tmp) / tv / "prompts.txt").unlink()
+            server_module.compile_waiting()
+            server_module.COMPILER.wait()
+            check("startup compiles a standing question's missing phrases",
+                  compiled_prompts(Path(tmp) / tv) == ["television"] and len(fake.calls) == 6)
+            post(f"{base}/plant/ref?slug={tv}&kind=yes", *multipart(JPEG_YES))
+            server_module.COMPILER.wait()
+            check("a yes look added to it later recompiles its phrases",
+                  compiled_prompts(Path(tmp) / tv) == ["television"] and len(fake.calls) == 7)
         finally:
             httpd.shutdown()
 
@@ -563,6 +648,8 @@ if __name__ == "__main__":
     test_reshoot_during_a_compile_writes_nothing()
     test_contributor_tier_refused()
     test_needs_both_looks()
+    test_prompts_only_compile()
+    test_prompts_only_look_added_mid_call()
     test_missing_endpoint_module()
     test_compiler_worker()
     test_failed_compile_is_retried()
