@@ -26,6 +26,12 @@ Model API. The default is ask_json from endpoint.py, the checker
 endpoint abstraction, which reads its base URL, model, and key from
 the environment.
 
+A question planted without both looks (one whose words decide it,
+like a number read off a display) gets a smaller compile instead:
+prompts.txt only, from the question's words and the yes look when
+there is one, so a photo it fires on can still be outlined by SAM.
+No looks.txt is written for it; the check reads the words as before.
+
 A failed compile never blocks planting. The question stands with its
 two reference looks either way; without looks.txt the check runs on
 the frame and the question alone. compile_question never raises: a
@@ -84,6 +90,41 @@ SYSTEM_PROMPT = (
     "of the knobs on the front of the stove. A later check that cannot "
     "see this detail must answer cannot_tell, so name it plainly. "
     "Describe only what is in the photos. Never guess."
+)
+
+# The prompts-only compile, for a question standing on fewer than both
+# looks. Only the SAM phrases come back.
+PROMPTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "prompts": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "maxItems": 3,
+        },
+    },
+    "required": ["prompts"],
+    "additionalProperties": False,
+}
+
+PROMPTS_SCHEMA_NAME = "plant_prompts"
+
+PROMPTS_SYSTEM_PROMPT = (
+    "You are preparing a standing visual question that will be checked "
+    "later against photos from smart glasses worn in this person's own "
+    "home. You are given the question in the person's own words, and "
+    "sometimes one reference photo taken in that home showing what a "
+    "yes answer looks like there. Reply with JSON only, with one field. "
+    "prompts: one to three object names for an object detector to find, "
+    "in a photo, the thing the answer is read from: the object the "
+    "question is about, or the display, screen or label the answer "
+    "would be read off. Each one or two plain words, lowercase, nouns "
+    "only, no adjectives, no colors, no materials, no states such as "
+    'on, off, open or empty. Good: "television", "stove", "pill '
+    'organizer", "display". Bad: "black tv screen", "lit display". '
+    "Name the object itself first, then a part or a close alternative "
+    "name. Never guess at objects the question does not point to."
 )
 
 # Modifier words dropped from a phrase so only the noun is left:
@@ -334,6 +375,96 @@ def compile_question(folder, endpoint=None, lock=None):
         return {"ok": False, "reason": "The compile failed, so nothing was compiled."}
 
 
+def looks_state(folder):
+    """A digest of whichever reference photos the folder holds, and of
+    which are missing. A prompts-only compile writes only if this is
+    unchanged, so a look added or re-shot during the call wins."""
+    digest = hashlib.sha256()
+    for name in ("ref-yes.jpg", "ref-no.jpg"):
+        try:
+            data = (Path(folder) / name).read_bytes()
+        except OSError:
+            digest.update(b"missing")
+            continue
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def compile_prompts(folder, endpoint=None, lock=None):
+    """The prompts-only compile, for a question standing on fewer than
+    both looks. Writes prompts.txt alone, from the question's words and
+    the yes look when there is one, and returns {"ok": True, "prompts":
+    [...], "model": "..."}; on any failure writes nothing and returns
+    {"ok": False, "reason": "..."}. Never raises. Nothing is written
+    once the folder has both looks or a looks.txt: the full compile
+    owns prompts.txt from then on."""
+    folder = Path(folder)
+    try:
+        if endpoint is None:
+            endpoint = _load_endpoint()
+        config = _refuse_contributor(endpoint)
+        try:
+            question = (folder / "question.txt").read_text().strip()
+        except OSError:
+            raise CompileError("The question's words could not be read, so nothing was compiled.")
+        if not question:
+            raise CompileError("The question has no words, so nothing was compiled.")
+        ref_yes = folder / "ref-yes.jpg"
+        with lock or threading.Lock():
+            before = looks_state(folder)
+            content = [endpoint.text_part(f"Question: {question}")]
+            if ref_yes.exists():
+                content += [
+                    endpoint.text_part("Reference photo: what a yes answer looks like here."),
+                    endpoint.image_part(str(ref_yes)),
+                ]
+        try:
+            answer = endpoint.ask_json(
+                PROMPTS_SYSTEM_PROMPT, content, PROMPTS_SCHEMA, PROMPTS_SCHEMA_NAME,
+                config=config, max_tokens=MAX_TOKENS,
+            )
+        except Exception as e:
+            reason = str(e).strip() or "The model call failed"
+            raise CompileError(f"{reason.rstrip('.')}, so nothing was compiled.")
+        if not isinstance(answer, dict):
+            raise CompileError("The model's answer was not a record, so nothing was compiled.")
+        prompts = clean_prompts(answer.get("prompts"))
+        if not prompts:
+            raise CompileError(
+                "The model named no usable object name for the detector, "
+                "so nothing was compiled."
+            )
+        with lock or threading.Lock():
+            if looks_state(folder) != before:
+                raise CompileError(
+                    "A reference look changed during the compile, so nothing "
+                    "was written; the new look is compiled next."
+                )
+            if (folder / "looks.txt").exists():
+                raise CompileError("The question already has a full compile, so nothing was written.")
+            _write_text(folder, "prompts.txt", "\n".join(prompts) + "\n")
+        model = answer.get("_model")
+        return {"ok": True, "prompts": prompts, "model": model if isinstance(model, str) else ""}
+    except CompileError as e:
+        return {"ok": False, "reason": str(e)}
+    except Exception:
+        return {"ok": False, "reason": "The compile failed, so nothing was compiled."}
+
+
+def has_both_looks(folder):
+    folder = Path(folder)
+    return (folder / "ref-yes.jpg").exists() and (folder / "ref-no.jpg").exists()
+
+
+def compile_folder(folder, endpoint=None, lock=None):
+    """The compile a question folder calls for: the full one with both
+    looks, the prompts-only one without."""
+    if has_both_looks(folder):
+        return compile_question(folder, endpoint=endpoint, lock=lock)
+    return compile_prompts(folder, endpoint=endpoint, lock=lock)
+
+
 def compiled_prompts(folder):
     """The stored SAM phrases for a question, or [] when there are none."""
     try:
@@ -421,36 +552,36 @@ class Compiler:
 
 
 def needs_compile(folder):
-    """True when a question folder has both looks and no looks.txt:
-    planted while the model was away, or before compiles existed."""
+    """True when a question folder is missing its compiled files: with
+    both looks, no looks.txt; with fewer, no prompts.txt. Planted while
+    the model was away, before compiles existed, or a look re-shot."""
     folder = Path(folder)
-    return (
-        (folder / "ref-yes.jpg").exists()
-        and (folder / "ref-no.jpg").exists()
-        and not (folder / "looks.txt").exists()
-    )
+    if has_both_looks(folder):
+        return not (folder / "looks.txt").exists()
+    return not (folder / "prompts.txt").exists()
 
 
 def main(argv):
     """Compile planted questions by hand: python3 plant_compile.py [slug ...].
-    With no slug, every question folder that has both looks."""
+    With no slug, every question folder. A folder with both looks gets
+    the full compile; one with fewer gets prompts.txt only."""
     root = Path(__file__).parent / "questions"
     if argv:
         folders = [root / slug for slug in argv]
     else:
         folders = sorted(
-            f for f in root.iterdir()
-            if (f / "ref-yes.jpg").exists() and (f / "ref-no.jpg").exists()
+            f for f in root.iterdir() if (f / "question.txt").is_file()
         ) if root.exists() else []
     if not folders:
         print("No planted questions to compile.")
         return 1
     failed = 0
     for folder in folders:
-        result = compile_question(folder)
+        result = compile_folder(folder)
         if result["ok"]:
             print(f"{folder.name} ({result['model'] or 'model unnamed'}): {json.dumps(result['prompts'])}")
-            print("  " + result["looks"].rstrip().replace("\n", "\n  "))
+            if result.get("looks"):
+                print("  " + result["looks"].rstrip().replace("\n", "\n  "))
         else:
             failed += 1
             print(f"{folder.name}: {result['reason']}")

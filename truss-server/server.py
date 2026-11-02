@@ -27,7 +27,7 @@ from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
 import history
-from plant_compile import Compiler, compile_question, needs_compile
+from plant_compile import Compiler, compile_folder, needs_compile
 from questions import QuestionStore, SafetyLooksNeeded
 
 # Get the Wi-Fi interface address
@@ -213,18 +213,28 @@ LOOP = CheckLoop(
 
 # Plant-time compile (see plant_compile.py). Once a question has both
 # reference looks, one model call writes prompts.txt and looks.txt into
-# its folder, off the request thread so planting answers at once.
-COMPILER = Compiler(lambda folder: compile_question(folder, lock=STORE.lock))
+# its folder; a question started standing on fewer looks gets
+# prompts.txt alone, from its words, so SAM can outline what it fires
+# on. Off the request thread, so planting answers at once.
+COMPILER = Compiler(lambda folder: compile_folder(folder, lock=STORE.lock))
+
+
+def compile_if_needed(entry):
+    """Queue a compile for a question that is checked (standing or
+    answered) and is missing its compiled files."""
+    if entry and entry["state"] not in ("retired", "planting"):
+        folder = STORE.root / entry["slug"]
+        if needs_compile(folder):
+            COMPILER.submit(folder)
 
 
 def compile_waiting():
-    """Queue a compile for every question with both looks and no
-    looks.txt: planted while the model was away, or before compiles
-    existed. Run once at startup."""
+    """Queue a compile for every checked question missing its compiled
+    files: planted while the model was away, before compiles existed,
+    or before questions without both looks got their SAM phrases. Run
+    once at startup."""
     for entry in STORE.list():
-        folder = STORE.root / entry["slug"]
-        if entry["state"] != "retired" and needs_compile(folder):
-            COMPILER.submit(folder)
+        compile_if_needed(entry)
 
 # When the phone app was last heard from, for GET /status and the
 # pre-flight (preflight.py). The app polls GET /alerts about every 30
@@ -693,11 +703,11 @@ class TrussHandler(BaseHTTPRequestHandler):
                 return
             state = STORE.save_ref(slug, kind, image_data)
             entry = STORE.get(slug)
-            if entry and entry["has_ref_yes"] and entry["has_ref_no"] and state != "retired":
-                # Both looks exist: compile them, and again whenever a
-                # look is re-shot, standing or answered. The re-shot
-                # look has already cleared the old compiled files.
-                COMPILER.submit(STORE.root / slug)
+            # Both looks exist: compile them, and again whenever a
+            # look is re-shot, standing or answered. The re-shot look
+            # has already cleared the old compiled files, so a question
+            # standing on its yes look alone is compiled again too.
+            compile_if_needed(entry)
             if state == "standing":
                 name = entry["question"] if entry else slug
                 next_step = f"Standing question planted: {name}"
@@ -741,6 +751,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(500, str(e))
             return
         entry = STORE.get(slug)
+        # Standing on fewer looks: its SAM phrases come from its words.
+        compile_if_needed(entry)
         name = entry["question"] if entry else slug
         looks = (
             "both looks" if entry and entry["has_ref_yes"] and entry["has_ref_no"]
