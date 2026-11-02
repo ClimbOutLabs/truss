@@ -650,17 +650,21 @@ def test_meta_config_from_env():
         except endpoint.EndpointError:
             refused = True
         check("meta: the contributor tier is refused", refused)
-    with env(TRUSS_META_API_KEY=KEY, TRUSS_META_MODEL="muse-spark-1.3-contributor",
-             TRUSS_BASE_URL="http://127.0.0.1:9/v1"):
+    with StubModel([YES]) as glimmer, env(TRUSS_META_API_KEY=KEY,
+                                          TRUSS_META_MODEL="muse-spark-1.3-contributor",
+                                          TRUSS_BASE_URL=glimmer.base):
         lines = []
         saved = endpoint.report
         endpoint.report = lines.append
+        endpoint.reset_rest()
         try:
             result = verdict.check(FRAME, "Is the front door locked?")
         finally:
             endpoint.report = saved
         check("meta: a contributor Meta model is never asked; the fallback is",
               result["model"] == "muse-glimmer-30b" and any("not used" in l for l in lines))
+        check("meta: the key never reached the fallback",
+              all("authorization" not in r["headers"] for r in glimmer.requests))
 
 
 def test_meta_answers_first():
@@ -722,6 +726,16 @@ def test_fallback_must_serve_a_meta_model():
           other.requests == [] and result["verdict"] == "cannot_tell")
     check("fallback guard: the result names Muse Spark", result["model"] == "muse-spark-1.3")
     check("fallback guard: the log says why", any("not a Meta model" in l for l in lines))
+    with StubModel([500, YES]) as spark, StubModel([YES], models=["deepseek-v4-flash-vision"]) as other, \
+            env(TRUSS_BASE_URL=other.base), meta_at(spark):
+        verdict.check(FRAME, "Is the front door locked?")
+        check("fallback guard: Muse Spark is not rested when the fallback cannot stand in",
+              not endpoint._resting())
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("fallback guard: the next call asks Muse Spark again and gets its answer",
+          result["model"] == "muse-spark-1.3" and result["verdict"] == "yes")
+    check("fallback guard: the non-Meta fallback never got a check",
+          not any(r["path"].endswith("/chat/completions") for r in other.requests))
     with StubModel([500]) as spark, \
             StubModel([YES], models=["/models/Muse-Glimmer-30B-Q4_K_M.gguf"]) as glimmer, \
             env(TRUSS_BASE_URL=glimmer.base), meta_at(spark):

@@ -535,36 +535,43 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
     except EndpointError as e:
         meta_problem = e
     fallback = fallback_config_from_env()
+
+    def usable(cfg):
+        """The fallback, if Muse Spark's work may go to it: on the Meta
+        route it must list a Meta model (see fallback_serves_meta).
+        Checked only when the fallback is needed, so a healthy Muse
+        Spark costs no extra request."""
+        if cfg is None or (meta is None and meta_problem is None):
+            return cfg
+        why_not = fallback_serves_meta(cfg)
+        if why_not is None:
+            return cfg
+        report(f"{cfg.model} is not asked: {why_not}.")
+        return None
+
     if meta_problem is not None:
+        fallback = usable(fallback)
         if fallback is None:
             raise meta_problem
         report(f"Muse Spark is not used ({meta_problem}); asking {fallback.model}.")
-    meta_error = meta_problem
-    if meta is not None and not (fallback is not None and _resting()):
-        try:
-            return _ask_one(meta, system, content, schema, schema_name, max_tokens)
-        except EndpointError as e:
-            if fallback is None:
-                raise
-            meta_error = e
-            if e.kind in _REST_KINDS:
-                _rest_meta()
-                rest = f" Resting {meta.model} for {int(META_REST_S)} s."
-            else:
-                rest = ""
-            report(f"{meta.model} failed ({e}); asking {fallback.model} instead.{rest}")
-    if fallback is not None and (meta is not None or meta_problem is not None):
-        # Muse Spark's work goes only to a fallback serving a Meta model.
-        why_not = fallback_serves_meta(fallback)
-        if why_not is not None:
-            report(f"{fallback.model} is not asked: {why_not}.")
-            if meta_error is not None:
-                raise meta_error
-            raise EndpointError(
-                f"{meta.model if meta else 'Muse Spark'} is resting and the fallback is not a Meta model.",
-                kind="unreachable",
-                model=meta.model if meta else None,
-            )
+    elif meta is not None:
+        # A resting Muse Spark is skipped only for a fallback that may
+        # stand in; with none, Muse Spark is asked as usual.
+        if not (_resting() and fallback is not None and usable(fallback) is not None):
+            try:
+                return _ask_one(meta, system, content, schema, schema_name, max_tokens)
+            except EndpointError as e:
+                fallback = usable(fallback)
+                if fallback is None:
+                    # Nothing valid can stand in, so Muse Spark is never
+                    # rested: the next call asks it again.
+                    raise
+                if e.kind in _REST_KINDS:
+                    _rest_meta()
+                    rest = f" Resting {meta.model} for {int(META_REST_S)} s."
+                else:
+                    rest = ""
+                report(f"{meta.model} failed ({e}); asking {fallback.model} instead.{rest}")
     if fallback is None:
         raise EndpointError(
             "No model is set up: set TRUSS_META_API_KEY or TRUSS_BASE_URL.", kind="config"
