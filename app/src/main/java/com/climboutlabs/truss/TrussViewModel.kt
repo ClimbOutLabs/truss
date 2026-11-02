@@ -21,6 +21,7 @@ import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 import com.meta.wearable.dat.core.selectors.DeviceSelector
 import com.meta.wearable.dat.core.session.DeviceSessionState
 import com.meta.wearable.dat.core.types.DeviceSessionError
+import com.meta.wearable.dat.core.types.PermissionError
 import com.meta.wearable.dat.core.types.DeviceIdentifier
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
@@ -331,10 +332,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     } catch (e: CancellationException) {
       throw e
     } catch (e: GlassesAwayException) {
+      // Permission does not change because the link dropped, so it is kept.
       photoLog("Glasses away: ${e.message}")
       if (!fromWatch) showError(e)
       return null
     } catch (e: Exception) {
+      cameraGranted = false
       photoLog("FAILED: ${e.message ?: e.toString()}")
       showError(e)
       return false
@@ -345,6 +348,22 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         it.copy(photoBusy = false, photoElapsedMs = SystemClock.elapsedRealtime() - startedAt, streamActive = false)
       }
     }
+  }
+
+  /** Camera permission was granted earlier in this run; see runCapture step 1. */
+  private var cameraGranted = false
+
+  /** Open the Meta AI app, which reconnects its Bluetooth link to the glasses. */
+  fun openMetaAi() {
+    val app = getApplication<Application>()
+    val intent = app.packageManager.getLaunchIntentForPackage(META_AI_PACKAGE)
+    if (intent == null) {
+      _uiState.update { it.copy(lastError = "The Meta AI app was not found on this phone.") }
+      return
+    }
+    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { app.startActivity(intent) }
+        .onFailure { e -> _uiState.update { it.copy(lastError = "Could not open the Meta AI app: ${e.message}") } }
   }
 
   /** The glasses are off, folded or out of range: nothing is broken, so watching waits. */
@@ -396,13 +415,24 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     photoLog("Timer started.")
-    // Step 1: camera permission through the toolkit, if not already granted.
-    var checkError: String? = null
-    var status: PermissionStatus? = null
-    Wearables.checkPermissionStatus(Permission.CAMERA)
-        .onSuccess { status = it }
-        .onFailure { error, _ -> checkError = error.description }
-    check(checkError == null) { checkError ?: "Camera permission check failed." }
+    // Step 1: camera permission through the toolkit, if not already granted. Once granted
+    // in this run it is not asked again: the check is a round trip through the Meta AI
+    // app's link to the glasses, and that link is what drops. A failed photo clears it.
+    var status: PermissionStatus? = if (cameraGranted) PermissionStatus.Granted else null
+    if (status == null) {
+      var checkError: PermissionError? = null
+      Wearables.checkPermissionStatus(Permission.CAMERA)
+          .onSuccess { status = it }
+          .onFailure { error, _ -> checkError = error }
+      checkError?.let { error ->
+        if (error == PermissionError.NO_DEVICE_WITH_CONNECTION || error == PermissionError.CONNECTION_ERROR) {
+          throw GlassesAwayException(
+              "The glasses aren't linked to the phone right now (${error.description}). " +
+                  "Opening the Meta AI app usually brings them back.")
+        }
+        error(error.description)
+      }
+    }
     if (status != PermissionStatus.Granted) {
       photoLog("Asking for camera permission through the Meta AI app.")
       val requested = requestPermission(Permission.CAMERA)
@@ -410,6 +440,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         "Camera permission was not granted, so the photo cannot be taken."
       }
     }
+    cameraGranted = true
     photoLog("Camera permission granted.")
 
     // Step 2: a session, then the camera, then one still. The session and stream are the
@@ -1342,6 +1373,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   companion object {
     const val TAG = "Truss"
+    private const val META_AI_PACKAGE = "com.facebook.stella"
     const val TEST_SENTENCE = "Hello, this is Mannie. I can hear you."
     private const val PREFS = "mannie"
     private const val KEY_LAPTOP_IP = "laptop_ip"

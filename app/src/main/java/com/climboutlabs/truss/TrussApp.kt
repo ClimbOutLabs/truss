@@ -149,6 +149,7 @@ fun TrussApp(
                     else viewModel.stopWatching()
                   },
                   onWatchEvery = viewModel::setWatchEverySeconds,
+                  onOpenMetaAi = viewModel::openMetaAi,
                   onOpenSettings = { tab = Destination.SETTINGS.ordinal },
                   onOpenQuestions = { tab = Destination.QUESTIONS.ordinal },
               )
@@ -505,12 +506,13 @@ private fun HomeScreen(
     onWatchEvery: (Int) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenQuestions: () -> Unit,
+    onOpenMetaAi: () -> Unit,
 ) {
   Column(Modifier.fillMaxSize()) {
     ScreenBody(Modifier.weight(1f)) {
       state.lastError?.let { ErrorBanner(it, onDismissError) }
       Greeting()
-      HeroCard(state, onConnectGlasses, onCheckLaptop, onWatch, onWatchEvery, onOpenSettings)
+      HeroCard(state, onConnectGlasses, onCheckLaptop, onWatch, onWatchEvery, onOpenSettings, onOpenMetaAi)
       LastAnswer(state)
       QuestionTiles(state, onOpenQuestions)
     }
@@ -553,6 +555,7 @@ private fun HeroCard(
     onWatch: (Boolean) -> Unit,
     onWatchEvery: (Int) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenMetaAi: () -> Unit,
 ) {
   val ready = state.glassesReady && state.laptopReachable == true
   val minding = state.questionsList.count { it.state == "standing" }
@@ -575,8 +578,8 @@ private fun HeroCard(
     state.watching && state.watchAwaySince != null -> {
       title = "Waiting for the glasses"
       subtitle =
-          "They went quiet at ${clock12(state.watchAwaySince)}: off, folded, too warm or low on " +
-              "battery. Watching carries on by itself when they are back."
+          "They went quiet at ${clock12(state.watchAwaySince)}. If they are on, open the Meta AI " +
+              "app for a moment to relink them. Watching carries on by itself when they are back."
     }
     state.watching -> {
       title = "Watching"
@@ -645,6 +648,9 @@ private fun HeroCard(
           onSelect = onWatchEvery,
           onDark = false,
       )
+      if (state.watching && state.watchAwaySince != null) {
+        BigButton("Open Meta AI to reconnect", TrussIcons.Glasses, onOpenMetaAi, height = 52.dp)
+      }
       if (state.watching) {
         OutlineBigButton(
             "Stop watching",
