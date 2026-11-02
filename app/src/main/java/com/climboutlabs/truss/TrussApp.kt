@@ -583,6 +583,10 @@ private fun HeroCard(
   val title: String
   val subtitle: String
   when {
+    state.watching && state.glassesOff -> {
+      title = "Paused"
+      subtitle = "The glasses are off. Watching carries on by itself when you put them back on."
+    }
     state.watchWaiting -> {
       title = "Waiting for the glasses"
       val since = clock12(state.watchQuietSince)
@@ -593,9 +597,13 @@ private fun HeroCard(
     }
     state.watching -> {
       title = "Watching"
-      subtitle =
-          "Every ${state.watchEverySeconds} s since ${clock12(state.watchStartedAt)}. " +
-              "${state.watchSent} looks, ${state.watchSkipped} skipped as unchanged."
+      val how =
+          if (state.captureMode == CaptureMode.LIVE) {
+            "Live view since ${clock12(state.watchStartedAt)}, looking when the view changes and holds still. "
+          } else {
+            "Every ${state.watchEverySeconds} s since ${clock12(state.watchStartedAt)}. "
+          }
+      subtitle = how + "${state.watchSent} looks, ${state.watchSkipped} skipped as unchanged."
     }
     state.photoBusy -> {
       title = "Looking"
@@ -662,7 +670,7 @@ private fun HeroCard(
           onSelect = onWatchEvery,
           onDark = false,
       )
-      if (state.watchWaiting) {
+      if (state.watchWaiting && !state.glassesOff) {
         BigButton("Open Meta AI to reconnect", TrussIcons.Glasses, onOpenMetaAi, height = 52.dp)
       }
       if (state.watching) {
@@ -1163,7 +1171,27 @@ private fun SettingsScreen(
 
     SectionLabel("Watching")
     Surface {
-      Text("Look every", style = MaterialTheme.typography.titleMedium)
+      Text("How to look", style = MaterialTheme.typography.titleMedium)
+      Text(
+          if (state.captureMode == CaptureMode.LIVE) {
+            "Keeps the glasses video open and takes a photo when the view changes and holds still. " +
+                "Fewer, sharper looks, but the open video uses more glasses battery."
+          } else {
+            "Opens the glasses camera for one photo on every beat, then closes it."
+          },
+          style = MaterialTheme.typography.bodySmall,
+          color = Truss.muted,
+      )
+      Segmented(
+          options = CaptureMode.entries.map { it.ordinal },
+          selected = state.captureMode.ordinal,
+          label = { CaptureMode.entries[it].label },
+          onSelect = { viewModel.setCaptureMode(CaptureMode.entries[it]) },
+          onDark = false,
+      )
+    }
+    Surface {
+      Text(if (state.captureMode == CaptureMode.LIVE) "Wait between looks" else "Look every", style = MaterialTheme.typography.titleMedium)
       Text("Shorter catches more but uses more glasses battery.", style = MaterialTheme.typography.bodySmall, color = Truss.muted)
       Segmented(
           options = listOf(15, 30, 60),

@@ -74,6 +74,12 @@ def test_store():
     desk.report({"watching": "yes", "every": True}, "x")
     p = desk.view()["phone"]
     check("only real true counts and a bool is no cadence", p["watching"] is False and p["every"] is None)
+    desk.report({"watching": True, "mode": "live", "off": True}, "x")
+    p = desk.view()["phone"]
+    check("the capture mode and glasses-off are kept", p["mode"] == "live" and p["off"] is True)
+    desk.report({"watching": True, "mode": "video!", "off": "yes"}, "x")
+    p = desk.view()["phone"]
+    check("an unknown mode and a non-bool off are dropped", p["mode"] is None and p["off"] is False)
 
 
 def _post(port, path, body):

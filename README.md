@@ -92,9 +92,11 @@ stove.
   and plays Mannie's spoken answers back through the glasses. Questions are
   planted by typing them in the app. The camera session always ends before any
   answer is spoken, because the toolkit session and the Bluetooth audio
-  channel cannot be held open together. Watch hands-free takes a photo every
-  15, 30 or 60 seconds and skips one that is nearly identical to the last
-  photo sent. The app talks only to the laptop: no cloud SDKs, no analytics.
+  channel cannot be held open together. Watch hands-free either keeps the
+  glasses video open and takes a photo when the view changes and holds still
+  (live view), or takes a photo every 15, 30 or 60 seconds and skips one that
+  is nearly identical to the last photo sent (timed photos). It pauses while
+  the glasses are off your face. The app talks only to the laptop: no cloud SDKs, no analytics.
   See [`app/README.md`](app/README.md).
 - **Laptop server (`truss-server/`).** Python standard library only, no
   database, no cloud account. Each question is a plain folder: its words,

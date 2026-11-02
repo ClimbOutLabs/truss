@@ -15,6 +15,7 @@ import com.meta.wearable.dat.camera.addCamera
 import com.meta.wearable.dat.camera.types.PhotoData
 import com.meta.wearable.dat.camera.types.StreamConfiguration
 import com.meta.wearable.dat.camera.types.StreamState
+import com.meta.wearable.dat.camera.types.VideoFrame
 import com.meta.wearable.dat.camera.types.VideoQuality
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
@@ -23,6 +24,7 @@ import com.meta.wearable.dat.core.session.DeviceSessionState
 import com.meta.wearable.dat.core.types.DeviceSessionError
 import com.meta.wearable.dat.core.types.PermissionError
 import com.meta.wearable.dat.core.types.DeviceIdentifier
+import com.meta.wearable.dat.core.types.DonState
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
 import com.meta.wearable.dat.core.types.RegistrationState
@@ -50,6 +52,14 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
+
+/** How watching decides when to look. */
+enum class CaptureMode(val label: String) {
+  /** A photo on every beat, each in its own short glasses session (the original way). */
+  PHOTOS("Timed photos"),
+  /** The glasses video stays open; a photo is taken when the view has changed and holds still. */
+  LIVE("Live view"),
+}
 
 data class TrussUiState(
     val laptopIp: String = "",
@@ -102,6 +112,11 @@ data class TrussUiState(
     val watchSent: Int = 0,
     val watchSkipped: Int = 0,
     val watchStartedAt: String? = null,
+    val captureMode: CaptureMode = CaptureMode.PHOTOS,
+    /** The glasses report they are off the face (the toolkit's don state): watching pauses. */
+    val glassesOff: Boolean = false,
+    /** Live view: the glasses video is open and watching waits for a view worth a look. */
+    val liveHolding: Boolean = false,
     /** The Desk asked for watching while the phone could not start yet (glasses or
      * laptop not connected): watching starts by itself once both are. */
     val deskStartPending: Boolean = false,
@@ -137,7 +152,9 @@ data class TrussUiState(
 
 class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
-  private val _uiState = MutableStateFlow(TrussUiState(laptopIp = loadLaptopIp(application)))
+  private val _uiState =
+      MutableStateFlow(
+          TrussUiState(laptopIp = loadLaptopIp(application), captureMode = loadCaptureMode(application)))
   val uiState: StateFlow<TrussUiState> = _uiState.asStateFlow()
 
   init {
@@ -151,6 +168,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   private var monitoringStarted = false
   private val deviceNames = mutableMapOf<DeviceIdentifier, String>()
+  private val deviceDon = mutableMapOf<DeviceIdentifier, DonState>()
 
   // When set, the next captured photo is a reference look for this question
   // instead of an ordinary capture. Set by the Plant screen, read and cleared
@@ -181,6 +199,32 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           .getString(KEY_LAPTOP_IP, "")
           ?.trim()
           .orEmpty()
+
+  private fun loadCaptureMode(application: Application): CaptureMode =
+      application
+          .getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+          .getString(KEY_CAPTURE_MODE, null)
+          ?.let { name -> CaptureMode.entries.firstOrNull { it.name == name } }
+          ?: CaptureMode.PHOTOS
+
+  fun setCaptureMode(mode: CaptureMode) {
+    _uiState.update { it.copy(captureMode = mode) }
+    getApplication<Application>()
+        .getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
+        .edit()
+        .putString(KEY_CAPTURE_MODE, mode.name)
+        .apply()
+    // A live hold in progress ends, so the next look uses the new way.
+    if (_uiState.value.liveHolding) holdYield = true
+  }
+
+  /** True when every known pair of glasses says it is off the face. Unknown counts as on. */
+  private fun updateGlassesOff() {
+    val off = deviceDon.isNotEmpty() && deviceDon.values.all { it == DonState.DOFFED }
+    val was = _uiState.value.glassesOff
+    _uiState.update { it.copy(glassesOff = off) }
+    if (was && !off) onAppForeground() // put back on: look again now, not at the next beat
+  }
 
   private fun laptopClient(): LaptopClient = LaptopClient(_uiState.value.laptopIp)
 
@@ -257,12 +301,15 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
               Wearables.devicesMetadata[deviceId]?.collect { metadata ->
                 deviceNames[deviceId] = metadata.name.toString().ifEmpty { deviceId.toString() }
+                deviceDon[deviceId] = metadata.donState
                 _uiState.update { it.copy(deviceNames = deviceNames.values.toList()) }
+                updateGlassesOff()
               }
             }
           }
         }
         deviceNames.keys.retainAll(devices)
+        deviceDon.keys.retainAll(devices)
         val gone = deviceNames.isEmpty()
         _uiState.update {
           it.copy(
@@ -275,6 +322,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                   },
           )
         }
+        updateGlassesOff()
       }
     }
     viewModelScope.launch {
@@ -310,6 +358,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   // MARK: - Screen 2, photo (Gate 2)
 
   fun captureAndUpload(requestPermission: suspend (Permission) -> PermissionStatus) {
+    if (_uiState.value.liveHolding) {
+      viewModelScope.launch { if (freeCameraFromWatch()) captureAndUpload(requestPermission) }
+      return
+    }
     if (!beginCapture(quiet = false)) return
     viewModelScope.launch { performCapture(requestPermission, fromWatch = false) }
   }
@@ -551,6 +603,14 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       _uiState.update { it.copy(streamActive = true) }
       photoLog("Camera stream is up.")
 
+      // Live view: with the video open, wait for a view worth a look before the photo.
+      var liveDecided = false
+      if (fromWatch && _uiState.value.captureMode == CaptureMode.LIVE) {
+        if (!holdForView(stream, firstError)) return
+        // The video already judged this view new; only readable video counts.
+        liveDecided = pendingLive != null
+      }
+
       var photoError: String? = null
       var photoData: PhotoData? = null
       stream
@@ -580,7 +640,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       if (fromWatch) {
         val current = withContext(Dispatchers.Default) { viewSignature(bitmap) }
         val previous = lastSentSignature
-        if (previous != null &&
+        if (!liveDecided &&
+            previous != null &&
             SystemClock.elapsedRealtime() - lastSentAt < SAME_VIEW_WINDOW_MS &&
             signatureDistance(previous, current) < SAME_VIEW_THRESHOLD) {
           withContext(Dispatchers.IO) { jpegFile.delete() }
@@ -649,6 +710,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           // Only a view the laptop really received counts as seen.
           lastSentSignature = signature
           lastSentAt = SystemClock.elapsedRealtime()
+          lastSentLive = pendingLive
         }
         if (fromWatch) {
           watchRecord("sent", fired = result.fired.size)
@@ -677,6 +739,165 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       runCatching { camera?.close() }
       runCatching { session?.stop() }
     }
+  }
+
+  /** Set to end a live hold early, so a tapped photo, a planting look, an alert or a
+   * test sentence can have the glasses. Read by holdForView. */
+  @Volatile private var holdYield = false
+  /** Live view's own small picture (from the video) of the last view the laptop received,
+   * and of the view about to be sent. Video and photo pictures are never compared. */
+  private var lastSentLive: IntArray? = null
+  private var pendingLive: IntArray? = null
+
+  private object HoldTick
+
+  /**
+   * Live view: keep the open video running until the view differs from the last one the
+   * laptop received (or that one is a while old) and has held still for a moment, so the
+   * photo taken next is of something new and not blurred by a turning head. Nothing here
+   * knows what is in the view; it only compares small grey pictures of the video.
+   *
+   * Returns true when it is time for the photo, false when the hold ends without one
+   * (another flow needs the glasses, watching stopped, the glasses came off, the mode
+   * changed, the glasses ended the video, or the hold ran its full time). Video the
+   * phone cannot read falls back to a photo at once, as timed photos would take.
+   */
+  private suspend fun holdForView(
+      stream: com.meta.wearable.dat.camera.Stream,
+      firstError: CompletableDeferred<DeviceSessionError>,
+  ): Boolean {
+    holdYield = false
+    pendingLive = null
+    _uiState.update { it.copy(liveHolding = true) }
+    photoLog("Live view: waiting for a new view that holds still.")
+    var previous: IntArray? = null
+    var lastLooked = 0L
+    var steadySince = 0L
+    var lookNow = false
+    var unreadable = false
+    var why = ""
+    try {
+      val outcome =
+          withTimeoutOrNull(LIVE_HOLD_MAX_MS) {
+            merge<Any>(
+                    stream.videoStream,
+                    stream.state.filter { it == StreamState.STOPPED || it == StreamState.CLOSED },
+                    flow<Any> { emit(firstError.await()) },
+                    flow<Any> {
+                      while (true) {
+                        delay(1_000L)
+                        emit(HoldTick)
+                      }
+                    },
+                )
+                .first { item ->
+                  val state = _uiState.value
+                  val now = SystemClock.elapsedRealtime()
+                  when {
+                    item is DeviceSessionError || item is StreamState -> true
+                    holdYield -> true.also { why = "the glasses were needed for something else" }
+                    watchStopAsked -> true.also { why = "watching was stopped" }
+                    state.glassesOff -> true.also { why = "the glasses came off" }
+                    state.plantSlug != null -> true.also { why = "a question is being planted" }
+                    state.captureMode != CaptureMode.LIVE -> true.also { why = "the capture mode changed" }
+                    item !is VideoFrame -> false
+                    now - lastLooked < LIVE_LOOK_EVERY_MS -> false
+                    else -> {
+                      lastLooked = now
+                      val current = lumaSignature(item)
+                      if (current == null) {
+                        unreadable = true
+                        lookNow = true
+                        true
+                      } else {
+                        val before = previous
+                        if (before == null || signatureDistance(before, current) > LIVE_STEADY_THRESHOLD) {
+                          steadySince = now
+                        }
+                        previous = current
+                        val last = lastSentLive
+                        val changed =
+                            last == null ||
+                                now - lastSentAt >= SAME_VIEW_WINDOW_MS ||
+                                signatureDistance(last, current) >= SAME_VIEW_THRESHOLD
+                        if (changed && now - steadySince >= LIVE_STEADY_MS) {
+                          pendingLive = current
+                          lookNow = true
+                          true
+                        } else {
+                          false
+                        }
+                      }
+                    }
+                  }
+                }
+          }
+      when {
+        outcome is DeviceSessionError -> failSession(outcome)
+        outcome is StreamState -> {
+          photoLog("Live view: the glasses ended the video ($outcome).")
+          return false
+        }
+        outcome == null -> {
+          photoLog("Live view: nothing new in ${LIVE_HOLD_MAX_MS / 1000} s, so the video is restarted.")
+          return false
+        }
+        unreadable -> {
+          photoLog("Live view: this video can't be read on the phone, so a photo is taken now.")
+          return true
+        }
+        lookNow -> {
+          photoLog("Live view: a new view held still, so a photo is taken.")
+          return true
+        }
+        else -> {
+          photoLog("Live view: stopped waiting because $why.")
+          return false
+        }
+      }
+    } finally {
+      _uiState.update { it.copy(liveHolding = false) }
+    }
+  }
+
+  /**
+   * A small grey picture straight from a video frame's brightness plane, on the same
+   * 16 by 16 grid as viewSignature. Null when the frame is not plain I420 video the phone
+   * can read (still compressed, or too short).
+   */
+  private fun lumaSignature(frame: VideoFrame): IntArray? {
+    val w = frame.width
+    val h = frame.height
+    if (frame.isCompressed || frame.isCodecConfig || w < SIGNATURE_SIDE * 4 || h < SIGNATURE_SIDE * 4) return null
+    val buffer = frame.buffer
+    val base = buffer.position()
+    if (buffer.limit() - base < w * h * 3 / 2) return null
+    val side = SIGNATURE_SIDE
+    return IntArray(side * side) { cell ->
+      val gx = cell % side
+      val gy = cell / side
+      var sum = 0
+      for (sy in 0 until 4) {
+        val y = gy * h / side + (2 * sy + 1) * h / (8 * side)
+        for (sx in 0 until 4) {
+          val x = gx * w / side + (2 * sx + 1) * w / (8 * side)
+          sum += buffer.get(base + y * w + x).toInt() and 0xFF
+        }
+      }
+      sum / 16
+    }
+  }
+
+  /**
+   * Free the glasses from a live hold for another flow, waiting up to 15 seconds.
+   * True when the camera is free. The watch loop then waits a beat before it looks
+   * again, which gives the caller its turn.
+   */
+  private suspend fun freeCameraFromWatch(): Boolean {
+    if (!_uiState.value.photoBusy) return true
+    if (!_uiState.value.liveHolding) return false
+    holdYield = true
+    return withTimeoutOrNull(15_000L) { uiState.first { !it.photoBusy } } != null
   }
 
   private fun photoLog(line: String) {
@@ -789,8 +1010,22 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private suspend fun pollAlertsOnce() {
+    if (_uiState.value.laptopIp.isBlank()) return
+    // A live hold keeps the camera open for as long as nothing new is in view. It is
+    // ended only when an alert is really waiting (the laptop may be out of reach from
+    // the glasses' network, and then the alert waits for the hold's own end).
+    if (_uiState.value.liveHolding) {
+      val waiting =
+          try {
+            withContext(Dispatchers.IO) { laptopClient().getAlerts() }.isNotEmpty()
+          } catch (e: CancellationException) {
+            throw e
+          } catch (e: Exception) {
+            false
+          }
+      if (!waiting || !freeCameraFromWatch()) return
+    }
     val state = _uiState.value
-    if (state.laptopIp.isBlank()) return
     // Never together: while a capture may be holding a toolkit camera
     // session, or the glasses audio is busy speaking, this cycle is
     // skipped rather than opening audio alongside it.
@@ -836,6 +1071,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   fun speakTestSentence() {
     if (_uiState.value.speakBusy) return
+    if (_uiState.value.liveHolding) {
+      viewModelScope.launch { if (freeCameraFromWatch()) speakTestSentence() }
+      return
+    }
     val now = _uiState.value
     if (now.photoBusy || now.plantBusy) {
       _uiState.update { it.copy(lastError = "Wait for the current work to finish first.") }
@@ -956,6 +1195,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       kind: String,
       requestPermission: suspend (Permission) -> PermissionStatus,
   ) {
+    if (_uiState.value.liveHolding) {
+      viewModelScope.launch { if (freeCameraFromWatch()) captureReference(kind, requestPermission) }
+      return
+    }
     if (_uiState.value.photoBusy) return
     val now = _uiState.value
     if (now.speakBusy || now.plantBusy) {
@@ -1002,6 +1245,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     watchStopAsked = false
     val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
     lastSentSignature = null
+    lastSentLive = null
     _uiState.update {
       it.copy(
           watching = true,
@@ -1026,9 +1270,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
               // the Meta AI app, and a photo that works is what brings watching back.
               val away = _uiState.value.watchAwaySince != null
               val registered = _uiState.value.registrationState == RegistrationState.REGISTERED
+              val off = _uiState.value.glassesOff
               val ready =
-                  (_uiState.value.glassesReady || (away && registered)) && _uiState.value.plantSlug == null
-              if (!_uiState.value.glassesReady && _uiState.value.watchAwaySince == null) {
+                  (_uiState.value.glassesReady || (away && registered)) &&
+                      _uiState.value.plantSlug == null &&
+                      !off
+              if ((off || !_uiState.value.glassesReady) && _uiState.value.watchAwaySince == null) {
                 // The glasses dropped out of the device list: say so on Home.
                 watchRecord("away")
                 val since = SimpleDateFormat("HH:mm", Locale.US).format(Date())
@@ -1063,7 +1310,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                   continue
                 }
                 aways = 0
-                if (_uiState.value.watchAwaySince != null) {
+                if (_uiState.value.watchAwaySince != null && !_uiState.value.glassesOff) {
                   watchRecord("back")
                   _uiState.update { it.copy(watchAwaySince = null) }
                 }
@@ -1105,6 +1352,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** Stop watching. A photo already being taken finishes first, answer and all. */
   fun stopWatching() {
     watchStopAsked = true
+    holdYield = true
     _uiState.update { it.copy(watching = false, deskStartPending = false) }
     if (!watchCapturing) watchJob?.cancel()
   }
@@ -1148,8 +1396,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private suspend fun deskCheckOnce() {
     val state = _uiState.value
     if (state.laptopIp.isBlank()) return
-    // While the phone is on the glasses' Wi-Fi the laptop is out of reach.
-    if (state.streamActive) return
+    // While the phone is on the glasses' Wi-Fi the laptop may be out of reach. A live
+    // hold still tries, so the Desk's Stop is heard; a failed try is only logged.
+    if (state.streamActive && !state.liveHolding) return
     if (state.deskStartPending && SystemClock.elapsedRealtime() - deskAskedAt > deskFreshMs) {
       _uiState.update { it.copy(deskStartPending = false) }
     }
@@ -1163,6 +1412,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                   glasses = now.glassesReady,
                   pending = now.deskStartPending,
                   every = now.watchEverySeconds,
+                  mode = if (now.captureMode == CaptureMode.LIVE) "live" else "photos",
+                  off = now.glassesOff,
               )
         }
     deskFreshMs = reply.freshSeconds * 1000L
@@ -1518,6 +1769,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val PREFS = "mannie"
     private const val KEY_LAPTOP_IP = "laptop_ip"
     private const val KEY_DESK_HANDLED = "desk_handled_id"
+    private const val KEY_CAPTURE_MODE = "capture_mode"
     private const val STEP_TIMEOUT_MS = 15_000L
     private const val RETURN_TIMEOUT_MS = 15_000L
     private const val POLL_MS = 500L
@@ -1531,5 +1783,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     // A same view is sent again after this long anyway, so a question that has
     // just come due still gets its look.
     private const val SAME_VIEW_WINDOW_MS = 120_000L
+    // Live view: how often a video frame is looked at, how little a view may move between
+    // two looks to count as still, how long it must stay still, and the longest hold
+    // before the video is restarted.
+    private const val LIVE_LOOK_EVERY_MS = 250L
+    private const val LIVE_STEADY_THRESHOLD = 4
+    private const val LIVE_STEADY_MS = 1_000L
+    private const val LIVE_HOLD_MAX_MS = 180_000L
   }
 }
