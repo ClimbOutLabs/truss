@@ -48,13 +48,26 @@ The failure designed against is a wrong all-clear, above all on the stove and th
 
 ## 2. Project rules (blockers)
 
-- [ ] **Meta models only in the demo path.** The default checker is the local Muse
-      Glimmer 30B `llama-server` endpoint (or Muse Spark 1.3 over the Meta Model API).
+- [ ] **Meta models only in the demo path.** With `TRUSS_META_API_KEY` set (the demo),
+      checks and plant-time compiles go to Muse Spark 1.3, standard tier, over the Meta
+      Model API; without it, to the local Muse Glimmer 30B `llama-server` endpoint.
       No non-Meta model (DeepSeek, GPT, Claude, Gemini, Aman's model) can be reached
       from a default config. Aman's bridge only behind an explicit opt-in, never default.
+- [ ] **A fallback must list a Meta model.** On the Muse Spark route, work goes to the
+      fallback at `TRUSS_BASE_URL` only after its `GET /models` lists a Meta model
+      (`glimmer` or `muse` in the name). A fallback that cannot stand in never rests
+      Muse Spark; every failure is `cannot_tell` naming the model that was asked.
 - [ ] **Never the contributor tier.** `muse-spark-1.3-contributor` (or any model name
-      containing `contributor`) is refused, not just undocumented. Frames are never sent
-      to a trained-on tier.
+      containing `contributor`) is refused, not just undocumented, wherever a model is
+      configured.
+- [ ] **The free-credit trade-off is disclosed, not hidden.** The Meta Model API account
+      runs on free credits, and Meta says content sent under free credits may be used
+      for product improvement. Sidd accepted this on 2026-11-02 so the demo can run on
+      Muse Spark while the DGX keeps serving his assistant. The README's "Where your
+      data goes" must keep saying so, and say that leaving `TRUSS_META_API_KEY` unset
+      keeps everything in the home.
+- [ ] **The Meta key goes over https only.** Never to plain http, never to the fallback,
+      never in a log line, a reason, `/status`, or the repo.
 - [ ] **Every answer-log line names the model.**
 - [ ] **Laptop server is Python standard library only.** No new imports outside stdlib
       in `truss-server/` (no `requests`, `openai`, `PIL`, `numpy`, `yaml`). Image work
