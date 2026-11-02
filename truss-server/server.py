@@ -70,12 +70,19 @@ CHECKS = CheckLog(LOG_DIR)
 CLOCK = datetime.now
 
 
+# One sweep at a time: a sweep checks for an alert and then adds it, so
+# two at once (the sweep thread and a request thread) could raise the
+# same alert twice.
+SWEEP_LOCK = threading.Lock()
+
+
 def run_sweep(now=None):
     """Raise any missed-window alerts that are due. Idempotent and
     quiet about failure: a sweep that cannot run loses nothing, the
     next one a few seconds later sees the same closed windows."""
     try:
-        return sweep_missed(STORE, ALERTS, now=now or CLOCK(), checks=CHECKS)
+        with SWEEP_LOCK:
+            return sweep_missed(STORE, ALERTS, now=now or CLOCK(), checks=CHECKS)
     except Exception as e:
         print(f"Missed-window sweep failed: {e}")
         return []
