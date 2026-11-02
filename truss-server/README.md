@@ -28,6 +28,7 @@ The server will:
 ## API Endpoints
 
 - `GET /` - Health check, returns 200 OK
+- `GET /desk` - Truss Desk, the Mac page described below
 - `POST /capture` - Upload JPEG photo (multipart field "image"), returns `{"bytes": n}`
 - `POST /tts` - Send JSON `{"text": "..."}`, returns audio/wav file
 - `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}` with optional `"kind"`, `"pattern"`, `"safety"` (true or false), and `"look_at"`, returns the slug and the next prompt
@@ -44,6 +45,28 @@ The server will:
 - `GET /status` - The server's clock and zone, how checks will be made, the live-test settings in force, and when the phone app last polled and last sent a photo (read by `preflight.py`)
 - `GET /alerts` - List the missed-window alerts still waiting to be spoken
 - `POST /alerts/ack` - Confirm one alert was spoken, JSON `{"id": "..."}`; the only way an alert clears
+
+## Truss Desk
+
+Open `http://<the address the server prints>:8792/desk` in a browser on
+the Mac. It is one static page (`desk.html`) that only calls the
+endpoints listed above, so it changes nothing about how checks are made.
+
+- **Her day**: the standing questions laid out by time, plus one-click
+  steps (morning pills, night pills, stove after cooking, the bedtime
+  round) that fill in the planting form.
+- **Plant a question**: her words, the kind, when to check, the safety
+  flag, and the yes and no looks dragged in from Photos as JPEGs. A
+  question still waiting for looks (the bedtime round plants without
+  them) takes them in the Questions list.
+- **Answers and alerts**: a day's answers with their evidence photos,
+  and the missed-window alerts waiting for the phone. Only the phone
+  clears an alert, because clearing means it was spoken.
+- **Try it without the glasses**: sends a saved JPEG to `POST /capture`
+  exactly as the phone does. It counts as a real sighting, so it is
+  refused while any safety or done question is watched (an old photo
+  would otherwise mark tonight's pills done or the stove off), and it
+  takes a second click to send.
 
 ## Live test settings
 
