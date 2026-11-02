@@ -110,7 +110,7 @@ data class TrussUiState(
     val watchSent: Int = 0,
     val watchSkipped: Int = 0,
     val watchStartedAt: String? = null,
-    val captureMode: CaptureMode = CaptureMode.LIVE,
+    val captureMode: CaptureMode = CaptureMode.PHOTOS,
     /** The glasses report they are off the face (the toolkit's don state): watching pauses. */
     val glassesOff: Boolean = false,
     /** Live view: the glasses video is open and watching waits for a view worth a look. */
@@ -192,7 +192,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           .getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
           .getString(KEY_CAPTURE_MODE, null)
           ?.let { name -> CaptureMode.entries.firstOrNull { it.name == name } }
-          ?: CaptureMode.LIVE
+          ?: CaptureMode.PHOTOS
 
   fun setCaptureMode(mode: CaptureMode) {
     _uiState.update { it.copy(captureMode = mode) }
