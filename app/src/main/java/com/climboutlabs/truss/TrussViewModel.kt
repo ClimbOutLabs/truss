@@ -100,6 +100,9 @@ data class TrussUiState(
     val watchSent: Int = 0,
     val watchSkipped: Int = 0,
     val watchStartedAt: String? = null,
+    /** The Desk asked for watching while the phone could not start yet (glasses or
+     * laptop not connected): watching starts by itself once both are. */
+    val deskStartPending: Boolean = false,
 ) {
   /** True while any glasses camera or audio work is running. */
   val busy: Boolean
@@ -126,6 +129,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   init {
     startLaptopWatch()
+    startDeskWatch()
   }
 
   // AutoDeviceSelector automatically selects the first available wearable device,
@@ -968,13 +972,21 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         watchStopAsked = false
         _uiState.update { it.copy(watching = true) }
       }
+      _uiState.update { it.copy(deskStartPending = false) }
       return
     }
     watchStopAsked = false
     val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
     lastSentSignature = null
     _uiState.update {
-      it.copy(watching = true, watchSent = 0, watchSkipped = 0, watchStartedAt = at, lastError = null)
+      it.copy(
+          watching = true,
+          watchSent = 0,
+          watchSkipped = 0,
+          watchStartedAt = at,
+          lastError = null,
+          deskStartPending = false,
+      )
     }
     watchRecord("start")
     watchJob =
@@ -1069,8 +1081,75 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** Stop watching. A photo already being taken finishes first, answer and all. */
   fun stopWatching() {
     watchStopAsked = true
-    _uiState.update { it.copy(watching = false) }
+    _uiState.update { it.copy(watching = false, deskStartPending = false) }
     if (!watchCapturing) watchJob?.cancel()
+  }
+
+  // MARK: - Start and stop from the Desk
+
+  // The id of the last Desk request acted on. Each request is acted on once, so
+  // pressing Stop here after the Desk asked for watching is not undone at the next
+  // check-in.
+  private var deskHandledId: String? = null
+  private var deskAskedAt = 0L
+  private var deskFreshMs = 600_000L
+
+  /**
+   * Check in with the laptop every few seconds: say how watching stands, so the Desk
+   * can show it, and pick up the Desk's start or stop. A stop is done at once. A start
+   * is left pending for the app screen, which starts watching (with the camera
+   * permission prompt if one is needed) as soon as the glasses and the laptop are
+   * both connected. A request older than the laptop's fresh limit is not acted on.
+   */
+  private fun startDeskWatch() {
+    viewModelScope.launch {
+      while (true) {
+        delay(DESK_CHECK_MS)
+        try {
+          deskCheckOnce()
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          // The laptop is unreachable or said no: Home already shows the laptop's state.
+          Log.i(TAG, "Desk check-in failed: ${e.message ?: e.toString()}")
+        }
+      }
+    }
+  }
+
+  private suspend fun deskCheckOnce() {
+    val state = _uiState.value
+    if (state.laptopIp.isBlank()) return
+    // While the phone is on the glasses' Wi-Fi the laptop is out of reach.
+    if (state.streamActive) return
+    if (state.deskStartPending && SystemClock.elapsedRealtime() - deskAskedAt > deskFreshMs) {
+      _uiState.update { it.copy(deskStartPending = false) }
+    }
+    val now = _uiState.value
+    val reply =
+        withContext(Dispatchers.IO) {
+          laptopClient()
+              .watchCheckIn(
+                  watching = now.watching,
+                  away = now.watchAwaySince != null,
+                  glasses = now.glassesReady,
+                  pending = now.deskStartPending,
+                  every = now.watchEverySeconds,
+              )
+        }
+    deskFreshMs = reply.freshSeconds * 1000L
+    val request = reply.request ?: return
+    if (request.id == deskHandledId) return
+    deskHandledId = request.id
+    if (request.ageSeconds > reply.freshSeconds) return
+    if (request.on) {
+      if (_uiState.value.watching) return
+      deskAskedAt = SystemClock.elapsedRealtime() - request.ageSeconds * 1000L
+      _uiState.update { it.copy(deskStartPending = true) }
+    } else {
+      _uiState.update { it.copy(deskStartPending = false) }
+      if (_uiState.value.watching) stopWatching()
+    }
   }
 
   fun setWatchEverySeconds(seconds: Int) {
@@ -1410,6 +1489,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val POLL_MS = 500L
     private const val ALERT_POLL_MS = 30_000L
     private const val LAPTOP_CHECK_MS = 20_000L
+    private const val DESK_CHECK_MS = 4_000L
     private const val WATCH_MAX_FAILURES = 3
     private const val SIGNATURE_SIDE = 16
     // Mean grey-level difference below which two photos count as the same view.

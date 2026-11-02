@@ -27,6 +27,7 @@ from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
 import history
+from phone_watch import WatchDesk
 from plant_compile import Compiler, compile_folder, needs_compile
 from questions import QuestionStore, SafetyLooksNeeded
 
@@ -302,10 +303,17 @@ def status():
 # memory; while a guide is active, captures go to it instead of the loop.
 GUIDE = {"session": None}
 
+# The Desk's start and stop for the phone's watching (see phone_watch.py).
+WATCH = WatchDesk()
+
 class TrussHandler(BaseHTTPRequestHandler):
     
     def log_message(self, format, *args):
         """Override to customize logging format."""
+        # The phone checks in every few seconds; only a failed check-in
+        # is worth a line.
+        if urlparse(self.path).path == "/watch/phone" and len(args) > 1 and str(args[1]) == "200":
+            return
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] {format % args}")
     
@@ -346,6 +354,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_evidence()
         elif path == "/status":
             self.send_json(status())
+        elif path == "/watch":
+            self.send_json(WATCH.view())
         else:
             self.send_error(404, "Not Found")
 
@@ -356,6 +366,15 @@ class TrussHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/tts":
             self.handle_tts()
+            return
+        # The watch requests change nothing the checks read, and the
+        # phone checks in while its own capture is being checked, so
+        # they never wait behind the write lock.
+        if path == "/watch":
+            self.handle_watch_ask()
+            return
+        if path == "/watch/phone":
+            self.handle_watch_phone()
             return
         with WRITE_LOCK:
             self._do_post(path)
@@ -498,6 +517,36 @@ class TrussHandler(BaseHTTPRequestHandler):
         ]
         self.send_json({"alerts": alerts})
         print(f"GET /alerts -> {len(alerts)} pending")
+
+    def _json_body(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(content_length).decode() or "{}")
+
+    def handle_watch_ask(self):
+        """The Desk asks the phone to start or stop watching: POST
+        JSON {"on": true|false}. The phone acts on it at its next
+        check-in, within a few seconds while its app is open."""
+        try:
+            data = self._json_body()
+            on = data.get("on") if isinstance(data, dict) else None
+            view = WATCH.ask(on)
+        except (ValueError, UnicodeDecodeError):
+            self.send_error(400, 'Body must be JSON like {"on": true}.')
+            return
+        self.send_json(view)
+        print(f"POST /watch -> ask the phone to {'start' if on else 'stop'} watching")
+
+    def handle_watch_phone(self):
+        """The phone checks in with how its watching stands and gets
+        the Desk's latest request back."""
+        try:
+            data = self._json_body()
+            reply = WATCH.report(data, self.client_address[0])
+        except (ValueError, UnicodeDecodeError):
+            self.send_error(400, "Body must be a JSON object.")
+            return
+        _seen("poll", self.client_address[0])
+        self.send_json(reply)
 
     def handle_alerts_ack(self):
         """Confirm one alert was spoken: POST JSON {"id": ...}. That

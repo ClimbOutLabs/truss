@@ -111,6 +111,14 @@ fun TrussApp(
     onDispose { view.keepScreenOn = false }
   }
 
+  // The Desk asked for watching: start it here, where the camera permission can be
+  // asked for, as soon as the glasses and the laptop are both connected.
+  val deskCanStart =
+      state.deskStartPending && !state.watching && state.glassesReady && state.laptopReachable == true
+  LaunchedEffect(deskCanStart) {
+    if (deskCanStart) viewModel.startWatching(onRequestWearablesPermission)
+  }
+
   TrussTheme {
     Scaffold(
         containerColor = Truss.ground,
@@ -590,6 +598,10 @@ private fun HeroCard(
     state.photoBusy -> {
       title = "Looking"
       subtitle = workingLine(state.photoLog.lastOrNull())
+    }
+    !ready && state.deskStartPending -> {
+      title = "Getting set up"
+      subtitle = "$glassesLine, $laptopLine. The Desk asked to start watching: it starts by itself once both are connected."
     }
     !ready -> {
       title = "Getting set up"
