@@ -165,7 +165,7 @@ input[type=text],input[type=time],input[type=number],input[type=date]{font:inher
       </form>
 
       <h2 style="margin-top:8px">Try it without the glasses</h2>
-      <p class="note" style="margin:0">Sends a saved JPEG exactly as the phone would. The real checks run (a few seconds each) and a firing is real: it is logged and can witness a done question.</p>
+      <p class="note" style="margin:0">Sends a saved JPEG exactly as the phone would. This counts as a real sighting: a question it fires on is answered and logged, and a done question it fires on is marked done for today. So it is off while any safety or done question is being watched.</p>
       <div class="row">
         <label class="btn2" style="flex:1;position:relative;text-align:center">
           <span id="r-name">Choose photo…</span>
@@ -505,8 +505,28 @@ $("f-replay").addEventListener("change", (e) => {
   $("r-name").textContent = REPLAY ? REPLAY.name : "Choose photo…";
   $("r-go").disabled = !REPLAY;
 });
+// A replayed photo is a real sighting. An old photo of an empty pill
+// compartment would mark tonight's pills done and silence the missed
+// alert, and an old photo of a cold stove would be a false all-clear,
+// so replay is refused while any safety or done question is watched,
+// and otherwise takes a second click.
+function replayBlocker() {
+  const q = QUESTIONS.find((x) => x.state !== "retired" && (x.safety || x.kind === "done"));
+  return q ? `Not sent. “${q.question}” is a safety question being watched, and an old photo would count as a real sighting of it. Stop watching it first, or test with the glasses.` : "";
+}
 $("r-go").addEventListener("click", async () => {
   if (!REPLAY) return;
+  const blocked = replayBlocker();
+  if (blocked) { showMsg("r-msg", blocked, true); return; }
+  if ($("r-go").dataset.armed !== "1") {
+    $("r-go").dataset.armed = "1";
+    $("r-go").textContent = "Send for real";
+    showMsg("r-msg", "This counts as a real sighting. A done question it fires on is marked done for today. Click again to send.");
+    setTimeout(() => { $("r-go").dataset.armed = ""; $("r-go").textContent = "Send"; }, 6000);
+    return;
+  }
+  $("r-go").dataset.armed = "";
+  $("r-go").textContent = "Send";
   $("r-go").disabled = true;
   showMsg("r-msg", "Checking the photo against what is due…");
   const started = Date.now();
@@ -514,7 +534,7 @@ $("r-go").addEventListener("click", async () => {
     const r = await postImage("/capture", REPLAY);
     const secs = ((Date.now() - started) / 1000).toFixed(1);
     const said = (r.speak || []).filter(Boolean);
-    if (said.length) showMsg("r-msg", `Mannie would say (${secs} s): “${said.join(" ")}”`);
+    if (said.length) showMsg("r-msg", `Recorded as a sighting (${secs} s). Mannie said: “${said.join(" ")}”`);
     else if (r.guide) showMsg("r-msg", `A guide is running, so the photo went to it (${secs} s). Nothing to say.`);
     else showMsg("r-msg", `Nothing fired (${secs} s). The photo was not kept.`);
   } catch (e) {

@@ -63,8 +63,10 @@ endpoints listed above, so it changes nothing about how checks are made.
   and the missed-window alerts waiting for the phone. Only the phone
   clears an alert, because clearing means it was spoken.
 - **Try it without the glasses**: sends a saved JPEG to `POST /capture`
-  exactly as the phone does. The checks are real, and so is a firing:
-  it is logged and can witness a done question.
+  exactly as the phone does. It counts as a real sighting, so it is
+  refused while any safety or done question is watched (an old photo
+  would otherwise mark tonight's pills done or the stove off), and it
+  takes a second click to send.
 
 ## Live test settings
 
