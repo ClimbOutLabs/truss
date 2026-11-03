@@ -1409,6 +1409,13 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     if (_uiState.value.watchWaiting) watchNudge.tryEmit(Unit)
   }
 
+  /** The app is going away: end watching, so a Live view session held open across
+   * looks never keeps the glasses camera running with no screen. */
+  override fun onCleared() {
+    stopWatching()
+    super.onCleared()
+  }
+
   /** Stop watching. A photo already being taken finishes first, answer and all. */
   fun stopWatching() {
     watchStopAsked = true
