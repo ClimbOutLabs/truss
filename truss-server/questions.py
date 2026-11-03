@@ -178,6 +178,20 @@ def _window_times(pattern):
     return after, until
 
 
+def _same_words(a, b):
+    """Whether two questions are the same words, ignoring case,
+    spacing, and end punctuation. The same done question planted for
+    several windows of one day ("Did I feed the dog?" at breakfast,
+    lunch, and dinner) is one routine: its plantings share words."""
+    def norm(text):
+        if not isinstance(text, str):
+            return None
+        return " ".join(re.findall(r"[a-z0-9']+", text.lower())) or None
+
+    left = norm(a)
+    return left is not None and left == norm(b)
+
+
 def _gap_seconds(pattern):
     """The minimum seconds between checks for a pattern. A stored gap
     that is not a usable number falls back to fifteen minutes rather
@@ -998,7 +1012,12 @@ class QuestionStore:
         return prompt instead. A return check obeys the same gap
         between checks as an ordinary due question, counted from the
         last recorded check of any kind, so a watched question costs
-        at most one return check per gap."""
+        at most one return check per gap.
+
+        A done question planted with the same words for several
+        windows of the day is one routine: a witness stops being
+        watched once the next of those windows opens, so the lunch
+        feed is never mistaken for a second breakfast."""
         with self._lock:
             now = now or datetime.now()
             out = []
@@ -1007,7 +1026,10 @@ class QuestionStore:
                     continue
                 if entry["state"] != "standing":
                     continue
-                if self.witness_today(entry["slug"], now=now) is None:
+                witness = self.witness_today(entry["slug"], now=now)
+                if witness is None:
+                    continue
+                if self._next_window_opened(entry, witness, now):
                     continue
                 last = entry.get("last_checked_at")
                 if last:
@@ -1021,6 +1043,47 @@ class QuestionStore:
                         continue
                 out.append(entry)
             return out
+
+    def _routine_windows(self, entry):
+        """Today's window start times of the other standing done
+        questions planted with the same words as this one."""
+        starts = []
+        for other in self.list():
+            if other["slug"] == entry["slug"] or other["kind"] != "done":
+                continue
+            if other["state"] != "standing":
+                continue
+            if not _same_words(other["question"], entry["question"]):
+                continue
+            times = _window_times(other["pattern"])
+            if times is not None:
+                starts.append(times[0])
+        return sorted(starts)
+
+    def _next_window_opened(self, entry, witness, now):
+        """Whether another window of the same routine has opened since
+        the witness: from then on, doing it again is the next one, not
+        a repeat, and the redo watch for this witness is over."""
+        try:
+            seen = datetime.fromisoformat(witness["at"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        for start in self._routine_windows(entry):
+            opened = datetime.combine(now.date(), start)
+            if seen < opened <= now:
+                return True
+        return False
+
+    def next_window(self, entry, now=None):
+        """When the next window of the same routine opens later today,
+        as a time, or None. Spoken in the redo reminder so the wearer
+        hears when the next one is due."""
+        with self._lock:
+            now = now or datetime.now()
+            for start in self._routine_windows(entry):
+                if start > now.time():
+                    return start
+            return None
 
     def done_status(self, slug, now=None):
         """For listings: today's witness as a spoken time of day (or
