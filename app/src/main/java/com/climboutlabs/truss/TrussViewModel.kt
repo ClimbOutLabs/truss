@@ -832,6 +832,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     var previous: IntArray? = null
     var lastLooked = 0L
     var steadySince = 0L
+    // The sharpest frame seen since the view last held still, by lumaSharpness.
+    var bestSharp = 0
     var lookNow = false
     var unreadable = false
     var why = ""
@@ -871,8 +873,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                         true
                       } else {
                         val before = previous
+                        val sharp = lumaSharpness(item)
                         if (before == null || signatureDistance(before, current) > LIVE_STEADY_THRESHOLD) {
                           steadySince = now
+                          bestSharp = sharp
+                        } else if (sharp > bestSharp) {
+                          bestSharp = sharp
                         }
                         previous = current
                         val last = lastSentLive
@@ -880,7 +886,14 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                             last == null ||
                                 now - lastSentAt >= SAME_VIEW_WINDOW_MS ||
                                 signatureDistance(last, current) >= SAME_VIEW_THRESHOLD
-                        if (changed && now - steadySince >= LIVE_STEADY_MS) {
+                        // Held still long enough, and this frame is about as sharp as
+                        // the sharpest since it held still: a small head shake blurs a
+                        // frame without moving the grid much, so a blurred one waits for
+                        // the next. After LIVE_SHARP_WAIT_MS a still view goes anyway.
+                        val sharpEnough =
+                            sharp * 100 >= bestSharp * LIVE_SHARP_PERCENT ||
+                                now - steadySince >= LIVE_SHARP_WAIT_MS
+                        if (changed && now - steadySince >= LIVE_STEADY_MS && sharpEnough) {
                           pendingLive = current
                           lookNow = true
                           true
@@ -946,6 +959,37 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       }
       sum / 16
     }
+  }
+
+  /**
+   * How sharp a video frame is: the mean squared brightness step between neighbouring
+   * pixels, across and down, along rows through the middle of the frame (the usual
+   * gradient-energy focus measure). Blur from a moving head or a missed focus spreads each
+   * edge over more pixels in smaller steps, and squaring makes the small steps count far
+   * less, so the same view reads lower when blurred. Only comparable between frames of
+   * the same view, which is how holdForView uses it. Call only on a frame lumaSignature
+   * could read.
+   */
+  private fun lumaSharpness(frame: VideoFrame): Int {
+    val w = frame.width
+    val h = frame.height
+    val buffer = frame.buffer
+    val base = buffer.position()
+    val rows = SHARP_ROWS
+    var total = 0L
+    var count = 0L
+    for (ry in 0 until rows) {
+      val y = h / 4 + ry * (h / 2) / rows
+      val row = base + y * w
+      for (x in w / 4 until w * 3 / 4) {
+        val here = buffer.get(row + x).toInt() and 0xFF
+        val across = (buffer.get(row + x + 1).toInt() and 0xFF) - here
+        val down = (buffer.get(row + w + x).toInt() and 0xFF) - here
+        total += across * across + down * down
+        count += 1
+      }
+    }
+    return if (count == 0L) 0 else (total / count).toInt()
   }
 
   /**
@@ -1857,5 +1901,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val LIVE_STEADY_THRESHOLD = 4
     private const val LIVE_STEADY_MS = 1_000L
     private const val LIVE_HOLD_MAX_MS = 180_000L
+    // Live view: a still frame goes only when it is at least this percent as sharp as the
+    // sharpest frame since the view held still, or once it has held still this long.
+    private const val LIVE_SHARP_PERCENT = 85
+    private const val LIVE_SHARP_WAIT_MS = 3_000L
+    // Rows read for the sharpness measure, spread over the middle half of the frame.
+    private const val SHARP_ROWS = 36
   }
 }
