@@ -6,64 +6,93 @@
 <title>Truss Desk</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
 <style>
-/* The Mac side of Truss: the day at a glance, planting, answers, and
-   settings. Served by server.py at /desk; every call goes to the
-   server's own endpoints. Same Paper and ink palette as the phone app.
-   One column, one job per tab. */
+/* The Mac side of Truss: the day as a story first, then planting,
+   answers, and settings. Served by server.py at /desk; every call goes
+   to the server's own endpoints. Same Paper and ink palette as the
+   phone app. A state and the action on it wear the same pill shape. */
 :root{
   --ground:#F6F6F4; --ink:#141414; --muted:#6B6B6B; --card:#FFFFFF; --line:#E6E6E2; --dash:#D6D6D2;
   --sky:#E9EDF1; --on-sky:#34495E; --apricot:#F4ECE7; --on-apricot:#8C4A2F; --sage:#EFEFEB;
+  --clayline:#E7D5C9; --claysoft:#5A463C;
   --ok:#5B8A5E; --error-soft:#FFDAD6; --on-error:#410002;
   --sans:"Hanken Grotesk", -apple-system, "Helvetica Neue", Arial, sans-serif;
 }
 @media (prefers-color-scheme: dark){:root{
   --ground:#121212; --ink:#ECECE8; --muted:#9A9A96; --card:#1B1B1A; --line:#2C2C2A; --dash:#3A3A38;
   --sky:#26313D; --on-sky:#B7C7D6; --apricot:#2A201B; --on-apricot:#E2A98F; --sage:#222220;
+  --clayline:#3A2A22; --claysoft:#C9A48F;
   --ok:#8FBF92; --error-soft:#3A1A17; --on-error:#FFB4AB; color-scheme:dark}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.5 var(--sans);padding:32px 16px 64px}
-.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+body{margin:0;background:var(--ground);color:var(--ink);font:15px/1.5 var(--sans);padding:36px 16px 64px}
+.wrap{max-width:1020px;margin:0 auto;display:flex;flex-direction:column;gap:30px}
 header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
-h1{font-size:28px;font-weight:600;margin:0;letter-spacing:-.01em}
-.tagline{font-size:15px;color:var(--muted);margin:-16px 0 0}
-h2{font-size:16px;font-weight:600;margin:0}
+h1{font-size:32px;font-weight:700;margin:0;letter-spacing:-.01em}
+.tagline{font-size:16.5px;color:var(--ink);opacity:.78;margin:-18px 0 0}
+h2{font-size:14.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:0}
+#today{font-size:19.5px;font-weight:700;letter-spacing:0;text-transform:none;color:var(--ink)}
+.ctitle{font-size:17.5px;font-weight:700;letter-spacing:0;text-transform:none;color:var(--ink)}
 .muted{color:var(--muted)}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:1px}
 .dot.ok{background:var(--ok)} .dot.bad{background:var(--on-apricot)}
-.phone{display:flex;align-items:center;gap:16px;flex-wrap:wrap;color:var(--muted)}
-nav{display:flex;gap:24px;border-bottom:1px solid var(--line);font-size:15px;font-weight:500}
-.tab{all:unset;cursor:pointer;padding-bottom:10px;color:var(--muted)}
-.tab[aria-selected="true"]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
+.phone{display:flex;align-items:center;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+nav{display:flex;gap:32px;border-bottom:1px solid var(--line);font-size:15.5px;font-weight:500;flex-wrap:wrap}
+.tab{all:unset;cursor:pointer;padding-bottom:9px;color:var(--muted)}
+.tab[aria-selected="true"]{color:var(--ink);font-weight:600;box-shadow:inset 0 -2px 0 var(--ink)}
 .tab:focus-visible{outline:2px solid var(--muted);outline-offset:3px}
 .tab.end{margin-left:auto}
-section{display:flex;flex-direction:column;gap:12px}
+section{display:flex;flex-direction:column;gap:16px}
 .spread{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-/* the day */
+/* the day, as a story */
+.banner{background:var(--apricot);border:1px solid var(--clayline);border-radius:14px;padding:18px 22px;color:var(--on-apricot);font-size:16.5px;font-weight:600;line-height:1.45;display:flex;gap:16px;align-items:flex-start}
+.banner .mark{font-size:13px;margin-top:4px}
+.banner .bhead{font-size:17.5px;font-weight:700}
+.banner .bnote{font-size:15px;font-weight:500;color:var(--claysoft);margin-top:2px;line-height:1.5}
+.summary{font-size:19.5px;font-weight:600;line-height:1.45;margin:0}
+.summary .soft{display:block;color:var(--muted);font-weight:500;font-size:16px;margin-top:3px}
+#seen h2{margin-top:10px}
+.event{display:flex;gap:18px;align-items:center;padding:15px 10px;border-bottom:1px solid var(--line);border-radius:10px}
+.event.story{background:var(--apricot);border-bottom-color:transparent}
+.etime{width:76px;flex:none;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.event img{width:118px;height:84px;object-fit:cover;border-radius:10px;background:var(--sage);display:block}
+.event a{flex:none;display:block}
+.event.story img{width:128px;height:92px}
+.event .ph{width:118px;height:84px;border-radius:10px;background:var(--sage);flex:none}
+.event.story .ph{width:128px;height:92px;background:#EADCD2}
+@media (prefers-color-scheme: dark){.event.story .ph{background:#33261E}}
+.emain{flex:1;min-width:0}
+.eq{font-size:17px;font-weight:600}
+.esub{color:var(--muted);font-size:14.5px;margin-top:3px;line-height:1.5}
+.event.story .esub{color:var(--claysoft)}
+.chip{flex:none;font-size:13.5px;font-weight:600;border-radius:999px;padding:5px 13px;background:var(--sage);color:var(--ink)}
+.chip.slate{background:var(--sky);color:var(--on-sky)}
+.chip.clay{background:var(--card);color:var(--on-apricot);border:1px solid var(--clayline)}
+.pillstop{font:inherit;font-size:13.5px;font-weight:600;border-radius:999px;padding:5px 13px;cursor:pointer;border:0;background:var(--apricot);color:var(--on-apricot)}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:15px}
+@media (max-width:640px){.cards{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:17px 19px}
+.cq{font-size:17px;font-weight:600;line-height:1.35}
+.csub{color:var(--muted);font-size:14.5px;margin-top:6px;line-height:1.5}
+.cfoot{display:flex;justify-content:space-between;align-items:center;margin-top:13px;gap:10px}
+.group{font-size:14.5px;font-weight:700;color:var(--muted);margin:20px 0 0}
+.group:first-child{margin-top:4px}
+.startbtn{font:inherit;font-size:14px;font-weight:600;background:var(--ink);color:var(--ground);border:0;border-radius:9px;padding:8px 15px;cursor:pointer;min-height:36px}
+.empty{color:var(--muted);padding:14px 0;border-top:1px solid var(--line)}
+/* plain lines (the stopped fold) */
 .line{display:grid;grid-template-columns:76px minmax(0,1fr) auto;gap:16px;align-items:center;padding:16px 0;border-top:1px solid var(--line)}
 .t{color:var(--muted);font-variant-numeric:tabular-nums}
 .qt{font-size:16px;font-weight:600}
-.line.sample .qt{font-weight:500;color:var(--muted)}
 .sub{color:var(--muted)}
-.st{font-weight:500;white-space:nowrap;color:var(--muted);font-size:13px}
-.st.live{color:var(--on-sky);background:var(--sky);font-weight:600;padding:4px 10px;border-radius:999px}
-.st.warn{color:var(--on-apricot);background:var(--apricot);font-weight:600;padding:4px 10px;border-radius:999px}
-.st.yes{color:var(--ink);font-weight:600}
-.banner{background:var(--apricot);color:var(--on-apricot);border-left:6px solid var(--on-apricot);border-radius:12px;padding:16px 20px;font-size:17px;font-weight:600;line-height:1.4}
-.banner .bnote{font-size:15px;font-weight:500;margin-top:2px}
-.empty{color:var(--muted);padding:14px 0;border-top:1px solid var(--line)}
-.ans{display:grid;grid-template-columns:128px minmax(0,1fr);gap:16px;padding:16px 0;border-top:1px solid var(--line)}
-.ans img,.ans .ph{width:128px;height:96px;object-fit:cover;border-radius:12px;background:var(--sage);display:block}
-.ans>div>div:first-child{font-size:16px!important}
-.ans>div>div:nth-child(2){font-weight:600}
+.st{font-weight:600;white-space:nowrap;font-size:13.5px;border-radius:999px;padding:5px 13px;background:var(--sage);color:var(--ink)}
+.st.live{color:var(--on-sky);background:var(--sky)}
+.st.warn{color:var(--on-apricot);background:var(--card);border:1px solid var(--clayline)}
+.st.yes{color:var(--on-sky);background:var(--sky)}
 /* forms */
-.form{display:flex;flex-direction:column;gap:20px;max-width:560px}
+.form{display:flex;flex-direction:column;gap:15px;max-width:720px}
 label.field,div.field{display:flex;flex-direction:column;gap:6px}
 .fl{font-weight:600}
 input[type=text],input[type=password],input[type=time],input[type=number],input[type=date],select{font:inherit;font-size:14px;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--card);width:100%}
 #p-text{font-size:16px;padding:12px 14px}
-.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-@media (max-width:520px){.two{grid-template-columns:1fr}.line{grid-template-columns:64px minmax(0,1fr)}.line>:nth-child(3){grid-column:2;justify-self:start}}
 .seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card)}
 .seg label{text-align:center;cursor:pointer}
 .seg input{position:absolute;opacity:0;pointer-events:none}
@@ -76,7 +105,7 @@ input[type=text],input[type=password],input[type=time],input[type=number],input[
 .drop.over{border-color:var(--ink)}
 .drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
-.btn{font:inherit;font-weight:600;font-size:14px;cursor:pointer;background:var(--ink);color:var(--ground);border:0;border-radius:10px;padding:11px 18px;min-height:44px}
+.btn{font:inherit;font-weight:600;font-size:15px;cursor:pointer;background:var(--ink);color:var(--ground);border:0;border-radius:11px;padding:12px 22px;min-height:44px}
 .btn2{font:inherit;font-weight:600;cursor:pointer;background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px 14px;min-height:36px;position:relative}
 .btn:disabled,.btn2:disabled{opacity:.45;cursor:default}
 .link{all:unset;cursor:pointer;color:var(--ink);font-weight:600}
@@ -88,13 +117,59 @@ input[type=text],input[type=password],input[type=time],input[type=number],input[
 .say{font-size:14px}
 details{border-top:1px solid var(--line);padding-top:16px;max-width:560px}
 summary{cursor:pointer;font-weight:600;font-size:14px}
-.block{border-top:1px solid var(--line);padding-top:24px;max-width:560px}
 .okt{color:var(--ok);font-weight:500} .badt{color:var(--on-apricot);font-weight:500}
+/* steps, asks, runs */
+.intro{font-size:18.5px;font-weight:600;line-height:1.45;margin:0}
+.intro .soft{display:block;color:var(--muted);font-weight:500;font-size:15.5px;margin-top:3px;line-height:1.5}
+.step,.ask,.run{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+.shead{display:flex;gap:13px;align-items:center}
+.num{width:25px;height:25px;border-radius:50%;background:var(--ink);color:var(--ground);font-size:13.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+.stitle{font-size:17.5px;font-weight:700}
+.sbody{margin-left:38px;display:flex;flex-direction:column;gap:12px;margin-top:10px}
+@media (max-width:520px){.sbody{margin-left:0}}
+.ssub{color:var(--muted);font-size:14.5px;line-height:1.5}
+.opts{display:flex;flex-direction:column;gap:10px}
+.rowline{display:flex;gap:10px;align-items:center;cursor:pointer;font-size:15.5px;position:relative}
+.rowline input{position:absolute;opacity:0;pointer-events:none}
+.radio{width:17px;height:17px;border-radius:50%;border:2px solid var(--dash);flex:none;position:relative}
+.rowline input:checked+.radio{border-color:var(--ink)}
+.rowline input:checked+.radio::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--ink)}
+.rowline input:focus-visible+.radio,.rowline input:focus-visible+.check{outline:2px solid var(--muted);outline-offset:2px}
+.check{width:18px;height:18px;border-radius:5px;border:2px solid var(--dash);flex:none;position:relative}
+.rowline input:checked+.check{background:var(--ink);border-color:var(--ink)}
+.rowline input:checked+.check::after{content:"";position:absolute;left:5px;top:2px;width:4px;height:8px;border:solid var(--ground);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.ask{display:flex;flex-direction:column;gap:12px;max-width:720px}
+.rtitle{font-size:18.5px;font-weight:700}
+.gstep{display:flex;gap:15px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.gstep:last-child{border-bottom:none}
+.snum{width:62px;flex:none;color:var(--muted);font-size:14px}
+.gstext{flex:1;font-size:16px;line-height:1.45}
+.gstep.done .gstext{color:var(--muted)}
+.gstep.now .gstext{font-weight:600}
+.rfoot{display:flex;gap:11px;margin-top:16px;flex-wrap:wrap}
+.pillbtn{font:inherit;font-size:14.5px;font-weight:600;border-radius:999px;padding:8px 18px;cursor:pointer;border:0}
+.pillbtn.plain{background:var(--sage);color:var(--ink)}
+.pillbtn.stop{background:var(--apricot);color:var(--on-apricot)}
+.leftout{color:var(--muted);font-size:14.5px;margin-top:15px;line-height:1.5}
 /* live */
-.view{width:100%;max-width:560px;aspect-ratio:4/3;object-fit:cover;border-radius:12px;background:var(--sage);display:block}
-.said{display:grid;grid-template-columns:76px minmax(0,1fr) auto;gap:16px;align-items:baseline;padding:14px 0;border-top:1px solid var(--line)}
-.said .qt{font-weight:500}
+.viewwrap{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.view{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;background:var(--sage);display:block}
+.viewnote{color:var(--muted);font-size:14px;margin-top:9px;display:block}
+.said{display:flex;gap:18px;padding:13px 0;border-bottom:1px solid var(--line);align-items:baseline}
+.said:last-child{border-bottom:none}
+.said .t{width:96px;flex:none;font-size:14.5px;font-weight:600;color:var(--ink)}
+.said .qt{font-weight:500;font-size:16px}
 .said.new .qt{font-weight:600}
+.playrow{display:flex;align-items:center;gap:12px;font-size:15px;cursor:pointer}
+.toggle{appearance:none;-webkit-appearance:none;width:44px;height:25px;border-radius:999px;background:var(--dash);position:relative;flex:none;cursor:pointer;margin:0;padding:0;border:0}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:19px;height:19px;border-radius:50%;background:#fff}
+.toggle:checked{background:var(--on-sky)}
+.toggle:checked::after{left:22px}
+.toggle:focus-visible{outline:2px solid var(--muted);outline-offset:2px}
+/* history */
+.dayrow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.day{font-size:19.5px;font-weight:700}
+.daypick{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:14.5px}
 [hidden]{display:none!important}
 .checking{font-size:14px;color:var(--muted);margin:-8px 0 16px}
 </style>
@@ -120,12 +195,16 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
     <button class="tab end" role="tab" aria-selected="false" data-tab="settings">Settings</button>
   </nav>
 
-  <!-- Today: the whole day in one list -->
+  <!-- Today: the day as a story: what needs attention, what was seen,
+       then what is being watched -->
   <div id="tab-today" class="pane">
     <section>
       <div id="banners" style="display:flex;flex-direction:column;gap:10px"></div>
-      <div class="spread"><h2 id="today"></h2><span class="muted" id="count"></span></div>
+      <div class="spread"><h2 id="today"></h2><span class="muted" id="count" style="display:none"></span></div>
       <div id="msg-today" class="msg" hidden></div>
+      <p class="summary" id="summary" hidden></p>
+      <div id="seen"></div>
+      <h2>What Truss is watching now</h2>
       <div id="day"></div>
       <div id="stopped"></div>
     </section>
@@ -134,58 +213,73 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
   <!-- Live: what the glasses see and say, for everyone else in the room -->
   <div id="tab-live" class="pane" hidden>
     <section>
-      <div class="spread"><h2>Live</h2>
-        <label class="row" style="cursor:pointer"><input type="checkbox" id="l-play"><span>Play what Truss says on this device</span></label>
+      <h2>What the glasses see now</h2>
+      <div class="viewwrap">
+        <img id="l-view" class="view" hidden alt="The glasses' latest view">
+        <span class="viewnote" id="l-view-note">No view from the glasses yet. Start watching on the phone.</span>
       </div>
-      <p class="note" style="margin:0">Everything Truss speaks in the glasses shows here as it is said. Anyone on this Wi-Fi can open this page at the same address and pick Live.</p>
-      <img id="l-view" class="view" hidden alt="The glasses' latest view">
-      <span class="note" id="l-view-note">No view from the glasses yet. Start watching on the phone.</span>
+      <h2>What Truss has seen</h2>
       <div id="l-said"></div>
+      <label class="playrow"><input type="checkbox" id="l-play" class="toggle"><span>Play what the voice in the glasses says, out loud on this computer, as it is said.</span></label>
     </section>
   </div>
 
-  <!-- Plant: the form, and the photo test folded away -->
+  <!-- Watch for me: the planting form as three steps, and the photo
+       test folded away -->
   <div id="tab-plant" class="pane" hidden>
     <form id="plant" class="form" autocomplete="off">
-      <label class="field"><span class="fl">Question, in your own words</span>
-        <input type="text" id="p-text" placeholder="Did I take my night pills?" required></label>
+      <p class="intro">Ask once, and Truss minds it from then on.<span class="soft">Three short steps. Truss learns what yes and no look like in this home, from the wearer's own photos.</span></p>
 
-      <div class="two">
-        <div class="field"><span class="fl">Kind</span>
-          <div class="seg">
-            <label><input type="radio" name="kind" value="state" checked><span>How things are now</span></label>
-            <label><input type="radio" name="kind" value="done"><span>Something I did</span></label>
-          </div></div>
-        <div class="field"><span class="fl">When</span>
-          <select id="p-when">
-            <option value="interval">Every few minutes</option>
-            <option value="nightly">Each night</option>
-            <option value="window">Between two times</option>
-          </select></div>
-      </div>
-      <div class="row" id="w-interval"><input type="number" id="p-minutes" min="0" step="1" value="15" style="width:90px"><span class="note">minutes apart. Use 0 to check every photo.</span></div>
-      <div class="row" id="w-nightly" hidden><span class="note">from</span><input type="time" id="p-after-n" value="20:00" style="width:auto"><span class="note">until it answers</span></div>
-      <div class="row" id="w-window" hidden><input type="time" id="p-after" value="21:00" style="width:auto"><span class="note">to</span><input type="time" id="p-until" value="22:00" style="width:auto"></div>
-
-      <div class="field"><span class="fl">What yes and no look like, from your own home</span>
-        <div class="drops">
-          <label class="drop" id="drop-yes"><span>Drop or choose<br>the <b>yes</b> photo</span><input type="file" accept="image/jpeg" id="f-yes"></label>
-          <label class="drop" id="drop-no"><span>Drop or choose<br>the <b>no</b> photo</span><input type="file" accept="image/jpeg" id="f-no"></label>
+      <div class="step">
+        <div class="shead"><span class="num">1</span><span class="stitle">Your question</span></div>
+        <div class="sbody">
+          <input type="text" id="p-text" placeholder="Did I take my night pills?" required>
+          <div class="ssub">Ask it the way you would say it out loud. Truss works out the rest from the words.</div>
+          <div class="opts">
+            <label class="rowline"><input type="radio" name="kind" value="state" checked><span class="radio"></span><span>How things are now, like whether the stove is off</span></label>
+            <label class="rowline"><input type="radio" name="kind" value="done"><span class="radio"></span><span>Something I did, like taking pills or feeding the dog</span></label>
+          </div>
         </div>
-        <div class="drops">
-          <button type="button" class="btn2" data-take="yes">Take yes with the glasses</button>
-          <button type="button" class="btn2" data-take="no">Take no with the glasses</button>
-        </div>
-        <span class="note">Look at the thing as it is when the answer is yes, press Take yes, then the same for no. The glasses send a view every few seconds while the phone is watching. Pills, the stove, and anything where a wrong answer would do harm need both photos.</span>
       </div>
 
-      <label class="row muted"><input type="checkbox" id="p-safety"> A wrong answer would do harm</label>
+      <div class="step">
+        <div class="shead"><span class="num">2</span><span class="stitle">Show what yes looks like</span></div>
+        <div class="sbody">
+          <div class="ssub">Take the photo through the glasses, or drop one in here. This photo is the look Truss compares against.</div>
+          <div class="drops">
+            <label class="drop" id="drop-yes"><span>Drop or choose<br>the <b>yes</b> photo</span><input type="file" accept="image/jpeg" id="f-yes"></label>
+            <label class="drop" id="drop-no"><span>Drop or choose<br>the <b>no</b> photo</span><input type="file" accept="image/jpeg" id="f-no"></label>
+          </div>
+          <div class="drops">
+            <button type="button" class="btn2" data-take="yes">Take yes with the glasses</button>
+            <button type="button" class="btn2" data-take="no">Take no with the glasses</button>
+          </div>
+          <div class="ssub">Look at the thing as it is when the answer is yes, press Take yes, then the same for no. The glasses send a view every few seconds while the phone is watching. Pills, the stove, and anything where a wrong answer would do harm need both photos.</div>
+        </div>
+      </div>
 
-      <label class="field" id="look-at-field" hidden><span class="fl">What to look at, if it is missed</span>
-        <input type="text" id="p-look" placeholder="the {weekday} PM compartment"></label>
+      <div class="step">
+        <div class="shead"><span class="num">3</span><span class="stitle">When should Truss watch for it?</span></div>
+        <div class="sbody">
+          <div class="field"><span class="fl">When</span>
+            <select id="p-when">
+              <option value="interval">Every few minutes</option>
+              <option value="nightly">Each night</option>
+              <option value="window">Between two times</option>
+            </select></div>
+          <div class="row" id="w-interval"><input type="number" id="p-minutes" min="0" step="1" value="15" style="width:90px"><span class="note">minutes apart. Use 0 to check every photo.</span></div>
+          <div class="row" id="w-nightly" hidden><span class="note">from</span><input type="time" id="p-after-n" value="20:00" style="width:auto"><span class="note">until it answers</span></div>
+          <div class="row" id="w-window" hidden><input type="time" id="p-after" value="21:00" style="width:auto"><span class="note">to</span><input type="time" id="p-until" value="22:00" style="width:auto"></div>
 
-      <div><button class="btn" type="submit" id="p-go">Start watching for me</button></div>
-      <div class="msg" id="p-msg" hidden></div>
+          <label class="rowline"><input type="checkbox" id="p-safety"><span class="check"></span><span>A wrong answer would do harm, so be extra careful with this one</span></label>
+
+          <label class="field" id="look-at-field" hidden><span class="fl">What to look at, if it is missed</span>
+            <input type="text" id="p-look" placeholder="the {weekday} PM compartment"></label>
+
+          <div><button class="btn" type="submit" id="p-go">Start watching for me</button></div>
+          <div class="msg" id="p-msg" hidden></div>
+        </div>
+      </div>
     </form>
 
     <details style="margin-top:28px">
@@ -204,40 +298,45 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
     </details>
   </div>
 
-  <!-- Guide: a named job, walked step by step -->
+  <!-- Watch me do this: a named job, walked step by step -->
   <div id="tab-guide" class="pane" hidden>
-    <form id="g-form" class="form" autocomplete="off">
+    <p class="intro">A guided task, one step at a time.<span class="soft">Truss writes the steps, speaks them one at a time in the glasses, and moves on when a photo shows a step is done. It never checks safety by eye: whether the stove is off, the pills are taken, or food is cooked through are questions to watch for instead. For cooking, use a probe thermometer, and Truss reads the number on it.</span></p>
+    <form id="g-form" class="ask" autocomplete="off">
       <label class="field"><span class="fl">Start a task</span>
         <input type="text" id="g-task" placeholder="Lock up for the night" maxlength="200" required></label>
-      <span class="note">Truss writes the steps, speaks them one at a time in the glasses, and moves on when a photo shows a step is done. It never checks safety by eye: whether the stove is off, the pills are taken, or food is cooked through are questions to watch for instead. For cooking, use a probe thermometer, and Truss reads the number on it.</span>
-      <div><button class="btn" type="submit" id="g-go">Start</button></div>
+      <div><button class="btn" type="submit" id="g-go">Write the steps</button></div>
       <div class="msg" id="g-msg" hidden></div>
     </form>
     <section id="g-run" hidden>
-      <div class="spread"><h2 id="g-title"></h2><span class="muted" id="g-step"></span></div>
-      <div id="g-steps"></div>
-      <div class="note" id="g-left" hidden></div>
-      <div class="row">
-        <button class="btn2" id="g-skip">Skip this step</button>
-        <button class="btn2" id="g-stop">Stop</button>
+      <h2>Running now</h2>
+      <div class="run">
+        <div class="spread"><span class="rtitle" id="g-title"></span><span class="muted" id="g-step"></span></div>
+        <div id="g-steps"></div>
+        <div class="leftout" id="g-left" hidden></div>
+        <div class="rfoot">
+          <button class="pillbtn plain" id="g-skip">Skip this step</button>
+          <button class="pillbtn stop" id="g-stop">Stop the task</button>
+        </div>
+        <div class="msg" id="g-run-msg" hidden></div>
       </div>
-      <div class="msg" id="g-run-msg" hidden></div>
     </section>
   </div>
 
-  <!-- Answers -->
+  <!-- History: the day's answers as one list, newest first -->
   <div id="tab-answers" class="pane" hidden>
     <section>
-      <div class="spread"><h2>History</h2><input type="date" id="day-pick" style="width:auto"></div>
+      <div class="dayrow"><div class="day" id="ans-day">Today</div>
+        <label class="daypick"><span>Pick a day</span><input type="date" id="day-pick" style="width:auto"></label></div>
+      <p class="summary" id="ans-intro"></p>
       <div id="answers"></div>
     </section>
   </div>
 
   <!-- Settings -->
   <div id="tab-settings" class="pane" hidden>
-    <div style="display:flex;flex-direction:column;gap:24px">
-      <section style="max-width:560px">
-        <h2>Who answers the checks</h2>
+    <div style="display:flex;flex-direction:column;gap:24px;max-width:560px">
+      <section class="card">
+        <h2 class="ctitle">Who answers the checks</h2>
         <div class="seg" role="radiogroup">
           <label><input type="radio" name="checker" value="endpoint"><span>Muse Spark</span></label>
         </div>
@@ -245,8 +344,8 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
         <div class="msg" id="s-checker-msg" hidden></div>
       </section>
 
-      <section class="block">
-        <div class="spread"><h2>Muse Spark</h2><span id="s-meta-state" class="muted"></span></div>
+      <section class="card">
+        <div class="spread"><h2 class="ctitle">Muse Spark</h2><span id="s-meta-state" class="muted"></span></div>
         <label class="field"><span class="fl">Meta Model API key</span>
           <input type="password" id="s-meta-key" autocomplete="off" spellcheck="false"></label>
         <div class="row">
@@ -257,8 +356,8 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
         <div class="msg" id="s-meta-msg" hidden></div>
       </section>
 
-      <section class="block">
-        <div class="spread"><h2>Aman</h2><span id="s-aman-state" class="muted"></span></div>
+      <section class="card">
+        <div class="spread"><h2 class="ctitle">Aman</h2><span id="s-aman-state" class="muted"></span></div>
         <label class="field"><span class="fl">Address</span>
           <input type="text" id="s-aman-base" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:8791"></label>
         <label class="field"><span class="fl">Sign-in token</span>
@@ -272,7 +371,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
         <div class="msg" id="s-aman-msg" hidden></div>
       </section>
 
-      <p class="note" style="margin:0;max-width:560px" id="s-where">Keys stay on this Mac, in a file only you can read. They are never shown again or sent anywhere.</p>
+      <p class="note" style="margin:0" id="s-where">Keys stay on this Mac, in a file only you can read. They are never shown again or sent anywhere.</p>
     </div>
   </div>
 </div>
@@ -415,10 +514,10 @@ function renderBanners() {
   if (STATUS && STATUS.unreachable) out.push("Cannot reach Truss on this computer.");
   else if (STATUS && STATUS.config_error && STATUS.checker !== "aman") out.push(`Truss cannot answer any checks yet. ${STATUS.config_error} Add the Meta Model API key in Settings.`);
   if (STATUS && STATUS.checker === "aman") out.push("Checks are being answered by Aman, not the Muse API. You can switch in Settings.");
-  const banners = out.map((t) => `<div class="banner">${esc(t)}</div>`);
+  const banners = out.map((t) => `<div class="banner"><span class="mark">●</span><div>${esc(t)}</div></div>`);
   ALERTS.forEach((a) => {
-    if (a.headline && a.note) banners.push(`<div class="banner"><div>${esc(a.headline)}</div><div class="bnote">${esc(a.note)}</div></div>`);
-    else banners.push(`<div class="banner">${esc(`${a.line} The phone will say so next.`)}</div>`);
+    if (a.headline && a.note) banners.push(`<div class="banner"><span class="mark">●</span><div><div class="bhead">${esc(a.headline)}</div><div class="bnote">${esc(a.note)}</div></div></div>`);
+    else banners.push(`<div class="banner"><span class="mark">●</span><div>${esc(`${a.line} The phone will say so next.`)}</div></div>`);
   });
   $("banners").innerHTML = banners.join("");
 }
@@ -443,45 +542,127 @@ const SAMPLE = [
    fill: {text: "Did I take my night pills?", kind: "done", when: "window", after: "21:00", until: "22:00", safety: true, look: "the {weekday} PM compartment"}},
 ];
 const norm = (t) => String(t || "").trim().toLowerCase();
+const answeredQ = (q) => q.state === "answered" || (q.kind === "done" && !!q.witness_time);
+
+// The day in one line: how much of what is minded has been seen, and
+// what is still open. A question whose window closed unseen counts as
+// still being watched; it is minded again tomorrow.
+function renderSummary(live) {
+  const el = $("summary");
+  if (!live.length) { el.hidden = true; return; }
+  const seen = live.filter(answeredQ).length;
+  const needs = live.filter((q) => q.state === "planting").length;
+  const watching = live.length - seen - needs;
+  const soft = [];
+  if (watching) soft.push(`${watching} ${watching === 1 ? "is" : "are"} still being watched.`);
+  if (needs) soft.push(`${needs} still need${needs === 1 ? "s" : ""} ${needs === 1 ? "its" : "their"} photos.`);
+  if (!watching && !needs) soft.push("Nothing else needs you.");
+  el.hidden = false;
+  el.innerHTML = `Today so far, Truss has seen ${seen} of the ${live.length} thing${live.length === 1 ? "" : "s"} it is minding.<span class="soft">${soft.join(" ")}</span>`;
+}
 
 function renderDay() {
   const live = QUESTIONS.filter((q) => q.state !== "retired");
   const stopped = QUESTIONS.filter((q) => q.state === "retired");
-  const sampleTime = new Map();
-  SAMPLE.forEach((s) => s.texts.forEach((t) => sampleTime.set(norm(t), s.time)));
   const byText = new Map(live.map((q) => [norm(q.question), q]));
 
-  const rows = [];
-  live.forEach((q) => {
-    const t = (q.pattern && q.pattern.after) ? clock(q.pattern.after) : (sampleTime.get(norm(q.question)) || "");
-    rows.push({at: t ? minutesOf(t) : -1, html: questionRow(q, t || "")});
+  renderSummary(live);
+
+  // A question the seen timeline already tells the story of does not
+  // repeat as a card. When the timeline has not loaded, every live
+  // question stays a card, so nothing is ever lost from the page.
+  const cards = live.filter((q) => !(answeredQ(q) && SEEN_SIGHTS && SEEN_SIGHTS.has(norm(q.question))));
+  const groups = new Map();
+  cards.forEach((q) => {
+    const g = dayPart(q);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(q);
+  });
+  const parts = [];
+  ["This morning", "This afternoon", "This evening", "Tonight", "All day"].forEach((g) => {
+    if (!groups.has(g)) return;
+    const qs = groups.get(g).slice().sort((a, b) => minutesOf((a.pattern && a.pattern.after) || "") - minutesOf((b.pattern && b.pattern.after) || ""));
+    parts.push(`<p class="group">${g}</p><div class="cards">${qs.map((q) => questionCard(q)).join("")}</div>`);
   });
   SAMPLE.forEach((s, i) => {
     if (s.texts.every((t) => byText.has(norm(t)))) return;
-    rows.push({at: minutesOf(s.time) + 0.5, html:
-      `<div class="line sample"><span class="t">${esc(s.time)}</span><div><div class="qt">${esc(s.name)}</div><div class="sub">Sample · ${esc(s.hint)}</div></div><button class="link" data-step="${i}">Start</button></div>`});
+    parts.push({sample: true, html:
+      `<div class="card"><div class="cq">${esc(s.name)}</div><div class="csub">${esc(s.hint)}</div><div class="cfoot" style="justify-content:flex-end"><button class="startbtn" data-step="${i}">Start</button></div></div>`});
   });
-  rows.sort((a, b) => a.at - b.at);
-  $("day").innerHTML = rows.map((r) => r.html).join("") ||
+  const sampleCards = parts.filter((p) => typeof p !== "string");
+  const groupHtml = parts.filter((p) => typeof p === "string");
+  $("day").innerHTML = (groupHtml.join("") +
+    (sampleCards.length ? `<p class="group">Ideas to try</p><div class="cards">${sampleCards.map((p) => p.html).join("")}</div>` : "")) ||
     `<div class="empty">Nothing is watched yet.</div>`;
   $("count").textContent = live.length ? `${live.length} question${live.length === 1 ? "" : "s"}` : "";
   $("stopped").innerHTML = stopped.length
-    ? `<details style="margin-top:12px"><summary class="note" style="font-weight:500">${stopped.length} stopped questions</summary>${stopped.map((q) => questionRow(q, "")).join("")}</details>`
+    ? `<details style="margin-top:12px"><summary class="note" style="font-weight:500">${stopped.length} stopped questions</summary>${stopped.map((q) => lineRow(q)).join("")}</details>`
     : "";
 }
-function questionRow(q, time) {
+// Which part of the day a question belongs to, from the start of its
+// window; one checked against every photo belongs to the whole day.
+function dayPart(q) {
+  const p = q.pattern;
+  if (p && (p.kind === "window" || p.kind === "nightly") && p.after) {
+    const m = minutesOf(p.after);
+    if (m >= 300 && m < 720) return "This morning";
+    if (m >= 720 && m < 1020) return "This afternoon";
+    if (m >= 1020 && m < 1260) return "This evening";
+    return "Tonight";
+  }
+  return "All day";
+}
+function questionCard(q) {
   const [word, cls] = stateText(q);
-  // A question that already has its answer carries the row with the
+  // A question that already has its answer carries the card with the
   // answer alone; its schedule line is dropped.
-  const answered = q.state === "answered" || (q.kind === "done" && !!q.witness_time);
-  const bits = answered ? [] : [whenText(q.pattern)];
+  const bits = answeredQ(q) ? [] : [whenText(q.pattern)];
   if (q.state === "planting") bits.push(q.has_ref_yes ? "Yes photo added" : q.has_ref_no ? "No photo added" : "");
-  const stop = q.state === "retired" ? "" : ` · <button class="link quiet" data-retire="${esc(q.slug)}">Stop</button>`;
+  const pill = cls === "live" || cls === "yes" ? "chip slate" : cls === "warn" ? "chip clay" : "chip";
+  const stop = q.state === "retired" ? "" : `<button class="pillstop" data-retire="${esc(q.slug)}">Stop</button>`;
   // A question still planting takes its looks right here.
   const add = q.state !== "planting" ? "" : `<div class="row" style="margin-top:8px">` +
     ["yes", "no"].map((k) => `<label class="btn2">${(k === "yes" ? q.has_ref_yes : q.has_ref_no) ? "Replace" : "Choose"} ${k} photo<input type="file" accept="image/jpeg" data-look="${k}" data-slug="${esc(q.slug)}" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label>`).join("") +
     ["yes", "no"].map((k) => `<button class="btn2" data-glasses="${k}" data-slug="${esc(q.slug)}">Take ${k} with the glasses</button>`).join("") + `</div>`;
-  return `<div class="line"><span class="t">${esc(time)}</span><div><div class="qt">${esc(q.question)}</div><div class="sub">${esc(bits.filter(Boolean).join(" · "))}${stop}</div>${add}</div><span class="st ${cls}">${esc(word)}</span></div>`;
+  const sub = bits.filter(Boolean).join(" · ");
+  return `<div class="card"><div class="cq">${esc(q.question)}</div>${sub ? `<div class="csub">${esc(sub)}</div>` : ""}${add}<div class="cfoot"><span class="${pill}">${esc(word)}</span>${stop}</div></div>`;
+}
+function lineRow(q) {
+  const [word, cls] = stateText(q);
+  const bits = answeredQ(q) ? [] : [whenText(q.pattern)];
+  return `<div class="line"><span class="t"></span><div><div class="qt">${esc(q.question)}</div><div class="sub">${esc(bits.filter(Boolean).join(" · "))}</div></div><span class="st ${cls}">${esc(word)}</span></div>`;
+}
+
+// One timeline row, shared by Today's seen list and History: the
+// photo, the time, the question, the one plain sentence the answer
+// kept, and its chip.
+function eventRow(a, day, chipWord, chipCls, story) {
+  const img = a.evidence
+    ? `<a href="/evidence?day=${encodeURIComponent(day)}&name=${encodeURIComponent(a.evidence)}" target="_blank" rel="noopener"><img loading="lazy" alt="Evidence photo" src="/evidence?day=${encodeURIComponent(day)}&name=${encodeURIComponent(a.evidence)}"></a>`
+    : `<div class="ph"></div>`;
+  return `<div class="event${story ? " story" : ""}"><span class="etime">${esc(clock(a.time.slice(0, 5)))}</span>${img}<div class="emain"><div class="eq">${esc(a.question)}</div><div class="esub">${esc(a.text)}</div></div>${chipWord ? `<span class="${chipCls}">${esc(chipWord)}</span>` : ""}</div>`;
+}
+
+// Today's sightings, read from the same answers the History page
+// shows. Only real sightings belong here: an answer, or a state
+// checked after its window closed. A failed read leaves the section
+// out and keeps every question in the cards below.
+let SEEN = null;
+let SEEN_SIGHTS = null;
+let SEEN_SIG = "";
+async function loadSeen() {
+  try { SEEN = await getJSON("/answers"); } catch (e) { SEEN = null; }
+  renderSeen();
+}
+function renderSeen() {
+  if (!SEEN) { SEEN_SIGHTS = null; $("seen").innerHTML = ""; return; }
+  const rows = (SEEN.answers || []).filter((a) => a.kind === "answer" || a.kind === "state_check");
+  SEEN_SIGHTS = rows.length ? new Set(rows.map((a) => norm(a.question))) : null;
+  $("seen").innerHTML = rows.length
+    ? `<h2>What Truss has seen today</h2>` + rows.map((a) => eventRow(a, SEEN.day, "Seen", "chip slate", false)).join("")
+    : "";
+  const sig = SEEN_SIGHTS ? [...SEEN_SIGHTS].sort().join("|") : "";
+  if (sig !== SEEN_SIG) { SEEN_SIG = sig; if (QUESTIONS.length) renderDay(); }
 }
 
 $("tab-today").addEventListener("click", async (ev) => {
@@ -552,13 +733,15 @@ async function loadAnswers() {
   const day = $("day-pick").value;
   try {
     const r = await getJSON(`/answers${day ? `?day=${encodeURIComponent(day)}` : ""}`);
+    const isToday = !!(STATUS && STATUS.now && r.day === STATUS.now.slice(0, 10));
+    $("ans-day").textContent = isToday ? "Today" : new Date(`${r.day}T12:00:00`).toLocaleDateString([], {weekday: "long", month: "long", day: "numeric"});
+    $("ans-intro").innerHTML = `Everything Truss saw ${isToday ? "today" : "that day"}, in one list.<span class="soft">Each thing appears once, with its photo.</span>`;
     if (!r.answers.length) { $("answers").innerHTML = `<div class="empty">No answers on this day.</div>`; return; }
+    // The server returns the day newest first; each answer appears
+    // once, with whether it was said out loud carried in its line.
     $("answers").innerHTML = r.answers.map((a) => {
-      const img = a.evidence
-        ? `<a href="/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(a.evidence)}" target="_blank" rel="noopener"><img loading="lazy" alt="Evidence photo" src="/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(a.evidence)}"></a>`
-        : `<div class="ph"></div>`;
-      const kind = {answer: "Yes", redo: "Reminder", cannot_tell: "Can't tell", state_check: "Checked late"}[a.kind] || "";
-      return `<div class="ans">${img}<div><div style="font-weight:600;font-size:14px">${esc(a.question)}</div><div>${esc(kind)} at ${esc(clock(a.time.slice(0, 5)))}</div><div class="muted">${esc(a.text)}</div></div></div>`;
+      const chip = {answer: ["Seen", "chip slate"], redo: ["Reminder", "chip clay"], cannot_tell: ["Couldn't tell", "chip"], state_check: ["Checked late", "chip clay"]}[a.kind];
+      return eventRow(a, r.day, chip ? chip[0] : "", chip ? chip[1] : "chip", a.kind === "redo" || a.kind === "state_check");
     }).join("");
   } catch (e) { $("answers").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
 }
@@ -922,8 +1105,8 @@ function renderGuide() {
   const steps = GUIDE.steps || [];
   $("g-steps").innerHTML = steps.map((q, i) => {
     const n = i + 1;
-    const word = n < GUIDE.step ? ["Done", "yes"] : n === GUIDE.step ? ["Now", "live"] : ["", ""];
-    return `<div class="line"><span class="t">Step ${n}</span><div><div class="qt"${n === GUIDE.step ? "" : ' style="font-weight:500;color:var(--muted)"'}>${esc(q)}</div></div><span class="st ${word[1]}">${esc(word[0])}</span></div>`;
+    const chip = n < GUIDE.step ? `<span class="chip slate">Done</span>` : n === GUIDE.step ? `<span class="chip">Now</span>` : "";
+    return `<div class="gstep${n < GUIDE.step ? " done" : n === GUIDE.step ? " now" : ""}"><span class="snum">Step ${n}</span><span class="gstext">${esc(q)}</span>${chip}</div>`;
   }).join("");
   $("g-left").hidden = !GUIDE_LEFT.length;
   $("g-left").textContent = GUIDE_LEFT.length ? `Left out, because Truss cannot check them by eye: ${GUIDE_LEFT.join("; ")}.` : "";
@@ -982,7 +1165,7 @@ function playNext() {
 function drawFeed() {
   const lines = FEED_LINES.slice().reverse();
   $("l-said").innerHTML = lines.length
-    ? lines.map((l, i) => `<div class="said${i === 0 ? " new" : ""}"><span class="t">${esc(new Date(l.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}))}</span><span class="qt">${esc(l.text)}</span><span></span></div>`).join("")
+    ? lines.map((l, i) => `<div class="said${i === 0 ? " new" : ""}"><span class="t">${esc(new Date(l.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}))}</span><span class="qt">${esc(l.text)}</span></div>`).join("")
     : `<div class="empty">Nothing said yet. Lines appear here the moment the glasses speak them.</div>`;
 }
 async function loadFeed() {
@@ -1030,6 +1213,7 @@ function refresh() {
   loadPhone();
   loadQuestions();
   loadAlerts();
+  loadSeen();
   if (TAB === "guide") loadGuide();
   if (TAB === "answers") loadAnswers();
   if (TAB === "settings") loadSettings();
@@ -1038,7 +1222,7 @@ function refresh() {
 syncForm();
 if (location.hash === "#live") TAB = "live";
 loadStatus().then(() => { openTab(TAB); });
-setInterval(() => { loadQuestions(); loadAlerts(); }, 15000);
+setInterval(() => { loadQuestions(); loadAlerts(); loadSeen(); }, 15000);
 // A tab in the background has its timers slowed to once a minute by the
 // browser; catch up the moment it is looked at again.
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
