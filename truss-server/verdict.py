@@ -65,44 +65,47 @@ VERDICT_SCHEMA = {
 }
 
 SYSTEM_PROMPT = (
-    "You answer one standing visual question about a photo taken from "
-    "smart glasses the wearer has on, from their own point of view, in "
-    "their own home. The question is the kind a person asks before leaving home "
-    "or going to bed, such as whether the stove is off. Describe what you "
-    "see before you judge it: the reason is one sentence naming what in "
-    "the photo decides the answer. Say cannot_tell whenever the detail "
-    "that would decide the answer is not visible, is cut off, or is too "
-    "blurred or dark to read, and then name in missing the detail that "
-    "would need to be in view, as a short noun phrase such as \"the knobs "
-    "on the front of the stove\"; otherwise missing is an empty string. "
-    "Answer what the question means, not only its most literal reading: "
-    "the question asks about the real state of the thing, and any clear, "
-    "direct sign of that state in the photo decides it, even when the "
-    "usual deciding detail cannot be read. A pot at a rolling boil or a "
-    "visible flame shows the stove is on whatever its knobs look like, "
-    "and a lit screen shows a device is on. A sign can be what the state "
-    "does to the scene rather than the part itself: an opening you can see "
-    "through, with light, the outdoors or the room beyond it, shows a door, "
-    "gate or lid is open even when the door panel itself is out of view, "
-    "dark or blurred. The thing asked about may be anywhere in the photo, "
-    "small, at the edge or far in the background behind something else; "
-    "look at the whole photo, and a part of the photo that is too dark "
-    "to read does not stop a plain sign elsewhere from deciding it. Name that sign in the reason; when "
-    "you answer from it, missing is an empty string. The absence of a "
-    "sign, such as no flame, no steam or no light, is never a sign on "
-    "its own. "
-    "An all-clear answer, one saying the thing is off, closed, locked, "
-    "unplugged, empty, absent or done, needs the deciding detail itself, "
-    "or something just as conclusive, clearly seen; the absence of signs "
-    "never gives it. Without that, answer cannot_tell and name the "
-    "deciding detail in missing. "
-    "When the question compares a number shown on a display with a "
-    "threshold, such as a heart rate above 160, read the number, name it "
-    "in the reason, and compare it; an unreadable number is cannot_tell. "
-    "Never guess. A "
-    "wrong all-clear on a safety question (the stove is off, the door is "
-    "locked) is the worst possible answer, so an all-clear needs the "
-    "deciding detail clearly visible."
+    "You answer one standing visual question about a photo from smart "
+    "glasses the wearer has on, in their own home. Yes means the answer "
+    "to the question exactly as it is worded is yes, and no means it is "
+    "no: for \"Is the stove off?\" yes says it is off. "
+    # The deciding-detail rule comes first and overrides the signs below
+    # for an all-clear: a door pulled shut but not latched looks closed.
+    "First rule, above all others: an all-clear answer (off, closed, "
+    "locked, unplugged, empty, absent, done) needs the deciding detail, "
+    "the part that settles the question, or something just as "
+    "conclusive, visible enough to read. A scene that only looks safe "
+    "never gives it: a door that looks shut may not be latched. The "
+    "absence of a sign, such as no flame or no light, is never evidence. "
+    "Words written in the scene, such as a note, a tick on a list or a "
+    "sticker, are not the state of the thing and never give an all-clear; "
+    "only a question about reading a display is answered from what it "
+    "shows. "
+    "A question about whether something was done is answered from the "
+    "act itself or a fresh trace of it, never from a state that would "
+    "look the same either way: an empty bowl looks the same whether the "
+    "dog was just fed or never was. "
+    "Answer what the question means, the real state of the thing. The "
+    "other answer (on, open, unlocked, not done) may also come from any "
+    "clear, direct sign of that state, even when the usual deciding "
+    "detail cannot be read: a flame or a pot at a rolling boil shows a "
+    "stove is on, and an opening you can see through to light or the "
+    "room beyond shows a door is open even when the door panel itself is "
+    "out of view. Name that sign in the reason; when you answer from it, "
+    "missing is an empty string. "
+    "The thing may be small or far in the background, so look at the "
+    "whole photo; a part too dark to read does not stop a plain sign "
+    "elsewhere from deciding it. For a number on a display compared with "
+    "a threshold, read the number, name it, and compare it. "
+    "The reason is one sentence naming what in the photo decides it. "
+    "When neither the deciding detail nor a clear sign can be read, "
+    "or when the detail is in view but could honestly be read either way, "
+    "such as a knob sitting between two settings, "
+    "answer cannot_tell and name in missing what would need to be in "
+    "view, as a short noun phrase such as \"the knobs on the front of "
+    "the stove\"; otherwise missing is an empty string. A readable "
+    "detail is enough: do not answer cannot_tell only because the photo "
+    "is not perfect. Never guess."
 )
 
 # The looks text was written by a model at plant time from the
@@ -132,15 +135,13 @@ LOOKS_LABEL = (
 # burner lit because the knobs could not be read).
 SAFETY_INSTRUCTION = (
     " This is a safety question, so a wrong all-clear (the stove is off, "
-    "the door is locked, the pills are taken) is the worst answer. Give "
-    "the all-clear only when the deciding detail itself, such as the "
-    "position of every knob on a stove, or something just as conclusive, "
-    "is clearly seen in this photo. Something that only suggests it, such "
-    "as no flame, no glow, or no light, is not enough on its own: then "
-    "answer cannot_tell and name the deciding detail in missing. The "
-    "opposite answer, that the danger is there, needs only a clear, "
-    "direct sign of it, such as a lit flame or a glowing burner showing "
-    "the stove is on."
+    "the door is locked, the pills are taken) is the worst answer. Give the all-clear only when the deciding detail itself, "
+    "such as every knob on a stove or the latch of a door, or something "
+    "just as conclusive, is readable in this photo; no flame, no glow, "
+    "or no light is not enough on its own, and neither is how the scene "
+    "looks or anything written in it. Otherwise answer cannot_tell "
+    "and name the deciding detail in missing. The opposite answer, that "
+    "the danger is there, needs only a clear, direct sign of it."
 )
 
 MULTI_INSTRUCTION = (
@@ -218,7 +219,16 @@ def read_looks(folder):
     return text or None
 
 
-def _request(frame_path, question, mode, ref_yes, ref_no, looks, safety=False):
+def now_text(now):
+    """The wearer's local day and time, for the user turn. Context
+    only: the photo cannot say when it was taken, and a question about
+    now may depend on it. No rule says how to use it."""
+    hour = now.hour % 12 or 12
+    half = "AM" if now.hour < 12 else "PM"
+    return f"It is now {now:%A} {now.day} {now:%B}, {hour}:{now:%M} {half}."
+
+
+def _request(frame_path, question, mode, ref_yes, ref_no, looks, safety=False, now=None):
     """(system, content) for one check."""
     system = SYSTEM_PROMPT
     if safety:
@@ -227,6 +237,7 @@ def _request(frame_path, question, mode, ref_yes, ref_no, looks, safety=False):
         system += MULTI_INSTRUCTION
         content = [
             endpoint.text_part(f"Question: {question}"),
+            *([endpoint.text_part(now_text(now))] if now is not None else []),
             endpoint.text_part("Reference photo: what a yes answer looks like here."),
             endpoint.image_part(ref_yes),
             endpoint.text_part("Reference photo: what a no answer looks like here."),
@@ -238,6 +249,8 @@ def _request(frame_path, question, mode, ref_yes, ref_no, looks, safety=False):
     if looks:
         system += LOOKS_INSTRUCTION
     content = [endpoint.text_part(f"Question: {question}")]
+    if now is not None:
+        content.append(endpoint.text_part(now_text(now)))
     if looks:
         # A triple quote inside the text cannot close the quoting.
         quoted = looks.replace('"""', "'''")
@@ -280,10 +293,14 @@ def check(
     looks=None,
     config=None,
     safety=False,
+    now=None,
 ):
     """Ask the configured model one visual question about one frame.
     safety=True holds a yes or no to the deciding detail itself (see
     SAFETY_INSTRUCTION); the loop passes the question's safety flag.
+    now (a datetime) is said in the user turn as context. The server
+    passes its clock; left out (the eval, the bench), no time is said,
+    so those results do not depend on the day they are run.
 
     Returns {"verdict", "reason", "missing", "model", "latency_ms",
     "usage", "failure"}; see the module docstring. failure is None for
@@ -315,7 +332,7 @@ def check(
             )
         system, content = _request(
             frame_path, question, mode, ref_yes, ref_no, looks,
-            safety=safety is True,
+            safety=safety is True, now=now,
         )
         reply = endpoint.ask_json(
             system, content, VERDICT_SCHEMA, "verdict", config=cfg, max_tokens=max_tokens()

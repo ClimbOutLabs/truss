@@ -198,6 +198,7 @@ def production_check(frame_path, entry):
         ref_no=ref_no,
         looks=verdict.read_looks(Path(entry["ref_yes_path"]).parent),
         safety=entry.get("safety") is True,
+        now=CLOCK(),
     )
 
 
@@ -275,7 +276,7 @@ def guide_check(frame_path, question_text):
     looks, so the check is the frame and the step's question alone."""
     if CHECKER == "aman":
         return aman_check.check(frame_path, question_text)
-    return verdict.check(frame_path, question_text, mode=CHECK_MODE)
+    return verdict.check(frame_path, question_text, mode=CHECK_MODE, now=CLOCK())
 
 
 # The refusal (see checkloop.REFUSAL_TEMPLATES): a safety question's
