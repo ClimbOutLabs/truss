@@ -209,7 +209,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
     <form id="g-form" class="form" autocomplete="off">
       <label class="field"><span class="fl">Start a task</span>
         <input type="text" id="g-task" placeholder="Lock up for the night" maxlength="200" required></label>
-      <span class="note">Truss writes the steps, speaks them one at a time in the glasses, and moves on when a photo shows a step is done. It never checks safety by eye: whether the stove is off, the pills are taken, or food is cooked through are questions to plant instead. For cooking, use a probe thermometer, and Truss reads the number on it.</span>
+      <span class="note">Truss writes the steps, speaks them one at a time in the glasses, and moves on when a photo shows a step is done. It never checks safety by eye: whether the stove is off, the pills are taken, or food is cooked through are questions to watch for instead. For cooking, use a probe thermometer, and Truss reads the number on it.</span>
       <div><button class="btn" type="submit" id="g-go">Start</button></div>
       <div class="msg" id="g-msg" hidden></div>
     </form>
@@ -519,11 +519,11 @@ $("tab-today").addEventListener("click", async (ev) => {
   if (!b) return;
   const t = SAMPLE[Number(b.dataset.step)];
   if (t.round) {
-    showMsg("msg-today", "Planting the bedtime round…");
+    showMsg("msg-today", "Starting the bedtime round…");
     try {
       const r = await postJSON("/plant/bedtime", {});
       const notes = (r.notes || []).join(" ");
-      showMsg("msg-today", `Planted: ${r.questions.join(", ")}. Each still needs its yes and no looks: add them below. ${notes}`);
+      showMsg("msg-today", `Started: ${r.questions.join(", ")}. Each still needs its yes and no looks: add them below. ${notes}`);
     } catch (e) { showMsg("msg-today", e.message, true); }
     loadQuestions();
     return;
@@ -826,7 +826,7 @@ $("phone-go").addEventListener("click", async () => {
   const start = $("phone-go").dataset.on !== "0";
   if (start) {
     const live = QUESTIONS.filter((q) => q.state !== "retired" && q.state !== "planting").length;
-    if (!live) { openTab("today"); showMsg("msg-today", "Nothing is planted yet. Go to Watch for me and ask a question, or pick one of the samples below.", true); return; }
+    if (!live) { openTab("today"); showMsg("msg-today", "Nothing is being watched yet. Go to Watch for me and ask a question, or pick one of the samples below.", true); return; }
   }
   $("phone-go").disabled = true;
   const said = await askPhone(start);
