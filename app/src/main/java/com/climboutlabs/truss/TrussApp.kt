@@ -1043,7 +1043,7 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
     if (!state.historyBusy && state.history.isEmpty()) {
       Surface {
         Text(
-            "No answers yet today. When Mannie sees an answer, the answer and its photo " +
+            "No answers yet today. When Truss sees an answer, the answer and its photo " +
                 "are kept here, so you can check what was seen.",
             style = MaterialTheme.typography.bodyMedium,
             color = Truss.muted,
