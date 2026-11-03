@@ -696,6 +696,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value.captureMode == CaptureMode.LIVE
         if (stayOpen) {
           photoLog("The laptop is reachable with the session open, so the session stays open.")
+          // Held for Stop, which ends it at once instead of after the upload and checks.
+          heldCamera = activeCamera
+          heldSession = activeSession
+          if (watchStopAsked) releaseHeldSession("watching was stopped")
         } else {
           // Step 4: leave. Stopping the camera and the session is the toolkit's disconnect;
           // there is no separate Wi-Fi leave call in 1.0.1.
@@ -793,6 +797,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         }
       }
     } finally {
+      heldCamera = null
+      heldSession = null
       errorWatch?.cancel()
       runCatching { camera?.close() }
       runCatching { session?.stop() }
@@ -1421,7 +1427,30 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     watchStopAsked = true
     holdYield = true
     _uiState.update { it.copy(watching = false, deskStartPending = false) }
+    // A Live view session held open across looks ends now, not once the photo
+    // in flight has been checked; that upload and any answer still finish.
+    releaseHeldSession("watching was stopped")
     if (!watchCapturing) watchJob?.cancel()
+  }
+
+  /** The camera and session a Live view capture is holding open between looks, if any. */
+  @Volatile private var heldCamera: com.meta.wearable.dat.camera.Camera? = null
+  @Volatile private var heldSession: com.meta.wearable.dat.core.session.DeviceSession? = null
+
+  /** End a held Live view session at once. The capture's own stops and its finally
+   * run later as well; stopping twice does nothing. */
+  private fun releaseHeldSession(why: String) {
+    val heldCam = heldCamera
+    val heldSes = heldSession
+    if (heldCam == null && heldSes == null) return
+    heldCamera = null
+    heldSession = null
+    viewModelScope.launch {
+      runCatching { heldCam?.stop() }
+      runCatching { heldSes?.stop() }
+      _uiState.update { it.copy(streamActive = false) }
+      photoLog("Left the glasses session at once, because $why.")
+    }
   }
 
   // MARK: - Start and stop from the Desk
