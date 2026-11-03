@@ -773,7 +773,7 @@ $("r-go").addEventListener("click", async () => {
     const r = await postImage("/capture", REPLAY);
     const secs = ((Date.now() - started) / 1000).toFixed(1);
     const said = (r.speak || []).filter(Boolean);
-    if (said.length) showMsg("r-msg", `Recorded as a sighting (${secs} seconds). Mannie said: “${said.join(" ")}”`);
+    if (said.length) showMsg("r-msg", `Recorded as a sighting (${secs} seconds). The voice in the glasses said: “${said.join(" ")}”`);
     else if (r.guide) showMsg("r-msg", `A guided task is running, so the photo went to it (${secs} seconds). Nothing to say.`);
     else showMsg("r-msg", `That photo did not answer any question (${secs} seconds), so it was not kept.`);
   } catch (e) {
