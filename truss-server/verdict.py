@@ -47,6 +47,7 @@ cannot_tell whose reason says no check was made.
 
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
 import endpoint
@@ -178,7 +179,17 @@ def read_looks(folder):
     return text or None
 
 
-def _request(frame_path, question, mode, ref_yes, ref_no, looks, safety=False):
+def now_text(now=None):
+    """The wearer's local day and time, for the user turn. Context
+    only: the photo cannot say when it was taken, and a question about
+    now may depend on it. No rule says how to use it."""
+    now = now or datetime.now()
+    hour = now.hour % 12 or 12
+    half = "AM" if now.hour < 12 else "PM"
+    return f"It is now {now:%A} {now.day} {now:%B}, {hour}:{now:%M} {half}."
+
+
+def _request(frame_path, question, mode, ref_yes, ref_no, looks, safety=False, now=None):
     """(system, content) for one check."""
     system = SYSTEM_PROMPT
     if safety:
@@ -187,6 +198,7 @@ def _request(frame_path, question, mode, ref_yes, ref_no, looks, safety=False):
         system += MULTI_INSTRUCTION
         content = [
             endpoint.text_part(f"Question: {question}"),
+            endpoint.text_part(now_text(now)),
             endpoint.text_part("Reference photo: what a yes answer looks like here."),
             endpoint.image_part(ref_yes),
             endpoint.text_part("Reference photo: what a no answer looks like here."),
@@ -197,7 +209,7 @@ def _request(frame_path, question, mode, ref_yes, ref_no, looks, safety=False):
         return system, content
     if looks:
         system += LOOKS_INSTRUCTION
-    content = [endpoint.text_part(f"Question: {question}")]
+    content = [endpoint.text_part(f"Question: {question}"), endpoint.text_part(now_text(now))]
     if looks:
         # A triple quote inside the text cannot close the quoting.
         quoted = looks.replace('"""', "'''")
@@ -219,10 +231,13 @@ def check(
     looks=None,
     config=None,
     safety=False,
+    now=None,
 ):
     """Ask the configured model one visual question about one frame.
     safety=True holds a yes or no to the deciding detail itself (see
     SAFETY_INSTRUCTION); the loop passes the question's safety flag.
+    now (a datetime, default the local time) is said in the user turn
+    as context.
 
     Returns {"verdict", "reason", "missing", "model", "latency_ms",
     "usage", "failure"}; see the module docstring. failure is None for
@@ -254,7 +269,7 @@ def check(
             )
         system, content = _request(
             frame_path, question, mode, ref_yes, ref_no, looks,
-            safety=safety is True,
+            safety=safety is True, now=now,
         )
         reply = endpoint.ask_json(
             system, content, VERDICT_SCHEMA, "verdict", config=cfg, max_tokens=max_tokens()

@@ -187,6 +187,27 @@ def test_the_review_gaps_are_closed():
           "anything written in it" in s)
 
 
+def test_the_check_knows_the_local_time():
+    # Nov 3 live run: a weekly AM/PM pill organizer read "not taken"
+    # from the SUN compartment on a Tuesday. The fix is context, not a
+    # rule: the check is told the day and time, and the prompt carries
+    # no organizer, slot or AM/PM rule of its own.
+    from datetime import datetime
+    tuesday = datetime(2026, 11, 3, 7, 5)
+    check("now text names the weekday, date and time",
+          verdict.now_text(tuesday) == "It is now Tuesday 3 November, 7:05 AM.")
+    check("now text: afternoon and midnight",
+          verdict.now_text(datetime(2026, 11, 3, 21, 30)).endswith("9:30 PM.")
+          and verdict.now_text(datetime(2026, 11, 3, 0, 15)).endswith("12:15 AM."))
+    with StubModel([{"verdict": "no", "reason": "Today's compartment is full.", "missing": ""}]) as stub:
+        verdict.check(FRAME, "Did I take my night pills?", config=cfg(stub), now=tuesday, looks=LOOKS)
+    check("the check says the day and time",
+          "It is now Tuesday 3 November, 7:05 AM." in str(stub.body()["messages"][1]["content"]))
+    p = verdict.SYSTEM_PROMPT.lower()
+    check("no scenario rule in the prompt",
+          not any(w in p for w in ("organizer", "slot", "weekday", " am ", " pm ")))
+
+
 if __name__ == "__main__":
     test_no_question_gets_its_own_rule()
     test_prompt_asks_for_the_intent()
@@ -199,4 +220,5 @@ if __name__ == "__main__":
     test_compile_names_the_usual_detail_not_the_only_one()
     test_the_deciding_detail_rule_comes_first()
     test_the_review_gaps_are_closed()
+    test_the_check_knows_the_local_time()
     print("ALL PASS")
