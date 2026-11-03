@@ -84,6 +84,11 @@ details{border-top:1px solid var(--line);padding-top:16px;max-width:560px}
 summary{cursor:pointer;font-weight:600;font-size:14px}
 .block{border-top:1px solid var(--line);padding-top:24px;max-width:560px}
 .okt{color:var(--ok);font-weight:500} .badt{color:var(--on-apricot);font-weight:500}
+/* live */
+.view{width:100%;max-width:560px;aspect-ratio:4/3;object-fit:cover;border-radius:12px;background:var(--sage);display:block}
+.said{display:grid;grid-template-columns:76px minmax(0,1fr) auto;gap:16px;align-items:baseline;padding:14px 0;border-top:1px solid var(--line)}
+.said .qt{font-weight:500}
+.said.new .qt{font-weight:600}
 [hidden]{display:none!important}
 .checking{font-size:13px;color:var(--muted);margin:-8px 0 16px}
 </style>
@@ -101,6 +106,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 
   <nav role="tablist">
     <button class="tab" role="tab" aria-selected="true" data-tab="today">Today</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="live">Live</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="plant">Plant</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="guide">Guide</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="answers">Answers</button>
@@ -115,6 +121,19 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
       <div id="msg-today" class="msg" hidden></div>
       <div id="day"></div>
       <div id="stopped"></div>
+    </section>
+  </div>
+
+  <!-- Live: what the glasses see and say, for everyone else in the room -->
+  <div id="tab-live" class="pane" hidden>
+    <section>
+      <div class="spread"><h2>Live</h2>
+        <label class="row" style="cursor:pointer"><input type="checkbox" id="l-play"><span>Play what Truss says on this device</span></label>
+      </div>
+      <p class="note" style="margin:0">Everything Truss speaks in the glasses shows here as it is said. Anyone on this Wi-Fi can open this page at the same address and pick Live.</p>
+      <img id="l-view" class="view" hidden alt="The glasses' latest view">
+      <span class="note" id="l-view-note">No view from the glasses yet. Start watching on the phone.</span>
+      <div id="l-said"></div>
     </section>
   </div>
 
@@ -327,7 +346,7 @@ let TAB = "today";
 function openTab(name) {
   TAB = name;
   document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === name)));
-  ["today", "plant", "guide", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
+  ["today", "live", "plant", "guide", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
   refresh();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => openTab(t.dataset.tab)));
@@ -454,7 +473,7 @@ $("tab-today").addEventListener("click", async (ev) => {
   if (g) {
     g.disabled = true;
     try {
-      const view = await glassesView(() => showMsg("msg-today", "Waiting for a fresh view from the glasses…"));
+      const view = await glassesView((text) => showMsg("msg-today", text));
       const r = await postImage(`/plant/ref?slug=${encodeURIComponent(g.dataset.slug)}&kind=${g.dataset.glasses}`, view.file);
       showMsg("msg-today", `Took the ${g.dataset.glasses} look from the glasses' view ${view.ago} s ago.`);
       if (r.state === "standing") {
@@ -587,8 +606,19 @@ function setLook(kind, file) {
 // older frame could show the thing before it was set up, or be the
 // same frame as the other look. With no view at all the phone is
 // asked to start, and the error says to try again.
+// How long to wait for that view: longer than the phone's own beat, or it
+// can time out just before the next photo lands. In live view a photo is
+// sent only when the view changes and holds still, so the wait is longer
+// and the message says to look away and back.
+function viewWait() {
+  const p = PHONE && PHONE.phone;
+  if (!(p && p.watching)) return {limit: 15, hint: ""};
+  if (p.mode === "live") return {limit: 45, hint: " Look away and back, then hold still on it."};
+  return {limit: Math.max(15, (Number(p.every) || 30) + 15), hint: ""};
+}
 async function glassesView(onWait) {
   const pressed = Date.now();
+  const {limit, hint} = viewWait();
   while (true) {
     const r = await fetch("/latest", {cache: "no-store"});
     if (!r.ok && r.status !== 404) throw new Error(await errorText(r));
@@ -600,11 +630,11 @@ async function glassesView(onWait) {
         return {file: new File([blob], `glasses-${Date.now()}.jpg`, {type: "image/jpeg"}), ago: ago.toFixed(0)};
       }
     }
-    if (waited > 15) {
+    if (waited > limit) {
       const said = await askPhone(true);
-      throw new Error(said.startsWith("Couldn't") ? said : "No new view came from the glasses in 15 s. Asked the phone to start watching; try again in a few seconds.");
+      throw new Error(said.startsWith("Couldn't") ? said : `No new view came from the glasses in ${limit} s. Asked the phone to start watching; try again in a few seconds.`);
     }
-    if (onWait) onWait();
+    if (onWait) onWait(`Waiting for a fresh view from the glasses… ${Math.round(waited)} of ${limit} s.${hint}`);
     await new Promise((res) => setTimeout(res, 1000));
   }
 }
@@ -619,7 +649,7 @@ document.querySelectorAll("[data-take]").forEach((b) => b.addEventListener("clic
   const kind = b.dataset.take;
   b.disabled = true;
   try {
-    const view = await glassesView(() => showMsg("p-msg", "Waiting for a fresh view from the glasses…"));
+    const view = await glassesView((text) => showMsg("p-msg", text));
     const other = LOOKS[kind === "yes" ? "no" : "yes"];
     if (await sameBytes(view.file, other)) throw new Error(`That view is the same photo as the ${kind === "yes" ? "no" : "yes"} look. Change what the glasses see, then take it again.`);
     setLook(kind, view.file);
@@ -915,6 +945,69 @@ $("g-skip").addEventListener("click", () => guideAct("skip"));
 $("g-stop").addEventListener("click", () => guideAct("stop"));
 setInterval(() => { if (TAB === "guide") loadGuide(); }, 4000);
 
+// ---- live -------------------------------------------------------------------
+// Polls the lines Truss spoke (GET /feed) and the glasses' latest view
+// (GET /latest). With "Play" on, each new line is played here with the
+// same audio the glasses played.
+let FEED_AFTER = 0;
+let FEED_LINES = [];
+let FEED_STARTED = false;
+const PLAY_QUEUE = [];
+let PLAYING = false;
+function playNext() {
+  if (PLAYING || !PLAY_QUEUE.length) return;
+  PLAYING = true;
+  const audio = new Audio(`/feed/audio?id=${PLAY_QUEUE.shift()}`);
+  const done = () => { PLAYING = false; playNext(); };
+  audio.addEventListener("ended", done);
+  audio.addEventListener("error", done);
+  audio.play().catch(done);
+}
+function drawFeed() {
+  const lines = FEED_LINES.slice().reverse();
+  $("l-said").innerHTML = lines.length
+    ? lines.map((l, i) => `<div class="said${i === 0 ? " new" : ""}"><span class="t">${esc(new Date(l.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}))}</span><span class="qt">${esc(l.text)}</span><span></span></div>`).join("")
+    : `<div class="empty">Nothing said yet. Lines appear here the moment the glasses speak them.</div>`;
+}
+async function loadFeed() {
+  try {
+    const r = await getJSON(`/feed?after=${FEED_AFTER}`);
+    const fresh = r.lines || [];
+    if (fresh.length) {
+      FEED_AFTER = fresh[fresh.length - 1].id;
+      FEED_LINES = FEED_LINES.concat(fresh).slice(-40);
+      // Lines already said before this page opened are listed, not played.
+      if (FEED_STARTED && $("l-play").checked) fresh.filter((l) => l.audio).forEach((l) => PLAY_QUEUE.push(l.id));
+      playNext();
+    }
+    FEED_STARTED = true;
+    drawFeed();
+  } catch (e) { /* the laptop is between restarts; the next poll tries again */ }
+}
+async function loadView() {
+  if (TAB !== "live") return;
+  try {
+    const r = await fetch("/latest", {cache: "no-store"});
+    if (!r.ok) { $("l-view").hidden = true; $("l-view-note").hidden = false; return; }
+    const ago = Number(r.headers.get("X-Seconds-Ago") || "0");
+    const url = URL.createObjectURL(await r.blob());
+    const img = $("l-view");
+    if (img.src) URL.revokeObjectURL(img.src);
+    img.src = url;
+    img.hidden = false;
+    $("l-view-note").hidden = false;
+    $("l-view-note").textContent = `The glasses' view, ${ago.toFixed(0)} s ago.`;
+  } catch (e) { /* tried again in a moment */ }
+}
+// Ticking the box is the tap a browser needs before it plays sound, so
+// the latest line is played once then, as a sound check.
+$("l-play").addEventListener("change", () => {
+  const last = FEED_LINES.filter((l) => l.audio).pop();
+  if ($("l-play").checked && last) { PLAY_QUEUE.push(last.id); playNext(); }
+});
+setInterval(loadFeed, 2000);
+setInterval(loadView, 3000);
+
 // ---- refresh --------------------------------------------------------------
 function refresh() {
   loadStatus();
@@ -924,9 +1017,11 @@ function refresh() {
   if (TAB === "guide") loadGuide();
   if (TAB === "answers") loadAnswers();
   if (TAB === "settings") loadSettings();
+  if (TAB === "live") { loadFeed(); loadView(); }
 }
 syncForm();
-loadStatus().then(() => { refresh(); });
+if (location.hash === "#live") TAB = "live";
+loadStatus().then(() => { openTab(TAB); });
 setInterval(() => { loadQuestions(); loadAlerts(); }, 15000);
 // A tab in the background has its timers slowed to once a minute by the
 // browser; catch up the moment it is looked at again.

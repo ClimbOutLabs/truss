@@ -33,6 +33,16 @@ from phone_watch import WatchDesk
 from plant_compile import Compiler, compile_folder, needs_compile
 from questions import QuestionStore, SafetyLooksNeeded
 import settings
+import serverlog
+
+# Run as the server, everything printed from here on also goes, tidied,
+# to log/server.log (see serverlog.py), so a run can be followed with
+# tail -f from another window.
+if __name__ == "__main__":
+    serverlog.install(Path(__file__).parent / "log")
+
+# The lines Truss spoke through the glasses, for the Desk's Live tab.
+FEED = serverlog.Feed()
 
 # Get the Wi-Fi interface address
 def get_wifi_address():
@@ -526,6 +536,10 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_json(settings_view())
         elif path == "/latest":
             self.handle_latest()
+        elif path == "/feed":
+            self.handle_feed()
+        elif path == "/feed/audio":
+            self.handle_feed_audio()
         else:
             self.send_error(404, "Not Found")
 
@@ -584,6 +598,35 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_plant_finish()
         else:
             self.send_error(404, "Not Found")
+
+    def handle_feed(self):
+        """What Truss said through the glasses, newest last: GET
+        /feed?after=<id> returns the lines after that id."""
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            after = int(query.get("after", ["0"])[0])
+        except ValueError:
+            after = 0
+        self.send_json({"lines": FEED.since(after)})
+
+    def handle_feed_audio(self):
+        """One spoken line's audio, exactly as the glasses played it."""
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            item_id = int(query.get("id", [""])[0])
+        except ValueError:
+            self.send_error(400, "Need id")
+            return
+        wav = FEED.audio(item_id)
+        if wav is None:
+            self.send_error(404, "That line's audio is no longer kept.")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(wav)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(wav)
 
     def handle_latest(self):
         """The glasses' latest view as a JPEG, for taking a look from
@@ -1310,7 +1353,8 @@ class TrussHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(wav_data)
                 
-                print(f"POST /tts -> generated {len(wav_data)} bytes for: {text[:50]}...")
+                FEED.add(text, wav_data)
+                print(f"POST /tts -> {text}")
             
             finally:
                 if os.path.exists(aiff_path):
@@ -1374,6 +1418,8 @@ def main():
     print(f"\nTruss server starting on {host}:{port}")
     print(f"Truss Desk (plant questions from this Mac): http://{host}:{port}/desk")
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")
+    print(f"Server log: {(LOG_DIR / 'server.log').absolute()} (tail -f it from another window)")
+    print(f"Live (what the glasses say, for others to hear): http://{host}:{port}/desk#live")
     print(f"Press Ctrl+C to stop\n")
     
     try:
