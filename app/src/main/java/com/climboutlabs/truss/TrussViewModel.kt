@@ -1424,6 +1424,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   /** Stop watching. A photo already being taken finishes first, answer and all. */
   fun stopWatching() {
+    stoppedAt = SystemClock.elapsedRealtime()
     watchStopAsked = true
     holdYield = true
     _uiState.update { it.copy(watching = false, deskStartPending = false) }
@@ -1432,6 +1433,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     releaseHeldSession("watching was stopped")
     if (!watchCapturing) watchJob?.cancel()
   }
+
+  /** When watching was last stopped, by the phone's clock. A Desk start asked before
+   * this is not acted on afterwards, so a Stop is never undone by an older start. */
+  private var stoppedAt = 0L
 
   /** The camera and session a Live view capture is holding open between looks, if any. */
   @Volatile private var heldCamera: com.meta.wearable.dat.camera.Camera? = null
@@ -1524,7 +1529,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     if (request.ageSeconds > reply.freshSeconds) return
     if (request.on) {
       if (_uiState.value.watching) return
-      deskAskedAt = SystemClock.elapsedRealtime() - request.ageSeconds * 1000L
+      val askedAt = SystemClock.elapsedRealtime() - request.ageSeconds * 1000L
+      if (stoppedAt != 0L && askedAt <= stoppedAt) {
+        Log.i(TAG, "A Desk start from before the last Stop was not acted on.")
+        return
+      }
+      deskAskedAt = askedAt
       _uiState.update { it.copy(deskStartPending = true) }
     } else {
       _uiState.update { it.copy(deskStartPending = false) }
