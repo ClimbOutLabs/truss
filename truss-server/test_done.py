@@ -1059,6 +1059,102 @@ def test_http():
             server_module.CLOCK = datetime.now
 
 
+# -- one routine, several windows: the dog fed three times a day ------------
+
+DOG = "Did I feed the dog?"
+MEALS = [
+    {"kind": "window", "after": "08:00", "until": "10:00"},
+    {"kind": "window", "after": "13:00", "until": "15:00"},
+    {"kind": "window", "after": "19:00", "until": "21:00"},
+]
+
+
+def plant_meals(store):
+    return [plant(store, DOG, pattern, kind="done") for pattern in MEALS]
+
+
+def test_second_feed_is_stopped_until_the_next_window():
+    for label, again_at in (("between windows", datetime(2026, 10, 27, 11, 0)),
+                            ("inside the same window", datetime(2026, 10, 27, 9, 30))):
+        store, loop, spoken, captures, clock = rig(
+            normal=[verdict("yes", "Kibble is going into the bowl.")],
+            redo=[verdict("yes", "The wearer is at the bowl again.")],
+            start=datetime(2026, 10, 27, 9, 0),
+        )
+        morning, lunch, dinner = plant_meals(store)
+        result = loop.process_frame(frame(captures, "feed.jpg"))
+        check(f"{label}: the morning feed fires only the morning window",
+              result["fired"] == [morning])
+        clock.now = again_at
+        loop.process_frame(frame(captures, "again.jpg"))
+        check(f"{label}: a second feed is stopped, and the next window is named",
+              spoken[-1] == "You fed the dog at 9:00 AM. I saw you. "
+                            "The next window opens at 1:00 PM.")
+        log_text = (Path(store.root).parent / "log" / "2026-10-27"
+                    / "answers.txt").read_text()
+        check(f"{label}: the answer log carries the same words",
+              "The next window opens at 1:00 PM." in log_text)
+
+
+def test_the_next_window_is_not_a_second_feed():
+    store, loop, spoken, captures, clock = rig(
+        normal=[verdict("yes", "Kibble is going into the bowl."),
+                verdict("yes", "Kibble is going into the bowl.")],
+        redo=[verdict("yes", "The wearer is at the bowl again.")] * 4,
+        start=datetime(2026, 10, 27, 9, 0),
+    )
+    morning, lunch, dinner = plant_meals(store)
+    loop.process_frame(frame(captures, "breakfast.jpg"))
+    check("before lunch the morning feed is watched for a repeat",
+          [e["slug"] for e in store.redo_watch(now=datetime(2026, 10, 27, 12, 59))]
+          == [morning])
+    check("once the lunch window opens it is not",
+          store.redo_watch(now=datetime(2026, 10, 27, 13, 0)) == [])
+    clock.now = datetime(2026, 10, 27, 13, 30)
+    result = loop.process_frame(frame(captures, "lunch.jpg"))
+    check("the lunch feed fires the lunch window", result["fired"] == [lunch])
+    check("and no reminder about breakfast is spoken",
+          not any(line.startswith("You fed") for line in spoken)
+          and loop.check_fn.redo_calls == [])
+    clock.now = datetime(2026, 10, 27, 19, 30)
+    loop.process_frame(frame(captures, "dinner-early.jpg"))
+    check("the lunch witness is not watched once dinner opens",
+          not any(line.startswith("You fed") for line in spoken)
+          and loop.check_fn.redo_calls == [])
+
+
+def test_last_window_names_no_next_one():
+    store, loop, spoken, captures, clock = rig(
+        normal=[verdict("yes", "Kibble is going into the bowl.")],
+        redo=[verdict("yes", "The wearer is at the bowl again.")],
+        start=datetime(2026, 10, 27, 19, 30),
+    )
+    plant_meals(store)
+    loop.process_frame(frame(captures, "dinner.jpg"))
+    clock.now = datetime(2026, 10, 27, 23, 0)
+    loop.process_frame(frame(captures, "late.jpg"))
+    check("after the last window the reminder names no next one",
+          spoken[-1] == "You fed the dog at 7:30 PM. I saw you.")
+
+
+def test_other_words_are_another_routine():
+    store, loop, spoken, captures, clock = rig(
+        normal=[verdict("yes", "The compartment is empty.")],
+        redo=[verdict("yes", "The wearer is at the organizer again.")],
+        start=datetime(2026, 10, 27, 9, 0),
+    )
+    pills = plant(store, "Did I take my morning pills?", MEALS[0], kind="done")
+    plant(store, DOG, MEALS[1], kind="done")
+    loop.process_frame(frame(captures, "pills.jpg"))
+    check("another question's window never ends this witness's watch",
+          [e["slug"] for e in store.redo_watch(now=datetime(2026, 10, 27, 13, 30))]
+          == [pills])
+    clock.now = datetime(2026, 10, 27, 11, 0)
+    loop.process_frame(frame(captures, "again.jpg"))
+    check("and its window is never named as the next one",
+          spoken[-1] == "You took your morning pills at 9:00 AM. I saw you.")
+
+
 if __name__ == "__main__":
     test_kinds()
     test_window_validation()
@@ -1088,5 +1184,9 @@ if __name__ == "__main__":
     test_ack_is_confined_to_real_alert_files()
     test_alert_store_on_a_file_path_is_disabled_not_fatal()
     test_shapeless_alert_files_are_skipped_everywhere()
+    test_second_feed_is_stopped_until_the_next_window()
+    test_the_next_window_is_not_a_second_feed()
+    test_last_window_names_no_next_one()
+    test_other_words_are_another_routine()
     test_http()
     print("ALL PASS")
