@@ -124,6 +124,49 @@ def test_replay_is_not_the_glasses_view():
     finally:
         server_module.CAPTURES_DIR, server_module.LOOP, server_module.STORE = saved
         server_module.LATEST.update({"bytes": None, "at": None})
+
+def test_status_shows_a_check_in_flight():
+    """While a slow check runs, GET /status answers at once and names
+    it; once it finishes, the line goes. The check's result and any
+    error pass through the wrapper untouched."""
+    import json
+    from http.server import ThreadingHTTPServer
+    started, release = threading.Event(), threading.Event()
+
+    def slow(frame, entry):
+        started.set()
+        release.wait(10)
+        return {"verdict": "yes"}
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    out = {}
+    worker = threading.Thread(
+        target=lambda: out.update(r=server_module._checking(slow)("f.jpg", {"question": "Did I take my pill?"})))
+    try:
+        check("nothing is being checked at first", server_module.checking_view() is None)
+        worker.start()
+        started.wait(5)
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=3) as resp:
+            body = json.loads(resp.read())
+        check("GET /status answers during a check", body["checking"] is not None)
+        check("it names the question", body["checking"]["question"] == "Did I take my pill?")
+        release.set()
+        worker.join(5)
+        check("the result passes through", out.get("r") == {"verdict": "yes"})
+        check("the line goes when the check ends", server_module.checking_view() is None)
+
+        def boom(frame, entry):
+            raise RuntimeError("down")
+        try:
+            server_module._checking(boom)("f.jpg", "Is step one done?")
+            check("an error passes through", False)
+        except RuntimeError:
+            check("an error passes through", True)
+        check("and the line goes after an error", server_module.checking_view() is None)
+    finally:
+        release.set()
         httpd.shutdown()
 
 
@@ -132,4 +175,5 @@ if __name__ == "__main__":
     test_page_calls_only_real_endpoints()
     test_latest_view()
     test_replay_is_not_the_glasses_view()
+    test_status_shows_a_check_in_flight()
     print("ALL PASS")

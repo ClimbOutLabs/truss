@@ -183,6 +183,41 @@ def production_check(frame_path, entry):
     )
 
 
+# The check being made right now, for the Desk: a Muse Spark check can
+# take 40 s, and a page that shows nothing for that long looks frozen.
+# Set and cleared around each model call; read by GET /status.
+CHECKING = {"question": None, "since": None}
+_CHECKING_LOCK = threading.Lock()
+
+
+def _checking(check_fn):
+    """Wrap a check function so GET /status can say what is being
+    checked and for how long. Only bookkeeping: the result, and any
+    error, pass through untouched."""
+    def wrapped(frame_path, entry):
+        question = entry["question"] if isinstance(entry, dict) else entry
+        with _CHECKING_LOCK:
+            CHECKING["question"] = question
+            CHECKING["since"] = time.monotonic()
+        try:
+            return check_fn(frame_path, entry)
+        finally:
+            with _CHECKING_LOCK:
+                CHECKING["question"] = None
+                CHECKING["since"] = None
+    return wrapped
+
+
+def checking_view():
+    with _CHECKING_LOCK:
+        if CHECKING["question"] is None:
+            return None
+        return {
+            "question": CHECKING["question"],
+            "seconds": int(time.monotonic() - CHECKING["since"]),
+        }
+
+
 def guide_check(frame_path, question_text):
     """The guide's check function. Guide steps carry no reference
     looks, so the check is the frame and the step's question alone."""
@@ -211,12 +246,12 @@ if sam_client.outline_enabled():
 # app in the /capture response; speaking them is the app's side.
 LOOP = CheckLoop(
     STORE,
-    production_check,
+    _checking(production_check),
     Path(__file__).parent / "log",
     now_fn=lambda: CLOCK(),
     checks=CHECKS,
     outline_fn=OUTLINER,
-    presence_fn=guide_check if REFUSALS else None,
+    presence_fn=_checking(guide_check) if REFUSALS else None,
 )
 
 # Plant-time compile (see plant_compile.py). Once a question has both
@@ -299,6 +334,7 @@ def status():
         "bedtime_after": BEDTIME_AFTER,
         "last_poll": seen("poll"),
         "last_capture": seen("capture"),
+        "checking": checking_view(),
     }
 
 
@@ -438,9 +474,11 @@ class TrussHandler(BaseHTTPRequestHandler):
     
     def log_message(self, format, *args):
         """Override to customize logging format."""
-        # The phone checks in every few seconds; only a failed check-in
-        # is worth a line.
-        if urlparse(self.path).path == "/watch/phone" and len(args) > 1 and str(args[1]) == "200":
+        # The phone checks in, and the Desk asks for the watch state and
+        # the status, every few seconds; only a failed one is worth a line.
+        path = urlparse(self.path).path
+        quiet = path == "/watch/phone" or (self.command == "GET" and path in ("/watch", "/status"))
+        if quiet and len(args) > 1 and str(args[1]) == "200":
             return
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] {format % args}")
@@ -1170,7 +1208,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 # standing questions wait. A guide failure must never
                 # break the capture itself.
                 try:
-                    guide_result = session.process_frame(filepath, guide_check)
+                    guide_result = session.process_frame(filepath, _checking(guide_check))
                 except Exception as e:
                     print(f"POST /capture -> guide failed, frame kept: {e}")
                     guide_result = {"managed": False, "speak": [], "errors": 1}
