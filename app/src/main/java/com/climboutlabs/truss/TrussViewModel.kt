@@ -582,12 +582,16 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       // toolkit for decoded frames. Encoded frames cannot be read on the phone, and with
       // them every look fell straight through to a photo, as timed photos would take.
       val liveWatch = fromWatch && _uiState.value.captureMode == CaptureMode.LIVE
+      // Live view only reads a 16 by 16 grid from the video, four times a second, so it
+      // asks for the smallest, slowest video the toolkit offers: less for the glasses to
+      // encode and send, and less for the phone to decode. The photo itself comes from
+      // capturePhoto, not from the video.
       var addError: String? = null
       activeSession
           .addCamera(
               StreamConfiguration(
-                  videoQuality = VideoQuality.MEDIUM,
-                  frameRate = 24,
+                  videoQuality = if (liveWatch) VideoQuality.LOW else VideoQuality.MEDIUM,
+                  frameRate = if (liveWatch) LIVE_FRAME_RATE else 24,
                   compressVideo = !liveWatch,
               ),
           )
@@ -645,6 +649,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         check(captured != null) { "Photo capture returned nothing." }
         val bitmap = withContext(Dispatchers.Default) { decodePhoto(captured) }
         check(bitmap != null) { "The photo from the glasses could not be decoded." }
+        photoLog("Photo is ${bitmap.width} by ${bitmap.height}.")
         val jpegFile =
             withContext(Dispatchers.IO) {
               val dir = File(getApplication<Application>().filesDir, "captures").apply { mkdirs() }
@@ -1857,5 +1862,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val LIVE_STEADY_THRESHOLD = 4
     private const val LIVE_STEADY_MS = 1_000L
     private const val LIVE_HOLD_MAX_MS = 180_000L
+    // Live view's video frame rate. The toolkit offers 30, 24, 15, 7 and 2; looks are
+    // taken every LIVE_LOOK_EVERY_MS (4 a second), so 7 leaves a fresh frame for each.
+    private const val LIVE_FRAME_RATE = 7
   }
 }
