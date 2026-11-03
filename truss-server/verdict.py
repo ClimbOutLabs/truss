@@ -151,6 +151,47 @@ MULTI_INSTRUCTION = (
     "the two references instead of a generic idea of the scene."
 )
 
+# One call for every question due on a photo (check_many): the image
+# is sent and read once instead of once per question. Each question is
+# still answered on its own, under the same rules as a single check.
+MANY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "number": {"type": "integer"},
+                    "verdict": {"type": "string", "enum": ["yes", "no", "cannot_tell"]},
+                    "reason": {"type": "string"},
+                    "missing": {"type": "string"},
+                },
+                "required": ["number", "verdict", "reason", "missing"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["answers"],
+    "additionalProperties": False,
+}
+
+MANY_INSTRUCTION = (
+    " This time several standing questions are asked about the same "
+    "photo at once, each with a number. Answer every one of them, once, "
+    "under its number, and judge each on its own exactly as if it were "
+    "the only question asked: what decides one question never decides "
+    "another, and each answer has its own reason and missing."
+)
+
+# The single check's safety rule, word for word, so the two can never
+# drift apart: it applies to each marked question as if asked alone.
+MANY_SAFETY_INSTRUCTION = (
+    " Some questions are marked as safety questions. Each of those is "
+    "held to this rule, read as if it were the only question asked:"
+    + SAFETY_INSTRUCTION
+)
+
 ZERO_USAGE = {"spark_input_tokens": 0, "spark_output_tokens": 0, "sam_images": 0}
 
 # Muse Glimmer thinks before it answers, so the answer needs room after
@@ -209,6 +250,27 @@ def _reason_text(value):
     return value.strip() if isinstance(value, str) else ""
 
 
+def _settle(answer):
+    """(verdict, reason, missing, failure) from one schema-valid answer,
+    with the guards every check holds to."""
+    verdict = answer["verdict"]
+    reason = _reason_text(answer["reason"])
+    missing = _reason_text(answer["missing"])
+    failure = None
+    if verdict != "cannot_tell" and not reason:
+        # Description over verdict: a yes or no with nothing seen
+        # behind it is not an answer.
+        verdict, failure = "cannot_tell", "unexplained"
+        reason = "The model gave a verdict without saying what it saw, so it is not used."
+    elif verdict != "cannot_tell" and missing:
+        # A verdict that also says something needed was missing is
+        # a guess; it reads as cannot_tell and keeps what it lacked.
+        verdict = "cannot_tell"
+    if verdict != "cannot_tell":
+        missing = ""
+    return verdict, reason, missing, failure
+
+
 def check(
     frame_path,
     question,
@@ -261,20 +323,7 @@ def check(
         model = reply.get("_model") or model
         usage["spark_input_tokens"] = reply["_usage"]["input_tokens"]
         usage["spark_output_tokens"] = reply["_usage"]["output_tokens"]
-        verdict = reply["verdict"]
-        reason = _reason_text(reply["reason"])
-        missing = _reason_text(reply["missing"])
-        if verdict != "cannot_tell" and not reason:
-            # Description over verdict: a yes or no with nothing seen
-            # behind it is not an answer.
-            verdict, failure = "cannot_tell", "unexplained"
-            reason = "The model gave a verdict without saying what it saw, so it is not used."
-        elif verdict != "cannot_tell" and missing:
-            # A verdict that also says something needed was missing is
-            # a guess; it reads as cannot_tell and keeps what it lacked.
-            verdict = "cannot_tell"
-        if verdict != "cannot_tell":
-            missing = ""
+        verdict, reason, missing, failure = _settle(reply)
     except endpoint.EndpointError as e:
         model = getattr(e, "model", None) or model
         verdict, reason, failure = "cannot_tell", f"{e} So no check was made.", e.kind
@@ -294,3 +343,100 @@ def check(
         "latency_ms": int((time.monotonic() - started) * 1000),
         "usage": usage,
     }
+
+
+def _many_request(frame_path, items):
+    """(system, content) for one check of several questions."""
+    system = SYSTEM_PROMPT + MANY_INSTRUCTION
+    if any(item.get("safety") is True for item in items):
+        system += MANY_SAFETY_INSTRUCTION
+    if any(item.get("looks") for item in items):
+        system += LOOKS_INSTRUCTION
+    content = []
+    for number, item in enumerate(items, start=1):
+        line = f"Question {number}: {item['question']}"
+        if item.get("safety") is True:
+            line += " (a safety question)"
+        content.append(endpoint.text_part(line))
+        if item.get("looks"):
+            quoted = item["looks"].replace('"""', "'''")
+            content.append(endpoint.text_part(
+                f"For question {number}, " + LOOKS_LABEL.format(looks=quoted)
+            ))
+    content.append(endpoint.text_part("The photo:"))
+    content.append(endpoint.image_part(frame_path))
+    return system, content
+
+
+def check_many(frame_path, items, config=None):
+    """Ask the configured model every question in items about one frame,
+    in one call. Each item is {"question", "looks" (or None), "safety"}.
+    Single mode only: the reference images of multi mode would make one
+    call carry two photos per question.
+
+    Returns one result per item, in order, in check()'s shape. The
+    usage of the call is on the first result only, so a sum over the
+    results counts the call once; latency_ms is the whole call's for
+    every result. A question the reply left out, answered twice, or
+    every question when the call failed, gets a cannot_tell whose
+    failure is set, so the caller can ask it on its own instead.
+    Never raises.
+    """
+    started = time.monotonic()
+    model = None
+    results = [None] * len(items)
+    failure_all = None
+    reason_all = ""
+    usage = dict(ZERO_USAGE)
+    try:
+        cfg = config
+        model = cfg.model if cfg is not None else endpoint.describe_from_env()["model"]
+        if not items:
+            return []
+        system, content = _many_request(frame_path, items)
+        # Each answer needs its own room after any thinking.
+        room = max_tokens() + 512 * (len(items) - 1)
+        reply = endpoint.ask_json(
+            system, content, MANY_SCHEMA, "verdicts", config=cfg, max_tokens=room
+        )
+        model = reply.get("_model") or model
+        usage["spark_input_tokens"] = reply["_usage"]["input_tokens"]
+        usage["spark_output_tokens"] = reply["_usage"]["output_tokens"]
+        counts = {}
+        for answer in reply["answers"]:
+            counts[answer["number"]] = counts.get(answer["number"], 0) + 1
+        for answer in reply["answers"]:
+            index = answer["number"] - 1
+            if not 0 <= index < len(items) or counts[answer["number"]] != 1:
+                continue
+            verdict, reason, missing, failure = _settle(answer)
+            results[index] = (verdict, reason, missing, failure)
+    except endpoint.EndpointError as e:
+        model = getattr(e, "model", None) or model
+        failure_all, reason_all = e.kind, f"{e} So no check was made."
+    except Exception:
+        failure_all, reason_all = "error", "The check failed, so no check was made."
+    latency = int((time.monotonic() - started) * 1000)
+    out = []
+    for index, item in enumerate(items):
+        got = results[index]
+        if got is None:
+            got = (
+                "cannot_tell",
+                reason_all or "The reply had no single answer for this question, so no check was made.",
+                "",
+                failure_all or "unanswered",
+            )
+        verdict, reason, missing, failure = got
+        out.append({
+            "verdict": verdict,
+            "reason": reason,
+            "missing": missing,
+            "model": model,
+            "failure": failure,
+            "looks": "text" if item.get("looks") else "none",
+            "latency_ms": latency,
+            "usage": dict(usage) if index == 0 else dict(ZERO_USAGE),
+            "batched": len(items),
+        })
+    return out
