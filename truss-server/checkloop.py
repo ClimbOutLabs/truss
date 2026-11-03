@@ -408,8 +408,14 @@ def _refusable(entry, result):
 class CheckLoop:
     def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None,
                  checks=None, outline_fn=None, presence_fn=None,
-                 refusal_minutes=REFUSAL_REST_MINUTES):
+                 refusal_minutes=REFUSAL_REST_MINUTES, batch_fn=None):
         self.store = store
+        # batch_fn(frame_path, entries) checks several due questions in
+        # one model call and returns one result per entry, in order, or
+        # None when it cannot (see verdict.check_many). A result whose
+        # failure is set is asked again on its own through check_fn, so
+        # a batch can only save calls, never lose an answer.
+        self.batch_fn = batch_fn
         # presence_fn(frame_path, question_text) is a plain check with
         # no reference looks. With one, a safety question's cannot-tell
         # is spoken as a refusal when the thing itself is in view (see
@@ -465,10 +471,14 @@ class CheckLoop:
         errors = 0
         if not due:
             print("  check: no question is due on this frame (each waits for its gap)", flush=True)
+        batched, batch_started = self._batch(frame_path, due)
         for entry in due:
             started = time.monotonic()
             try:
-                result = self.check_fn(frame_path, entry)
+                if entry["slug"] in batched:
+                    result, started = batched[entry["slug"]], batch_started
+                else:
+                    result = self.check_fn(frame_path, entry)
                 if not isinstance(result, dict):
                     raise TypeError("check returned no verdict")
                 verdict = result.get("verdict")
@@ -702,6 +712,39 @@ class CheckLoop:
             "outline": str(outline) if outline else None,
             "errors": errors,
         }
+
+    def _batch(self, frame_path, due):
+        """({slug: result}, start time) for the due questions one batch
+        call answered. Empty with no batch_fn, fewer than two questions,
+        or a batch that failed; those questions are checked one by one.
+
+        A safety question is never batched: it is always asked alone, so
+        a misnumbered or blended answer in a batch can never be its
+        all-clear."""
+        started = time.monotonic()
+        due = [e for e in due if e.get("safety") is not True]
+        if self.batch_fn is None or len(due) < 2:
+            return {}, started
+        try:
+            results = self.batch_fn(frame_path, due)
+        except Exception as e:
+            print(f"  check: the one-call check failed ({e}); asking one by one", flush=True)
+            return {}, started
+        if not isinstance(results, list) or len(results) != len(due):
+            return {}, started
+        answered = {}
+        for entry, result in zip(due, results):
+            if isinstance(result, dict) and result.get("failure") in (None, ""):
+                answered[entry["slug"]] = result
+        if len(answered) < len(due):
+            print(
+                f"  check: one call answered {len(answered)} of {len(due)}; "
+                "the rest are asked one by one",
+                flush=True,
+            )
+        else:
+            print(f"  check: {len(due)} questions in one call", flush=True)
+        return answered, started
 
     def _refusal(self, frame_path, refusable, now):
         """(entry, result, text) for a refusal to speak on this frame,

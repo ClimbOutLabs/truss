@@ -125,6 +125,14 @@ if CHECK_MODE not in verdict.MODES:
     print("The TRUSS_CHECK_MODE value was not understood; single mode is being used.")
     CHECK_MODE = "single"
 
+# One model call per photo: with two or more questions due on the same
+# photo, they are asked together and the photo is sent once (see
+# verdict.check_many). Single mode with the endpoint checker only.
+# TRUSS_BATCH_CHECKS=0 asks each question in its own call, as before.
+BATCH_CHECKS = os.environ.get("TRUSS_BATCH_CHECKS", "1").strip() != "0"
+if not BATCH_CHECKS:
+    print("One-call checks are off (TRUSS_BATCH_CHECKS=0); each question gets its own call.")
+
 # For a live test session only. TRUSS_PLANT_MINUTES sets how often a
 # question planted with no pattern of its own (every planting from the
 # app) is checked, instead of every 15 minutes; 0 checks it on every
@@ -190,7 +198,25 @@ def production_check(frame_path, entry):
         ref_no=ref_no,
         looks=verdict.read_looks(Path(entry["ref_yes_path"]).parent),
         safety=entry.get("safety") is True,
+        now=CLOCK(),
     )
+
+
+def batch_check(frame_path, entries):
+    """The loop's batch function: every due question on this frame in
+    one call, each with its own looks.txt and safety flag. None when
+    batching is off or does not apply, so the loop asks one by one."""
+    if not BATCH_CHECKS or CHECKER != "endpoint" or CHECK_MODE != "single":
+        return None
+    items = [
+        {
+            "question": entry["question"],
+            "looks": verdict.read_looks(Path(entry["ref_yes_path"]).parent),
+            "safety": entry.get("safety") is True,
+        }
+        for entry in entries
+    ]
+    return verdict.check_many(frame_path, items)
 
 
 # The check being made right now, for the Desk: a Muse Spark check can
@@ -218,6 +244,23 @@ def _checking(check_fn):
     return wrapped
 
 
+def _checking_many(batch_fn):
+    """_checking for the batch function: the Desk shows how many
+    questions are being asked together, and the first of them."""
+    def wrapped(frame_path, entries):
+        label = f"{len(entries)} questions at once, first: {entries[0]['question']}"
+        with _CHECKING_LOCK:
+            CHECKING["question"] = label
+            CHECKING["since"] = time.monotonic()
+        try:
+            return batch_fn(frame_path, entries)
+        finally:
+            with _CHECKING_LOCK:
+                CHECKING["question"] = None
+                CHECKING["since"] = None
+    return wrapped
+
+
 def checking_view():
     with _CHECKING_LOCK:
         if CHECKING["question"] is None:
@@ -233,7 +276,7 @@ def guide_check(frame_path, question_text):
     looks, so the check is the frame and the step's question alone."""
     if CHECKER == "aman":
         return aman_check.check(frame_path, question_text)
-    return verdict.check(frame_path, question_text, mode=CHECK_MODE)
+    return verdict.check(frame_path, question_text, mode=CHECK_MODE, now=CLOCK())
 
 
 # The refusal (see checkloop.REFUSAL_TEMPLATES): a safety question's
@@ -262,6 +305,7 @@ LOOP = CheckLoop(
     checks=CHECKS,
     outline_fn=OUTLINER,
     presence_fn=_checking(guide_check) if REFUSALS else None,
+    batch_fn=_checking_many(batch_check),
 )
 
 # Plant-time compile (see plant_compile.py). Once a question has both

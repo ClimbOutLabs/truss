@@ -62,7 +62,7 @@ def test_prompt_asks_for_the_intent():
     check("prompt: answering from a sign leaves missing empty",
           "when you answer from it, missing is an empty string" in p)
     check("prompt: every question holds an all-clear to the deciding detail",
-          "An all-clear answer" in p and "the absence of signs never gives it" in p)
+          "an all-clear answer" in p and "needs the deciding detail" in p)
     check("looks: the usual detail, not the only evidence",
           "not the only evidence" in verdict.LOOKS_INSTRUCTION)
 
@@ -73,7 +73,7 @@ def test_an_unflagged_question_still_gets_the_all_clear_rule():
                           "missing": "the knobs"})
     check("unflagged stove: no safety instruction", verdict.SAFETY_INSTRUCTION not in stub.system())
     check("unflagged stove: the all-clear rule is still sent",
-          "An all-clear answer" in stub.system())
+          "an all-clear answer" in stub.system())
 
 
 def test_safety_holds_the_all_clear_only():
@@ -157,6 +157,61 @@ def test_compile_names_the_usual_detail_not_the_only_one():
     check("compile: else cannot_tell", "cannot_tell" in p)
 
 
+def test_the_deciding_detail_rule_comes_first():
+    # Sidd's review, Nov 3: the deciding-detail rule must come before,
+    # and override, the scene signs for an all-clear (a door pulled shut
+    # but not latched looks closed).
+    p = verdict.SYSTEM_PROMPT
+    check("the first rule is named as overriding", "First rule, above all others" in p)
+    check("the all-clear rule comes before the signs",
+          p.index("needs the deciding detail") < p.index("any clear, direct sign"))
+    check("a scene that only looks safe never gives it",
+          "only looks safe never gives it" in p and "may not be latched" in p)
+    check("readable is enough, not pristine",
+          "visible enough to read" in p and "not perfect" in p)
+
+
+def test_the_review_gaps_are_closed():
+    p = verdict.SYSTEM_PROMPT
+    check("yes is pinned to the question as worded",
+          "exactly as it is worded is yes" in p and '"Is the stove off?" yes says it is off' in p)
+    check("words in the scene never give an all-clear",
+          "Words written in the scene" in p and "never give an all-clear" in p)
+    check("a display question still reads the display", "reading a display" in p)
+    check("a done question needs the act or a fresh trace",
+          "the act itself or a fresh trace" in p and "look the same either way" in p)
+    check("visible but in-between is cannot_tell",
+          "could honestly be read either way" in p)
+    s = verdict.SAFETY_INSTRUCTION
+    check("safety repeats: nothing written in the scene",
+          "anything written in it" in s)
+
+
+def test_the_check_knows_the_local_time():
+    # Nov 3 live run: a weekly AM/PM pill organizer read "not taken"
+    # from the SUN compartment on a Tuesday. The fix is context, not a
+    # rule: the check is told the day and time, and the prompt carries
+    # no organizer, slot or AM/PM rule of its own.
+    from datetime import datetime
+    tuesday = datetime(2026, 11, 3, 7, 5)
+    check("now text names the weekday, date and time",
+          verdict.now_text(tuesday) == "It is now Tuesday 3 November, 7:05 AM.")
+    check("now text: afternoon and midnight",
+          verdict.now_text(datetime(2026, 11, 3, 21, 30)).endswith("9:30 PM.")
+          and verdict.now_text(datetime(2026, 11, 3, 0, 15)).endswith("12:15 AM."))
+    with StubModel([{"verdict": "no", "reason": "Today's compartment is full.", "missing": ""}]) as stub:
+        verdict.check(FRAME, "Did I take my night pills?", config=cfg(stub), now=tuesday, looks=LOOKS)
+    check("the check says the day and time",
+          "It is now Tuesday 3 November, 7:05 AM." in str(stub.body()["messages"][1]["content"]))
+    with StubModel([{"verdict": "no", "reason": "Full.", "missing": ""}]) as stub:
+        verdict.check(FRAME, "Did I take my night pills?", config=cfg(stub))
+    check("no time is said without one (eval results stay reproducible)",
+          "It is now" not in str(stub.body()["messages"][1]["content"]))
+    p = verdict.SYSTEM_PROMPT.lower()
+    check("no scenario rule in the prompt",
+          not any(w in p for w in ("organizer", "slot", "weekday", " am ", " pm ")))
+
+
 if __name__ == "__main__":
     test_no_question_gets_its_own_rule()
     test_prompt_asks_for_the_intent()
@@ -167,4 +222,7 @@ if __name__ == "__main__":
     test_multi_mode_gets_the_same_prompt()
     test_a_background_opening_answers_open()
     test_compile_names_the_usual_detail_not_the_only_one()
+    test_the_deciding_detail_rule_comes_first()
+    test_the_review_gaps_are_closed()
+    test_the_check_knows_the_local_time()
     print("ALL PASS")
