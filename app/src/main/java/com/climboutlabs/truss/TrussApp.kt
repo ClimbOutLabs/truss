@@ -71,6 +71,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -78,6 +79,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
+import com.meta.wearable.dat.core.types.RegistrationState
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -869,12 +871,7 @@ private fun QuestionsScreen(
       )
     }
     if (shown.isEmpty() && state.plantSlug == null) {
-      Text(
-          "No questions yet. Say one, or set up the bedtime round below.",
-          style = MaterialTheme.typography.bodyMedium,
-          color = Truss.muted,
-          modifier = Modifier.padding(horizontal = 6.dp),
-      )
+      NoQuestionsYet()
     }
 
     if (state.plantSlug == null) {
@@ -1017,26 +1014,37 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
     state.lastError?.let { ErrorBanner(it, onDismissError) }
     Row(verticalAlignment = Alignment.CenterVertically) {
       Box(Modifier.weight(1f)) { ScreenTitle(title, dateLine) }
-      IconButton(
+      TextButton(
           onClick = onRefresh,
           enabled = !state.historyBusy,
-          modifier = Modifier.size(52.dp).clip(CircleShape).background(Truss.card),
+          modifier = Modifier.height(48.dp).clip(CircleShape).background(Truss.card),
       ) {
-        Icon(TrussIcons.Refresh, contentDescription = "Refresh", tint = Truss.ink)
+        Icon(TrussIcons.Refresh, contentDescription = null, tint = Truss.ink, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("Refresh", style = MaterialTheme.typography.labelMedium)
       }
+    }
+    if (state.history.isNotEmpty()) {
+      Text(
+          if (title == "Today") "What Truss witnessed today, with the photo for each answer."
+          else "What Truss witnessed, with the photo for each answer.",
+          style = MaterialTheme.typography.bodyMedium,
+          color = Truss.muted,
+          modifier = Modifier.padding(horizontal = 4.dp),
+      )
     }
     if (state.historyBusy && state.history.isEmpty()) {
       Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(6.dp)) {
         CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = Truss.forest)
         Spacer(Modifier.width(12.dp))
-        Text("Loading", style = MaterialTheme.typography.bodyMedium)
+        Text("Loading today's answers", style = MaterialTheme.typography.bodyMedium)
       }
     }
     if (!state.historyBusy && state.history.isEmpty()) {
       Surface {
         Text(
-            "Nothing yet today. When Mannie answers a question, the answer and the photo it " +
-                "was seen in are kept on your laptop and shown here.",
+            "No answers yet today. When Mannie sees an answer, the answer and its photo " +
+                "are kept here, so you can check what was seen.",
             style = MaterialTheme.typography.bodyMedium,
             color = Truss.muted,
         )
@@ -1048,15 +1056,21 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
         val (label, bg, fg) =
             when (item.kind) {
               "answer" -> Triple("Yes", Truss.lime, Truss.onLime)
-              "redo" -> Triple("Reminder", Truss.sky, Truss.onSky)
-              "state_check" -> Triple("Checked late", Truss.apricot, Truss.onApricot)
+              "redo" -> Triple("Reminder", Truss.card, Truss.onApricot)
+              "state_check" -> Triple("Checked late", Truss.card, Truss.onApricot)
               "cannot_tell" -> Triple("Can't tell", Truss.sage, Truss.ink)
               else -> Triple("", Truss.sage, Truss.ink)
             }
+        // Two rows carry the day: Mannie speaking up from an earlier sighting
+        // (the reminder), and an answer that only came after its window had
+        // closed (checked late). They sit on the soft clay tint with a larger
+        // photo, so they read at a glance against the calm white rows.
+        val story = item.kind == "redo" || item.kind == "state_check"
+        val photoSize = if (story) 104.dp else 84.dp
         val name = item.outline ?: item.evidence
         val photo = name?.let { state.historyPhotos["${state.historyDay}/$it"] }
         Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Truss.card).border(1.dp, Truss.line, RoundedCornerShape(24.dp)).padding(12.dp),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(if (story) Truss.apricot else Truss.card).border(1.dp, Truss.line, RoundedCornerShape(24.dp)).padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
           if (photo != null) {
@@ -1064,28 +1078,106 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
             Photo(
                 photo,
                 "Evidence photo for ${item.question}. Tap to open.",
-                Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).clickable { open = true },
+                Modifier.size(photoSize).clip(RoundedCornerShape(16.dp)).clickable { open = true },
             )
             if (open) {
               PhotoViewer(photo, item.text.ifBlank { item.question }, onClose = { open = false })
             }
           } else {
-            IconTile(topicIcon(item.question), Truss.sage, Truss.muted, size = 84.dp, shape = RoundedCornerShape(16.dp))
+            IconTile(
+                topicIcon(item.question),
+                if (story) Truss.card else Truss.sage,
+                if (story) Truss.onApricot else Truss.muted,
+                size = photoSize,
+                shape = RoundedCornerShape(16.dp),
+            )
           }
           Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              Text(clock12(item.time) ?: "", style = MaterialTheme.typography.labelMedium, color = Truss.muted)
+              Text(clock12(item.time) ?: "", style = MaterialTheme.typography.labelMedium, color = if (story) Truss.onApricot else Truss.muted)
               if (label.isNotEmpty()) Chip(label, bg, fg)
             }
-            Text(item.text.ifBlank { item.question }, style = MaterialTheme.typography.titleSmall)
+            Text(
+                item.text.ifBlank { item.question },
+                style = if (story) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
+                color = if (item.kind == "cannot_tell") Truss.muted else Truss.ink,
+            )
             if (item.text.isNotBlank()) {
-              Text(item.question, style = MaterialTheme.typography.bodySmall, color = Truss.muted)
+              Text(item.question, style = MaterialTheme.typography.bodySmall, color = if (story) Truss.onApricotSoft else Truss.muted)
             }
           }
         }
       }
     }
   }
+}
+
+/** A soft stand-in photo for previews only: a warm wall over a darker band. */
+private fun previewPhoto(wall: Int, band: Int): Bitmap {
+  val bitmap = Bitmap.createBitmap(252, 252, Bitmap.Config.ARGB_8888)
+  val canvas = android.graphics.Canvas(bitmap)
+  canvas.drawColor(wall)
+  val paint = android.graphics.Paint()
+  paint.color = band
+  canvas.drawRect(0f, 164f, 252f, 252f, paint)
+  paint.color = android.graphics.Color.argb(70, 255, 255, 255)
+  canvas.drawCircle(180f, 82f, 34f, paint)
+  return bitmap
+}
+
+/**
+ * The History screen filled in, for design checks without the glasses or the
+ * laptop: the pill reminder first, then a checked late answer, a plain yes and
+ * a can't tell.
+ */
+@Preview(showBackground = true, widthDp = 400, heightDp = 980)
+@Composable
+private fun HistoryScreenPreview() {
+  val day = LocalDate.now().toString()
+  val state =
+      TrussUiState(
+          historyDay = day,
+          history =
+              listOf(
+                  AnswerItem(
+                      "21:34",
+                      "Did I take my night pills?",
+                      "redo",
+                      "You took your night pills at 9:12 PM. I saw you.",
+                      "pills-again.jpg",
+                      null,
+                  ),
+                  AnswerItem(
+                      "23:48",
+                      "Is the front door locked?",
+                      "state_check",
+                      "The front door was locked when Truss looked again, after the bedtime window had closed.",
+                      "door-late.jpg",
+                      null,
+                  ),
+                  AnswerItem("21:02", "Is the stove off?", "answer", "The stove is off.", "stove-off.jpg", null),
+                  AnswerItem(
+                      "18:20",
+                      "Did I feed the dog?",
+                      "cannot_tell",
+                      "Truss could not tell from what it saw.",
+                      "dog-bowl.jpg",
+                      null,
+                  ),
+              ),
+          historyPhotos =
+              mapOf(
+                  "$day/pills-again.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(216, 198, 180), android.graphics.Color.rgb(141, 106, 84)),
+                  "$day/door-late.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(178, 186, 192), android.graphics.Color.rgb(84, 96, 108)),
+                  "$day/stove-off.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(226, 222, 214), android.graphics.Color.rgb(112, 110, 104)),
+                  "$day/dog-bowl.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(206, 210, 198), android.graphics.Color.rgb(120, 124, 108)),
+              ),
+      )
+  TrussTheme { HistoryScreen(state, onDismissError = {}, onRefresh = {}) }
 }
 
 // MARK: - Settings and diagnostics
@@ -1097,10 +1189,38 @@ private fun SettingsScreen(
     onConnectGlasses: () -> Unit,
     onCapture: () -> Unit,
 ) {
+  SettingsContent(
+      state = state,
+      onDismissError = viewModel::clearError,
+      onLaptopIpChange = viewModel::setLaptopIp,
+      onCheckLaptop = viewModel::checkLaptopNow,
+      onConnectGlasses = onConnectGlasses,
+      onSelectCaptureMode = { viewModel.setCaptureMode(CaptureMode.entries[it]) },
+      onSelectWatchEvery = viewModel::setWatchEverySeconds,
+      diagnostics = { Diagnostics(state, viewModel, onCapture) },
+  )
+}
+
+/**
+ * The Settings screen itself, drawn from state and callbacks so it can be previewed
+ * without the view model. Diagnostics stays a slot passed in by the caller: it needs
+ * the view model, and it starts folded away either way.
+ */
+@Composable
+private fun SettingsContent(
+    state: TrussUiState,
+    onDismissError: () -> Unit,
+    onLaptopIpChange: (String) -> Unit,
+    onCheckLaptop: () -> Unit,
+    onConnectGlasses: () -> Unit,
+    onSelectCaptureMode: (Int) -> Unit,
+    onSelectWatchEvery: (Int) -> Unit,
+    diagnostics: @Composable () -> Unit,
+) {
   var showDiagnostics by remember { mutableStateOf(false) }
 
   ScreenBody {
-    state.lastError?.let { ErrorBanner(it, viewModel::clearError) }
+    state.lastError?.let { ErrorBanner(it, onDismissError) }
     ScreenTitle("Settings")
 
     SectionLabel("Connections")
@@ -1116,7 +1236,7 @@ private fun SettingsScreen(
       }
       OutlinedTextField(
           value = state.laptopIp,
-          onValueChange = viewModel::setLaptopIp,
+          onValueChange = onLaptopIpChange,
           label = { Text("Laptop address") },
           placeholder = { Text("192.168.1.20") },
           singleLine = true,
@@ -1133,7 +1253,7 @@ private fun SettingsScreen(
       OutlineBigButton(
           if (state.laptopCheckBusy) "Checking..." else "Check connection",
           TrussIcons.Refresh,
-          viewModel::checkLaptopNow,
+          onCheckLaptop,
           enabled = !state.laptopCheckBusy,
           modifier = Modifier.fillMaxWidth(),
       )
@@ -1144,15 +1264,24 @@ private fun SettingsScreen(
             color = if (state.laptopReachable == false) Truss.onApricot else Truss.muted,
         )
       }
+      if (state.laptopReachable == false) {
+        Text(
+            "Check the laptop is on and the Truss server is running, and that this phone " +
+                "is on the same Wi-Fi. Then tap Check connection again.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Truss.muted,
+        )
+      }
 
       HorizontalDivider(color = Truss.sage, modifier = Modifier.padding(vertical = 4.dp))
 
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         IconTile(TrussIcons.Glasses, Truss.sage, Truss.ink, size = 40.dp, shape = RoundedCornerShape(12.dp))
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
           Text("Glasses", style = MaterialTheme.typography.titleMedium)
           Text(
-              if (state.glassesReady) state.deviceNames.joinToString() else "Not connected",
+              if (state.glassesReady) state.deviceNames.joinToString()
+              else "Not connected yet. Tap Connect to link them.",
               style = MaterialTheme.typography.bodySmall,
               color = Truss.muted,
           )
@@ -1186,7 +1315,7 @@ private fun SettingsScreen(
           options = CaptureMode.entries.map { it.ordinal },
           selected = state.captureMode.ordinal,
           label = { CaptureMode.entries[it].label },
-          onSelect = { viewModel.setCaptureMode(CaptureMode.entries[it]) },
+          onSelect = onSelectCaptureMode,
           onDark = false,
       )
     }
@@ -1197,7 +1326,7 @@ private fun SettingsScreen(
           options = listOf(15, 30, 60),
           selected = state.watchEverySeconds,
           label = { "$it s" },
-          onSelect = viewModel::setWatchEverySeconds,
+          onSelect = onSelectWatchEvery,
           onDark = false,
       )
     }
@@ -1217,7 +1346,7 @@ private fun SettingsScreen(
       IconTile(TrussIcons.Pulse, Truss.sage, Truss.ink, size = 40.dp, shape = RoundedCornerShape(12.dp))
       Column(Modifier.weight(1f)) {
         Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
-        Text("Connection, last capture, speaker test", style = MaterialTheme.typography.bodySmall, color = Truss.muted)
+        Text("Connection, the last look, and a speaker test", style = MaterialTheme.typography.bodySmall, color = Truss.muted)
       }
       Icon(
           TrussIcons.Chevron,
@@ -1227,7 +1356,7 @@ private fun SettingsScreen(
       )
     }
     if (showDiagnostics) {
-      Diagnostics(state, viewModel, onCapture)
+      diagnostics()
     }
   }
 }
@@ -1268,8 +1397,8 @@ private fun Diagnostics(
     state.pingResult?.let { Text("Ping laptop: $it", style = small) }
   }
 
-  DiagCard("Last capture") {
-    DiagButton(if (state.photoBusy) "Working..." else "Capture and upload", onCapture, !state.busy)
+  DiagCard("Last look") {
+    DiagButton(if (state.photoBusy) "Working..." else "Take a photo and send it", onCapture, !state.busy)
     state.serverBytes?.let { Text("Laptop received: $it bytes", style = small) }
     state.photoElapsedMs?.let { Text("Total elapsed: $it ms", style = small) }
     state.wifiReturn?.let { Text("Return to home Wi-Fi: $it", style = small) }
@@ -1316,5 +1445,54 @@ private fun Diagnostics(
 private fun LogLines(lines: List<String>) {
   lines.forEach { line ->
     Text(line, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+  }
+}
+
+/** The Questions empty state: what Truss is waiting for, and what the person can do. */
+@Composable
+private fun NoQuestionsYet() {
+  Text(
+      "Nothing is being minded yet. Type a question above, or use the bedtime round " +
+          "below to start with the stove, the door and the night pills.",
+      style = MaterialTheme.typography.bodyMedium,
+      color = Truss.muted,
+      modifier = Modifier.padding(horizontal = 6.dp),
+  )
+}
+
+// MARK: - Previews
+
+@Preview(name = "Settings", widthDp = 393, heightDp = 852, showBackground = true)
+@Composable
+private fun SettingsPreview() {
+  val state =
+      TrussUiState(
+          laptopIp = "192.168.1.20",
+          sdkReady = true,
+          registrationState = RegistrationState.REGISTERED,
+          deviceNames = listOf("Glasses"),
+          laptopReachable = true,
+      )
+  TrussTheme {
+    Box(Modifier.background(Truss.ground)) {
+      SettingsContent(
+          state = state,
+          onDismissError = {},
+          onLaptopIpChange = {},
+          onCheckLaptop = {},
+          onConnectGlasses = {},
+          onSelectCaptureMode = {},
+          onSelectWatchEvery = {},
+          diagnostics = {},
+      )
+    }
+  }
+}
+
+@Preview(name = "Questions, none yet", widthDp = 393, heightDp = 300, showBackground = true)
+@Composable
+private fun NoQuestionsYetPreview() {
+  TrussTheme {
+    Box(Modifier.background(Truss.ground)) { ScreenBody { NoQuestionsYet() } }
   }
 }
