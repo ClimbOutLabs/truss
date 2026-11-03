@@ -1850,6 +1850,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val DESK_CHECK_MS = 4_000L
     private const val WATCH_MAX_FAILURES = 3
     private const val SIGNATURE_SIDE = 16
+    // Live view's video frame rate. The toolkit offers 30, 24, 15, 7 and 2; looks are
+    // taken every LIVE_LOOK_EVERY_MS (4 a second), so 7 leaves a fresh frame for each.
+    private const val LIVE_FRAME_RATE = 7
     // Mean grey-level difference below which two photos count as the same view.
     private const val SAME_VIEW_THRESHOLD = 8
     // A same view is sent again after this long anyway, so a question that has
@@ -1862,8 +1865,5 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val LIVE_STEADY_THRESHOLD = 4
     private const val LIVE_STEADY_MS = 1_000L
     private const val LIVE_HOLD_MAX_MS = 180_000L
-    // Live view's video frame rate. The toolkit offers 30, 24, 15, 7 and 2; looks are
-    // taken every LIVE_LOOK_EVERY_MS (4 a second), so 7 leaves a fresh frame for each.
-    private const val LIVE_FRAME_RATE = 7
   }
 }
