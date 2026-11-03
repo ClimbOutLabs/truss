@@ -618,23 +618,26 @@ function setLook(kind, file) {
 });
 // The glasses' view taken after the button was pressed (GET /latest),
 // as a File. The phone sends a view every few seconds while it is
-// watching, so this waits up to 15 s for one newer than the press: an
+// watching, so this waits for one newer than the press: an
 // older frame could show the thing before it was set up, or be the
 // same frame as the other look. With no view at all the phone is
 // asked to start, and the error says to try again.
-// How long to wait for that view: longer than the phone's own beat, or it
-// can time out just before the next photo lands. In live view a photo is
-// sent only when the view changes and holds still, so the wait is longer
-// and the message says to look away and back.
+// How long to wait for that view. The Desk asks the phone for a photo
+// now (POST /watch/look), which it takes at its next check-in, a few
+// seconds away, unless a photo is still being checked.
 function viewWait() {
   const p = PHONE && PHONE.phone;
   if (!(p && p.watching)) return {limit: 15, hint: ""};
-  if (p.mode === "live") return {limit: 45, hint: " Look away and back, then hold still on it."};
-  return {limit: Math.max(15, (Number(p.every) || 30) + 15), hint: ""};
+  // A photo already being checked finishes first (up to about 45 s), then
+  // the phone takes the one asked for.
+  return {limit: 75, hint: " Asked the glasses for a photo now; hold still on it."};
 }
 async function glassesView(onWait) {
   const pressed = Date.now();
   const {limit, hint} = viewWait();
+  // Ask for one photo at once: Live view sends only a changed view, and a
+  // look is often the same view with one small difference.
+  try { await postJSON("/watch/look", {}); } catch (e) { /* the wait below still works on the phone's own beat */ }
   while (true) {
     const r = await fetch("/latest", {cache: "no-store"});
     if (!r.ok && r.status !== 404) throw new Error(await errorText(r));

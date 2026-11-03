@@ -358,7 +358,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   // MARK: - Screen 2, photo (Gate 2)
 
   fun captureAndUpload(requestPermission: suspend (Permission) -> PermissionStatus) {
-    if (_uiState.value.liveHolding) {
+    if (_uiState.value.liveHolding || watchHoldsCamera()) {
       viewModelScope.launch { if (freeCameraFromWatch()) captureAndUpload(requestPermission) }
       return
     }
@@ -644,6 +644,13 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           liveDecided = pendingLive != null
         }
 
+        // A photo the Desk asked for is sent even when it looks like the last one.
+        val forced = fromWatch && lookAsked
+        if (forced) {
+          lookAsked = false
+          photoLog("The Desk asked for a photo now.")
+        }
+
         var photoError: String? = null
         var photoData: PhotoData? = null
         stream
@@ -676,6 +683,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           val current = withContext(Dispatchers.Default) { viewSignature(bitmap) }
           val previous = lastSentSignature
           if (!liveDecided &&
+              !forced &&
               previous != null &&
               SystemClock.elapsedRealtime() - lastSentAt < SAME_VIEW_WINDOW_MS &&
               signatureDistance(previous, current) < SAME_VIEW_THRESHOLD) {
@@ -878,8 +886,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                     state.glassesOff -> true.also { why = "the glasses came off" }
                     state.plantSlug != null -> true.also { why = "a question is being planted" }
                     state.captureMode != CaptureMode.LIVE -> true.also { why = "the capture mode changed" }
+                    // The Desk asked for a photo now: take it even of a view already sent.
+                    lookAsked && item is HoldTick -> true.also { lookNow = true }
                     item !is VideoFrame -> false
-                    now < notBeforeMs -> false
+                    now < notBeforeMs && !lookAsked -> false
                     now - lastLooked < LIVE_LOOK_EVERY_MS -> false
                     else -> {
                       lastLooked = now
@@ -898,6 +908,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                           bestSharp = sharp
                         }
                         previous = current
+                        if (lookAsked) {
+                          pendingLive = current
+                          lookNow = true
+                          return@first true
+                        }
                         val last = lastSentLive
                         val changed =
                             last == null ||
@@ -1016,10 +1031,23 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
    */
   private suspend fun freeCameraFromWatch(): Boolean {
     if (!_uiState.value.photoBusy) return true
-    if (!_uiState.value.liveHolding) return false
+    if (!_uiState.value.liveHolding) {
+      if (!watchHoldsCamera()) return false
+      // A Live view session is sending a photo or waiting for its check; its next hold,
+      // which can be ended at once, comes as soon as that answer is back.
+      val reached =
+          withTimeoutOrNull(FREE_WAIT_MS) { uiState.first { !it.photoBusy || it.liveHolding } }
+              ?: return false
+      if (!reached.photoBusy) return true
+    }
     holdYield = true
     return withTimeoutOrNull(15_000L) { uiState.first { !it.photoBusy } } != null
   }
+
+  /** True while watching's own capture has the camera (sending or checking a photo,
+   * or a Live view session held open between looks), so a tapped photo or a planting
+   * look waits for it instead of being turned away without a word. */
+  private fun watchHoldsCamera(): Boolean = _uiState.value.photoBusy && watchCapturing
 
   private fun photoLog(line: String) {
     val stamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
@@ -1316,8 +1344,15 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       kind: String,
       requestPermission: suspend (Permission) -> PermissionStatus,
   ) {
-    if (_uiState.value.liveHolding) {
-      viewModelScope.launch { if (freeCameraFromWatch()) captureReference(kind, requestPermission) }
+    if (_uiState.value.liveHolding || watchHoldsCamera()) {
+      plantLog("Waiting for the photo being checked to finish, then taking the $kind look.")
+      viewModelScope.launch {
+        if (freeCameraFromWatch()) {
+          captureReference(kind, requestPermission)
+        } else {
+          _uiState.update { it.copy(lastError = "The glasses are still busy with a photo. Try the $kind look again in a moment.") }
+        }
+      }
       return
     }
     if (_uiState.value.photoBusy) return
@@ -1461,6 +1496,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private val watchNudge = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
   private suspend fun waitForBeat() {
+    // A photo the Desk asked for does not wait for the beat.
+    if (lookAsked) return
     withTimeoutOrNull(_uiState.value.watchEverySeconds * 1000L) { watchNudge.first() }
   }
 
@@ -1519,6 +1556,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   // pressing Stop here after the Desk asked for watching is not undone at the next
   // check-in. Kept in the app's preferences, so an app the phone closed and reopened
   // does not take an old start for a new one.
+  /** Set when the Desk asks for one photo now (POST /watch/look); cleared when it is taken. */
+  @Volatile private var lookAsked = false
+  /** The last Desk look request acted on. In memory only: a look is fresh for a minute. */
+  private var lookHandledId: String? = null
+
   private var deskHandledId: String? =
       getApplication<Application>()
           .getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
@@ -1573,6 +1615,16 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
               )
         }
     deskFreshMs = reply.freshSeconds * 1000L
+    val look = reply.lookId
+    if (look != null && look != lookHandledId) {
+      lookHandledId = look
+      if (_uiState.value.watching) {
+        // Read by holdForView and the watch loop's next capture; the nudge wakes a
+        // timed beat that is waiting.
+        lookAsked = true
+        watchNudge.tryEmit(Unit)
+      }
+    }
     val request = reply.request ?: return
     if (request.id == deskHandledId) return
     deskHandledId = request.id
@@ -1944,6 +1996,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val ALERT_POLL_MS = 30_000L
     private const val LAPTOP_CHECK_MS = 20_000L
     private const val DESK_CHECK_MS = 4_000L
+    // How long a tapped photo or a planting look waits for watching's photo in flight.
+    private const val FREE_WAIT_MS = 90_000L
     private const val WATCH_MAX_FAILURES = 3
     private const val SIGNATURE_SIDE = 16
     // Live view's video frame rate. The toolkit offers 30, 24, 15, 7 and 2; looks are

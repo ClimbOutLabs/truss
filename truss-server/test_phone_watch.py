@@ -40,7 +40,7 @@ class Clock:
 def test_store():
     clock = Clock()
     desk = phone_watch.WatchDesk(clock)
-    check("no request and no phone at first", desk.view() == {"request": None, "phone": None})
+    check("no request and no phone at first", desk.view() == {"request": None, "phone": None, "look": None})
     reply = desk.report({"watching": False}, "10.0.0.5")
     check("a check-in with no request gets none", reply["request"] is None)
 
@@ -82,6 +82,21 @@ def test_store():
     check("an unknown mode and a non-bool off are dropped", p["mode"] is None and p["off"] is False)
 
 
+def test_look():
+    clock = Clock()
+    desk = phone_watch.WatchDesk(clock)
+    check("no look at first", desk.report({}, "x")["look"] is None)
+    first = desk.look()["look"]
+    clock.now += timedelta(seconds=5)
+    reply = desk.report({"watching": True}, "x")
+    check("the phone sees the look and its age", reply["look"]["id"] == first["id"] and reply["look"]["age_seconds"] == 5)
+    check("a look leaves start and stop alone", reply["request"] is None)
+    second = desk.look()["look"]
+    check("each look has a new id", second["id"] != first["id"])
+    clock.now += timedelta(seconds=phone_watch.LOOK_FRESH_SECONDS + 1)
+    check("a stale look is not offered", desk.report({}, "x")["look"] is None)
+
+
 def _post(port, path, body):
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}", data=body, method="POST",
@@ -112,11 +127,18 @@ def test_http():
             except urllib.error.HTTPError as e:
                 check(f"bad body {body!r} is refused", e.code == 400)
         check("the start request still stands", server_module.WATCH.view()["request"]["id"] == asked["request"]["id"])
+        with server_module.WRITE_LOCK:
+            looked = _post(port, "/watch/look", b"{}")
+            check("POST /watch/look leaves a look, not waiting behind a capture", looked["look"]["id"])
+            reply = _post(port, "/watch/phone", json.dumps({"watching": True}).encode())
+            check("the phone's check-in carries the look", reply["look"]["id"] == looked["look"]["id"])
+        check("a look leaves the start request standing", server_module.WATCH.view()["request"]["id"] == asked["request"]["id"])
     finally:
         httpd.shutdown()
 
 
 if __name__ == "__main__":
     test_store()
+    test_look()
     test_http()
     print("ALL PASS")
