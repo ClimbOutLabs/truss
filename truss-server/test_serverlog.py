@@ -37,11 +37,19 @@ class TidyTest(unittest.TestCase):
 
     def test_failures_are_kept(self):
         self.assertEqual(
-            serverlog.tidy('[x] "GET /latest HTTP/1.1" 404 -'), ("http", "GET /latest -> 404")
+            serverlog.tidy('[x] "GET /answers HTTP/1.1" 404 -'), ("http", "GET /answers -> 404")
         )
         self.assertEqual(
-            serverlog.tidy("[x] code 404, message No view from the glasses"),
-            ("error", "404 No view from the glasses"),
+            serverlog.tidy("[x] code 404, message No such day"),
+            ("error", "404 No such day"),
+        )
+
+    def test_no_glasses_view_yet_is_a_poll(self):
+        self.assertIsNone(serverlog.tidy('[x] "GET /latest HTTP/1.1" 404 -'))
+        self.assertIsNone(serverlog.tidy("[x] code 404, message No view from the glasses in the last two minutes."))
+        self.assertEqual(
+            serverlog.tidy('[x] "GET /latest HTTP/1.1" 404 -', keep_polls=True),
+            ("http", "GET /latest -> 404"),
         )
 
     def test_check_lines(self):
@@ -59,7 +67,7 @@ class TidyLogTest(unittest.TestCase):
             out = serverlog.TidyLog(console, path, keep_polls=False, clock=FIXED)
             out.write("POST /capture -> saved a.jpg\n")
             for _ in range(3):
-                out.write("[x] code 404, message No view\n")
+                out.write("[x] code 500, message Broken\n")
             out.write('[x] "GET /watch HTTP/1.1" 200 -\n')
             out.write("POST /capture -> saved b")
             out.write(".jpg\n")
@@ -69,7 +77,7 @@ class TidyLogTest(unittest.TestCase):
                 text.splitlines(),
                 [
                     "2026-11-03 05:30:45 | capture  | saved a.jpg",
-                    "2026-11-03 05:30:45 | error    | 404 No view",
+                    "2026-11-03 05:30:45 | error    | 500 Broken",
                     "2026-11-03 05:30:45 | error    | (the line above, 2 more times)",
                     "2026-11-03 05:30:45 | capture  | saved b.jpg",
                 ],
