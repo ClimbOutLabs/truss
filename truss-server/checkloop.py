@@ -115,6 +115,7 @@ SPOKEN_TEMPLATES = {
     "done_bare": "{question} Yes. I saw it at {time}.",
     "redo": "You {act} at {time}. I saw you.",
     "redo_plain": "That is already done. You did it at {time}. I saw you.",
+    "next_window": "The next window opens at {time}.",
 }
 
 # The past tense of the verbs a done question is likely to open with.
@@ -204,15 +205,21 @@ def return_prompt(entry):
     )
 
 
-def redo_text(witness, entry=None):
+def redo_text(witness, entry=None, next_at=None):
     """The spoken redo reminder: what she did, in her own words said
     back to her, the witnessed time in a 12-hour clock, and that it
-    was seen. "You took your night pills at 9:05 PM. I saw you." """
+    was seen. "You took your night pills at 9:05 PM. I saw you."
+    When the same question has another window later today, its start
+    is said too: "The next window opens at 1:00 PM." """
     spoken = _clock(datetime.fromisoformat(witness["at"]))
     act = done_act(entry["question"]) if entry else None
     if act:
-        return SPOKEN_TEMPLATES["redo"].format(act=act, time=spoken)
-    return SPOKEN_TEMPLATES["redo_plain"].format(time=spoken)
+        text = SPOKEN_TEMPLATES["redo"].format(act=act, time=spoken)
+    else:
+        text = SPOKEN_TEMPLATES["redo_plain"].format(time=spoken)
+    if next_at is not None:
+        text += " " + SPOKEN_TEMPLATES["next_window"].format(time=_clock(next_at))
+    return text
 
 
 def _owed_look_at(entry):
@@ -536,7 +543,12 @@ class CheckLoop:
                     errors += 1
                     witness = None
                 if witness is not None:
-                    redo = (entry, witness)
+                    try:
+                        next_at = self.store.next_window(entry, now=now)
+                    except Exception:
+                        errors += 1
+                        next_at = None
+                    redo = (entry, witness, next_at)
                     break
 
         # The state check owed after a missed window: a safety done
@@ -621,9 +633,9 @@ class CheckLoop:
                     except Exception:
                         errors += 1
             if redo is not None:
-                entry, witness = redo
+                entry, witness, next_at = redo
                 try:
-                    self._append_redo_log(entry, witness, evidence, now)
+                    self._append_redo_log(entry, witness, evidence, now, next_at)
                 except Exception:
                     errors += 1
                 try:
@@ -634,7 +646,7 @@ class CheckLoop:
                     # risk being spoken twice.
                     errors += 1
                 else:
-                    text = redo_text(witness, entry)
+                    text = redo_text(witness, entry, next_at)
                     speak.append(text)
                     if self.speak_fn is not None:
                         try:
@@ -749,7 +761,7 @@ class CheckLoop:
         with open(day / "answers.txt", "a") as f:
             f.write(line)
 
-    def _append_redo_log(self, entry, witness, evidence, now):
+    def _append_redo_log(self, entry, witness, evidence, now, next_at=None):
         """The redo line names the witness photo, the one of her doing
         it, as its evidence, so the History screen shows the moment she
         was seen; the frame she was caught returning in is kept beside
@@ -761,7 +773,7 @@ class CheckLoop:
             shown = witness_frame
         line = (
             f"{now.strftime('%H:%M:%S')} | {entry['question']} | "
-            f"redo reminder | {redo_text(witness, entry)} | "
+            f"redo reminder | {redo_text(witness, entry, next_at)} | "
             f"evidence: {shown}"
         )
         if shown != evidence.name:

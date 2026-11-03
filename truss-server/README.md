@@ -388,6 +388,14 @@ that day, about to do it again, one reminder is spoken: that is
 already done, and the time it was done. The reminder is spoken
 once, and its photo is kept as evidence like any firing.
 
+A thing done several times a day is planted once per window, with
+the same words each time: "Did I feed the dog?" from 8 to 10, from
+1 to 3, and from 7 to 9. The plantings are one routine. A second
+feed after the 9 AM one, inside the morning window or after it, is
+met with "You fed the dog at 9:00 AM. I saw you. The next window
+opens at 1:00 PM." Once the 1 PM window opens, feeding is the next
+meal, not a repeat, so the morning feed is no longer watched for one.
+
 If the window closes and the loop never saw it done, that is not
 left as a note in a file. The server raises a missed-window alert
 (see `alerts.py`): the phone app polls for alerts about every 30
