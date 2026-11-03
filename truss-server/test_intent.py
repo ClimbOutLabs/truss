@@ -203,6 +203,10 @@ def test_the_check_knows_the_local_time():
         verdict.check(FRAME, "Did I take my night pills?", config=cfg(stub), now=tuesday, looks=LOOKS)
     check("the check says the day and time",
           "It is now Tuesday 3 November, 7:05 AM." in str(stub.body()["messages"][1]["content"]))
+    with StubModel([{"verdict": "no", "reason": "Full.", "missing": ""}]) as stub:
+        verdict.check(FRAME, "Did I take my night pills?", config=cfg(stub))
+    check("no time is said without one (eval results stay reproducible)",
+          "It is now" not in str(stub.body()["messages"][1]["content"]))
     p = verdict.SYSTEM_PROMPT.lower()
     check("no scenario rule in the prompt",
           not any(w in p for w in ("organizer", "slot", "weekday", " am ", " pm ")))
