@@ -1013,13 +1013,24 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
     state.lastError?.let { ErrorBanner(it, onDismissError) }
     Row(verticalAlignment = Alignment.CenterVertically) {
       Box(Modifier.weight(1f)) { ScreenTitle(title, dateLine) }
-      IconButton(
+      TextButton(
           onClick = onRefresh,
           enabled = !state.historyBusy,
-          modifier = Modifier.size(52.dp).clip(CircleShape).background(Truss.card),
+          modifier = Modifier.height(48.dp).clip(CircleShape).background(Truss.card),
       ) {
-        Icon(TrussIcons.Refresh, contentDescription = "Refresh", tint = Truss.ink)
+        Icon(TrussIcons.Refresh, contentDescription = null, tint = Truss.ink, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("Refresh", style = MaterialTheme.typography.labelMedium)
       }
+    }
+    if (state.history.isNotEmpty()) {
+      Text(
+          if (title == "Today") "What Truss witnessed today, with the photo for each answer."
+          else "What Truss witnessed, with the photo for each answer.",
+          style = MaterialTheme.typography.bodyMedium,
+          color = Truss.muted,
+          modifier = Modifier.padding(horizontal = 4.dp),
+      )
     }
     if (state.historyBusy && state.history.isEmpty()) {
       Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(6.dp)) {
@@ -1044,15 +1055,21 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
         val (label, bg, fg) =
             when (item.kind) {
               "answer" -> Triple("Yes", Truss.lime, Truss.onLime)
-              "redo" -> Triple("Reminder", Truss.sky, Truss.onSky)
-              "state_check" -> Triple("Checked late", Truss.apricot, Truss.onApricot)
+              "redo" -> Triple("Reminder", Truss.card, Truss.onApricot)
+              "state_check" -> Triple("Checked late", Truss.card, Truss.onApricot)
               "cannot_tell" -> Triple("Can't tell", Truss.sage, Truss.ink)
               else -> Triple("", Truss.sage, Truss.ink)
             }
+        // Two rows carry the day: Mannie speaking up from an earlier sighting
+        // (the reminder), and an answer that only came after its window had
+        // closed (checked late). They sit on the soft clay tint with a larger
+        // photo, so they read at a glance against the calm white rows.
+        val story = item.kind == "redo" || item.kind == "state_check"
+        val photoSize = if (story) 104.dp else 84.dp
         val name = item.outline ?: item.evidence
         val photo = name?.let { state.historyPhotos["${state.historyDay}/$it"] }
         Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Truss.card).border(1.dp, Truss.line, RoundedCornerShape(24.dp)).padding(12.dp),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(if (story) Truss.apricot else Truss.card).border(1.dp, Truss.line, RoundedCornerShape(24.dp)).padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
           if (photo != null) {
@@ -1060,28 +1077,106 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
             Photo(
                 photo,
                 "Evidence photo for ${item.question}. Tap to open.",
-                Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).clickable { open = true },
+                Modifier.size(photoSize).clip(RoundedCornerShape(16.dp)).clickable { open = true },
             )
             if (open) {
               PhotoViewer(photo, item.text.ifBlank { item.question }, onClose = { open = false })
             }
           } else {
-            IconTile(topicIcon(item.question), Truss.sage, Truss.muted, size = 84.dp, shape = RoundedCornerShape(16.dp))
+            IconTile(
+                topicIcon(item.question),
+                if (story) Truss.card else Truss.sage,
+                if (story) Truss.onApricot else Truss.muted,
+                size = photoSize,
+                shape = RoundedCornerShape(16.dp),
+            )
           }
           Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              Text(clock12(item.time) ?: "", style = MaterialTheme.typography.labelMedium, color = Truss.muted)
+              Text(clock12(item.time) ?: "", style = MaterialTheme.typography.labelMedium, color = if (story) Truss.onApricot else Truss.muted)
               if (label.isNotEmpty()) Chip(label, bg, fg)
             }
-            Text(item.text.ifBlank { item.question }, style = MaterialTheme.typography.titleSmall)
+            Text(
+                item.text.ifBlank { item.question },
+                style = if (story) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
+                color = if (item.kind == "cannot_tell") Truss.muted else Truss.ink,
+            )
             if (item.text.isNotBlank()) {
-              Text(item.question, style = MaterialTheme.typography.bodySmall, color = Truss.muted)
+              Text(item.question, style = MaterialTheme.typography.bodySmall, color = if (story) Truss.onApricotSoft else Truss.muted)
             }
           }
         }
       }
     }
   }
+}
+
+/** A soft stand-in photo for previews only: a warm wall over a darker band. */
+private fun previewPhoto(wall: Int, band: Int): Bitmap {
+  val bitmap = Bitmap.createBitmap(252, 252, Bitmap.Config.ARGB_8888)
+  val canvas = android.graphics.Canvas(bitmap)
+  canvas.drawColor(wall)
+  val paint = android.graphics.Paint()
+  paint.color = band
+  canvas.drawRect(0f, 164f, 252f, 252f, paint)
+  paint.color = android.graphics.Color.argb(70, 255, 255, 255)
+  canvas.drawCircle(180f, 82f, 34f, paint)
+  return bitmap
+}
+
+/**
+ * The History screen filled in, for design checks without the glasses or the
+ * laptop: the pill reminder first, then a checked late answer, a plain yes and
+ * a can't tell.
+ */
+@Preview(showBackground = true, widthDp = 400, heightDp = 980)
+@Composable
+private fun HistoryScreenPreview() {
+  val day = LocalDate.now().toString()
+  val state =
+      TrussUiState(
+          historyDay = day,
+          history =
+              listOf(
+                  AnswerItem(
+                      "21:34",
+                      "Did I take my night pills?",
+                      "redo",
+                      "You took your night pills at 9:12 PM. I saw you.",
+                      "pills-again.jpg",
+                      null,
+                  ),
+                  AnswerItem(
+                      "23:48",
+                      "Is the front door locked?",
+                      "state_check",
+                      "The front door was locked when Truss looked again, after the bedtime window had closed.",
+                      "door-late.jpg",
+                      null,
+                  ),
+                  AnswerItem("21:02", "Is the stove off?", "answer", "The stove is off.", "stove-off.jpg", null),
+                  AnswerItem(
+                      "18:20",
+                      "Did I feed the dog?",
+                      "cannot_tell",
+                      "Truss could not tell from what it saw.",
+                      "dog-bowl.jpg",
+                      null,
+                  ),
+              ),
+          historyPhotos =
+              mapOf(
+                  "$day/pills-again.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(216, 198, 180), android.graphics.Color.rgb(141, 106, 84)),
+                  "$day/door-late.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(178, 186, 192), android.graphics.Color.rgb(84, 96, 108)),
+                  "$day/stove-off.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(226, 222, 214), android.graphics.Color.rgb(112, 110, 104)),
+                  "$day/dog-bowl.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(206, 210, 198), android.graphics.Color.rgb(120, 124, 108)),
+              ),
+      )
+  TrussTheme { HistoryScreen(state, onDismissError = {}, onRefresh = {}) }
 }
 
 // MARK: - Settings and diagnostics
