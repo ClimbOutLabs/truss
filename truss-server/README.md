@@ -146,7 +146,7 @@ Muse Spark 1.3 over the Meta Model API:
 | `TRUSS_META_API_KEY` | unset (off) | the Meta key; https only, never logged |
 | `TRUSS_META_BASE_URL` | `https://api.meta.ai/v1` | must be https |
 | `TRUSS_META_MODEL` | `muse-spark-1.3` | never the contributor tier |
-| `TRUSS_META_TIMEOUT_S` | `45` | |
+| `TRUSS_META_TIMEOUT_S` | `90` (the whole call, retry included) | |
 
 The endpoint below is then a fallback only when `TRUSS_BASE_URL` is set
 explicitly, so Glimmer need not run at all, and only while it lists a
@@ -169,7 +169,7 @@ before:
 | `TRUSS_MODEL` | `muse-glimmer-30b` | `muse-spark-1.3` (never the contributor tier) |
 | `TRUSS_API_KEY` | none (falls back to `MODEL_API_KEY`) | the key |
 | `TRUSS_TIMEOUT_S` | `120` (the whole check, retry included) | |
-| `TRUSS_MAX_TOKENS` | `2048` (room to think, then answer) | |
+| `TRUSS_MAX_TOKENS` | `4096` (room to think, then answer) | |
 | `TRUSS_CHECK_MODE` | `single` | |
 | `TRUSS_BATCH_CHECKS` | `1` (every question due on a photo in one call; `0` = one call each) | |
 

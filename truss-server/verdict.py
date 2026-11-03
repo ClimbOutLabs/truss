@@ -195,10 +195,13 @@ MANY_SAFETY_INSTRUCTION = (
 
 ZERO_USAGE = {"spark_input_tokens": 0, "spark_output_tokens": 0, "sam_images": 0}
 
-# Muse Glimmer thinks before it answers, so the answer needs room after
-# the thinking. A reply that still runs out is retried once with twice
-# the room (see endpoint.ask_json) and is never read as an answer.
-DEFAULT_MAX_TOKENS = 2048
+# Muse Glimmer and Muse Spark think before they answer, so the answer
+# needs room after the thinking. Live, Muse Spark ran past 2048 on a pill
+# check (cut off at 29.7 s), and its retry then ran out of time, so the
+# check made no answer at all; 4096 leaves room the first time. A reply
+# that still runs out is retried once with twice the room (see
+# endpoint.ask_json) and is never read as an answer.
+DEFAULT_MAX_TOKENS = 4096
 
 
 def max_tokens():

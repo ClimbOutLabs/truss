@@ -820,10 +820,10 @@ def test_a_retry_is_logged_with_its_cause():
 def test_default_max_tokens_has_room_to_think():
     with StubModel([YES]) as stub, env():
         verdict.check(FRAME, "Is the front door locked?", config=cfg(stub))
-        with env(TRUSS_MAX_TOKENS="4096"):
+        with env(TRUSS_MAX_TOKENS="3000"):
             verdict.check(FRAME, "Is the front door locked?", config=cfg(stub))
-    check("max tokens: 2048 by default", stub.body(0)["max_tokens"] == 2048)
-    check("max tokens: TRUSS_MAX_TOKENS read", stub.body(1)["max_tokens"] == 4096)
+    check("max tokens: 4096 by default", stub.body(0)["max_tokens"] == 4096)
+    check("max tokens: TRUSS_MAX_TOKENS read", stub.body(1)["max_tokens"] == 3000)
 
 
 def test_empty_reason_verdict_is_not_used():
