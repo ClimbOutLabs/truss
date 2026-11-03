@@ -273,7 +273,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 
           <label class="rowline"><input type="checkbox" id="p-safety"><span class="check"></span><span>A wrong answer would do harm, so be extra careful with this one</span></label>
 
-          <label class="field" id="look-at-field" hidden><span class="fl">What to look at, if it is missed</span>
+          <label class="field" id="look-at-field" hidden><span class="fl">What to look at, if it is not seen</span>
             <input type="text" id="p-look" placeholder="the {weekday} PM compartment"></label>
 
           <div><button class="btn" type="submit" id="p-go">Start watching for me</button></div>
@@ -356,21 +356,6 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
         <div class="msg" id="s-meta-msg" hidden></div>
       </section>
 
-      <section class="card">
-        <div class="spread"><h2 class="ctitle">Aman</h2><span id="s-aman-state" class="muted"></span></div>
-        <label class="field"><span class="fl">Address</span>
-          <input type="text" id="s-aman-base" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:8791"></label>
-        <label class="field"><span class="fl">Sign-in token</span>
-          <input type="password" id="s-aman-token" autocomplete="off" spellcheck="false"></label>
-        <label class="field"><span class="fl">Check chat</span>
-          <input type="text" id="s-aman-session" autocomplete="off" spellcheck="false" placeholder="The id of the Aman chat that makes the checks"></label>
-        <div class="row">
-          <button class="btn" id="s-aman-save">Save</button>
-          <button class="btn2" id="s-aman-test">Test</button>
-        </div>
-        <div class="msg" id="s-aman-msg" hidden></div>
-      </section>
-
       <p class="note" style="margin:0" id="s-where">Keys stay on this Mac, in a file only you can read. They are never shown again or sent anywhere.</p>
     </div>
   </div>
@@ -440,7 +425,7 @@ function whenText(p) {
 function stateText(q) {
   if (q.state === "retired") return ["Stopped", ""];
   if (q.state === "planting") return ["Needs looks", "warn"];
-  if (q.kind === "done" && q.miss_pending) return ["Missed", "warn"];
+  if (q.kind === "done" && q.miss_pending) return ["Not seen", "warn"];
   if (q.kind === "done" && q.witness_time) return [`Seen ${q.witness_time}`, "yes"];
   if (q.state === "answered") {
     const at = q.answered_at ? new Date(q.answered_at) : null;
@@ -512,8 +497,8 @@ async function loadAlerts() {
 function renderBanners() {
   const out = [];
   if (STATUS && STATUS.unreachable) out.push("Cannot reach Truss on this computer.");
-  else if (STATUS && STATUS.config_error && STATUS.checker !== "aman") out.push(`Truss cannot answer any checks yet. ${STATUS.config_error} Add the Meta Model API key in Settings.`);
-  if (STATUS && STATUS.checker === "aman") out.push("Checks are being answered by Aman, not the Muse API. You can switch in Settings.");
+  else if (STATUS && STATUS.checker && STATUS.checker !== "endpoint") out.push("Checks are not going to Muse Spark. Pick Muse Spark in Settings.");
+  else if (STATUS && STATUS.config_error) out.push(`Truss cannot answer any checks yet. ${STATUS.config_error} Add the Meta Model API key in Settings.`);
   const banners = out.map((t) => `<div class="banner"><span class="mark">●</span><div>${esc(t)}</div></div>`);
   ALERTS.forEach((a) => {
     if (a.headline && a.note) banners.push(`<div class="banner"><span class="mark">●</span><div><div class="bhead">${esc(a.headline)}</div><div class="bnote">${esc(a.note)}</div></div></div>`);
@@ -1054,10 +1039,6 @@ function renderSettings() {
   $("s-meta-clear").hidden = mk.from !== "saved";
   const model = STATUS && STATUS.model;
   $("s-meta-state").textContent = mk.set ? (model ? model : "Key set") : "No key";
-  if (document.activeElement !== $("s-aman-base")) $("s-aman-base").value = s.aman_base.from === "default" ? "" : s.aman_base.value;
-  if (document.activeElement !== $("s-aman-session")) $("s-aman-session").value = s.aman_session.value || "";
-  $("s-aman-token").placeholder = s.aman_token.set ? `A token is ${FROM[s.aman_token.from] || "set"}. Paste a new one to replace it.` : "Paste the token";
-  $("s-aman-state").textContent = s.aman_token.set && s.aman_session.value ? "Set up" : "Not set up";
   $("s-where").textContent = `Keys stay on this Mac, in ${s.file}, which only you can read. They are never shown again or sent anywhere.`;
 }
 async function saveSettings(body, msgId, okText) {
@@ -1070,16 +1051,15 @@ async function saveSettings(body, msgId, okText) {
   } catch (e) { showMsg(msgId, e.message, true); return false; }
 }
 async function testSettings(what, msgId) {
-  showMsg(msgId, what === "meta" ? "Asking Muse Spark one short question…" : "Signing in to Aman…");
+  showMsg(msgId, "Asking Muse Spark one short question…");
   try {
     const r = await postJSON("/settings/test", {what});
     showMsg(msgId, `${r.text} (${r.seconds} seconds)`, !r.ok);
-    if (what === "meta") $("s-meta-state").innerHTML = r.ok ? `<span class="okt">Ready, answered in ${esc(r.seconds)} seconds</span>` : `<span class="badt">Not answering</span>`;
-    else $("s-aman-state").innerHTML = r.ok ? `<span class="okt">Signed in</span>` : `<span class="badt">Not connected</span>`;
+    $("s-meta-state").innerHTML = r.ok ? `<span class="okt">Ready, answered in ${esc(r.seconds)} seconds</span>` : `<span class="badt">Not answering</span>`;
   } catch (e) { showMsg(msgId, e.message, true); }
 }
 document.querySelectorAll("input[name=checker]").forEach((r) => r.addEventListener("change", () =>
-  saveSettings({checker: r.value}, "s-checker-msg", r.value === "aman" ? "Checks now go to Aman." : "Checks now go to the Muse API.")));
+  saveSettings({checker: r.value}, "s-checker-msg", "Checks now go to Muse Spark.")));
 $("s-meta-save").addEventListener("click", async () => {
   const key = $("s-meta-key").value.trim();
   if (!key) { showMsg("s-meta-msg", "Paste the key first.", true); return; }
@@ -1096,13 +1076,6 @@ $("s-meta-clear").addEventListener("click", async (ev) => {
   b.dataset.armed = ""; b.textContent = "Forget the saved key";
   saveSettings({clear: ["meta_key"]}, "s-meta-msg", "The saved key is gone.");
 });
-$("s-aman-save").addEventListener("click", async () => {
-  const body = {aman_base: $("s-aman-base").value.trim(), aman_session: $("s-aman-session").value.trim()};
-  const token = $("s-aman-token").value.trim();
-  if (token) body.aman_token = token;
-  if (await saveSettings(body, "s-aman-msg", "Saved.")) $("s-aman-token").value = "";
-});
-$("s-aman-test").addEventListener("click", () => testSettings("aman", "s-aman-msg"));
 
 
 // ---- guide ----------------------------------------------------------------
@@ -1168,6 +1141,7 @@ setInterval(() => { if (TAB === "guide") loadGuide(); }, 4000);
 // (GET /latest). With "Play" on, each new line is played here with the
 // same audio the glasses played.
 let FEED_AFTER = 0;
+let FEED_RUN = "";
 let FEED_LINES = [];
 let FEED_STARTED = false;
 const PLAY_QUEUE = [];
@@ -1190,6 +1164,12 @@ function drawFeed() {
 async function loadFeed() {
   try {
     const r = await getJSON(`/feed?after=${FEED_AFTER}`);
+    if (r.run && FEED_RUN && r.run !== FEED_RUN) {
+      // The server restarted and counts its lines from 1 again: start over.
+      FEED_RUN = r.run; FEED_AFTER = 0; FEED_LINES = [];
+      return loadFeed();
+    }
+    if (r.run) FEED_RUN = r.run;
     const fresh = r.lines || [];
     if (fresh.length) {
       FEED_AFTER = fresh[fresh.length - 1].id;
