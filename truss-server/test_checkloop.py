@@ -480,6 +480,38 @@ def test_one_due_question_skips_the_batch():
     check("the question is asked alone", loop.check_fn.calls == ["is-the-stove-off"])
 
 
+def plant_safety(store, text):
+    slug = store.create(text, {"kind": "interval", "minutes": 0}, safety=True)
+    store.save_ref(slug, "yes", JPEG)
+    store.save_ref(slug, "no", JPEG)
+    return slug
+
+
+def test_a_safety_question_is_never_batched():
+    batch = ScriptedBatch({
+        "is-the-front-door-locked": dict(verdict("no", "The latch is open."), failure=None),
+        "is-the-back-door-locked": dict(verdict("no", "The bolt is open."), failure=None),
+    })
+    store, loop, spoken, captures = batch_rig(
+        {"is-the-stove-off": [verdict("cannot_tell", "Knobs out of view.")]}, batch
+    )
+    stove = plant_safety(store, "Is the stove off?")
+    plant(store, "Is the front door locked?", {"kind": "interval", "minutes": 0})
+    plant(store, "Is the back door locked?", {"kind": "interval", "minutes": 0})
+    loop.process_frame(frame(captures, "a.jpg"))
+    check("the batch holds only the non-safety questions",
+          len(batch.calls) == 1 and stove not in batch.calls[0] and len(batch.calls[0]) == 2)
+    check("the safety question is asked alone", loop.check_fn.calls == [stove])
+
+    # One safety and one ordinary question: nothing is left to batch.
+    batch = ScriptedBatch()
+    store, loop, spoken, captures = batch_rig({}, batch)
+    stove = plant_safety(store, "Is the stove off?")
+    plant(store, "Is the front door locked?", {"kind": "interval", "minutes": 0})
+    loop.process_frame(frame(captures, "b.jpg"))
+    check("no batch when only one non-safety question is due", batch.calls == [])
+
+
 if __name__ == "__main__":
     test_unmanaged_without_standing_questions()
     test_cannot_tell_is_silent_and_deletes()
@@ -499,4 +531,5 @@ if __name__ == "__main__":
     test_a_question_the_batch_missed_is_asked_alone()
     test_a_failed_batch_falls_back_to_one_by_one()
     test_one_due_question_skips_the_batch()
+    test_a_safety_question_is_never_batched()
     print("ALL PASS")

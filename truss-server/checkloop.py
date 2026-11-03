@@ -716,8 +716,13 @@ class CheckLoop:
     def _batch(self, frame_path, due):
         """({slug: result}, start time) for the due questions one batch
         call answered. Empty with no batch_fn, fewer than two questions,
-        or a batch that failed; those questions are checked one by one."""
+        or a batch that failed; those questions are checked one by one.
+
+        A safety question is never batched: it is always asked alone, so
+        a misnumbered or blended answer in a batch can never be its
+        all-clear."""
         started = time.monotonic()
+        due = [e for e in due if e.get("safety") is not True]
         if self.batch_fn is None or len(due) < 2:
             return {}, started
         try:
