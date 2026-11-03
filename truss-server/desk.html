@@ -473,7 +473,7 @@ $("tab-today").addEventListener("click", async (ev) => {
   if (g) {
     g.disabled = true;
     try {
-      const view = await glassesView(() => showMsg("msg-today", "Waiting for a fresh view from the glasses…"));
+      const view = await glassesView((text) => showMsg("msg-today", text));
       const r = await postImage(`/plant/ref?slug=${encodeURIComponent(g.dataset.slug)}&kind=${g.dataset.glasses}`, view.file);
       showMsg("msg-today", `Took the ${g.dataset.glasses} look from the glasses' view ${view.ago} s ago.`);
       if (r.state === "standing") {
@@ -606,8 +606,19 @@ function setLook(kind, file) {
 // older frame could show the thing before it was set up, or be the
 // same frame as the other look. With no view at all the phone is
 // asked to start, and the error says to try again.
+// How long to wait for that view: longer than the phone's own beat, or it
+// can time out just before the next photo lands. In live view a photo is
+// sent only when the view changes and holds still, so the wait is longer
+// and the message says to look away and back.
+function viewWait() {
+  const p = PHONE && PHONE.phone;
+  if (!(p && p.watching)) return {limit: 15, hint: ""};
+  if (p.mode === "live") return {limit: 45, hint: " Look away and back, then hold still on it."};
+  return {limit: Math.max(15, (Number(p.every) || 30) + 15), hint: ""};
+}
 async function glassesView(onWait) {
   const pressed = Date.now();
+  const {limit, hint} = viewWait();
   while (true) {
     const r = await fetch("/latest", {cache: "no-store"});
     if (!r.ok && r.status !== 404) throw new Error(await errorText(r));
@@ -619,11 +630,11 @@ async function glassesView(onWait) {
         return {file: new File([blob], `glasses-${Date.now()}.jpg`, {type: "image/jpeg"}), ago: ago.toFixed(0)};
       }
     }
-    if (waited > 15) {
+    if (waited > limit) {
       const said = await askPhone(true);
-      throw new Error(said.startsWith("Couldn't") ? said : "No new view came from the glasses in 15 s. Asked the phone to start watching; try again in a few seconds.");
+      throw new Error(said.startsWith("Couldn't") ? said : `No new view came from the glasses in ${limit} s. Asked the phone to start watching; try again in a few seconds.`);
     }
-    if (onWait) onWait();
+    if (onWait) onWait(`Waiting for a fresh view from the glasses… ${Math.round(waited)} of ${limit} s.${hint}`);
     await new Promise((res) => setTimeout(res, 1000));
   }
 }
@@ -638,7 +649,7 @@ document.querySelectorAll("[data-take]").forEach((b) => b.addEventListener("clic
   const kind = b.dataset.take;
   b.disabled = true;
   try {
-    const view = await glassesView(() => showMsg("p-msg", "Waiting for a fresh view from the glasses…"));
+    const view = await glassesView((text) => showMsg("p-msg", text));
     const other = LOOKS[kind === "yes" ? "no" : "yes"];
     if (await sameBytes(view.file, other)) throw new Error(`That view is the same photo as the ${kind === "yes" ? "no" : "yes"} look. Change what the glasses see, then take it again.`);
     setLook(kind, view.file);
