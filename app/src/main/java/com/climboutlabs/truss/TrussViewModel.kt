@@ -774,6 +774,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             lastSentSignature = signature
             lastSentAt = SystemClock.elapsedRealtime()
             lastSentLive = pendingLive
+            lookedAwaySinceSent = false
           }
           if (fromWatch) {
             watchRecord("sent", fired = result.fired.size)
@@ -831,12 +832,18 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
    * and of the view about to be sent. Video and photo pictures are never compared. */
   private var lastSentLive: IntArray? = null
   private var pendingLive: IntArray? = null
+  /** Live view: since the laptop last received a view, the glasses held still on a
+   * different one (a look away, or a hand in the box). A view looked back at after
+   * that is new again, even if it matches the one sent. Kept across looks and
+   * sessions, cleared when a view is sent. */
+  private var lookedAwaySinceSent = false
 
   private object HoldTick
 
   /**
    * Live view: keep the open video running until the view differs from the last one the
-   * laptop received (or that one is a while old) and has held still for a moment, so the
+   * laptop received (or that one is a while old, or the glasses held still on another
+   * view since, see lookedAwaySinceSent) and has held still for a moment, so the
    * photo taken next is of something new and not blurred by a turning head. Nothing here
    * knows what is in the view; it only compares small grey pictures of the video.
    *
@@ -889,12 +896,16 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                     // The Desk asked for a photo now: take it even of a view already sent.
                     item is HoldTick && lookPending() -> true.also { lookNow = true }
                     item !is VideoFrame -> false
-                    now < notBeforeMs && !lookPending() -> false
                     now - lastLooked < LIVE_LOOK_EVERY_MS -> false
                     else -> {
                       lastLooked = now
+                      // Before the wait between looks is up, frames are still read, so a
+                      // look away made during it counts, but no photo is taken yet.
+                      val waiting = now < notBeforeMs && !lookPending()
                       val current = lumaSignature(item)
-                      if (current == null) {
+                      if (current == null && waiting) {
+                        false
+                      } else if (current == null) {
                         unreadable = true
                         lookNow = true
                         true
@@ -914,10 +925,15 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                           return@first true
                         }
                         val last = lastSentLive
+                        val differs = last != null && signatureDistance(last, current) >= SAME_VIEW_THRESHOLD
+                        // A different view held still, not a head shake's blur.
+                        if (differs && now - steadySince >= LIVE_STEADY_MS) lookedAwaySinceSent = true
+                        if (waiting) return@first false
                         val changed =
                             last == null ||
                                 now - lastSentAt >= SAME_VIEW_WINDOW_MS ||
-                                signatureDistance(last, current) >= SAME_VIEW_THRESHOLD
+                                differs ||
+                                lookedAwaySinceSent
                         // Held still long enough, and this frame is about as sharp as
                         // the sharpest since it held still: a small head shake blurs a
                         // frame without moving the grid much, so a blurred one waits for
@@ -1402,6 +1418,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
     lastSentSignature = null
     lastSentLive = null
+    lookedAwaySinceSent = false
     _uiState.update {
       it.copy(
           watching = true,
