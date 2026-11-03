@@ -362,7 +362,7 @@ def check(
     }
 
 
-def _many_request(frame_path, items):
+def _many_request(frame_path, items, now=None):
     """(system, content) for one check of several questions."""
     system = SYSTEM_PROMPT + MANY_INSTRUCTION
     if any(item.get("safety") is True for item in items):
@@ -380,12 +380,14 @@ def _many_request(frame_path, items):
             content.append(endpoint.text_part(
                 f"For question {number}, " + LOOKS_LABEL.format(looks=quoted)
             ))
+    if now is not None:
+        content.append(endpoint.text_part(now_text(now)))
     content.append(endpoint.text_part("The photo:"))
     content.append(endpoint.image_part(frame_path))
     return system, content
 
 
-def check_many(frame_path, items, config=None):
+def check_many(frame_path, items, config=None, now=None):
     """Ask the configured model every question in items about one frame,
     in one call. Each item is {"question", "looks" (or None), "safety"}.
     Single mode only: the reference images of multi mode would make one
@@ -410,7 +412,7 @@ def check_many(frame_path, items, config=None):
         model = cfg.model if cfg is not None else endpoint.describe_from_env()["model"]
         if not items:
             return []
-        system, content = _many_request(frame_path, items)
+        system, content = _many_request(frame_path, items, now=now)
         # Each answer needs its own room after any thinking.
         room = max_tokens() + 512 * (len(items) - 1)
         reply = endpoint.ask_json(

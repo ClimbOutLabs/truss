@@ -216,7 +216,7 @@ def batch_check(frame_path, entries):
         }
         for entry in entries
     ]
-    return verdict.check_many(frame_path, items)
+    return verdict.check_many(frame_path, items, now=CLOCK())
 
 
 # The check being made right now, for the Desk: a Muse Spark check can

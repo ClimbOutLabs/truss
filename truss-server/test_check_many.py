@@ -128,6 +128,18 @@ def test_a_reply_off_the_schema_fails_every_question():
           all(r["failure"] and r["verdict"] == "cannot_tell" for r in results))
 
 
+def test_the_day_and_time_ride_once_when_given():
+    from datetime import datetime
+    tuesday = datetime(2026, 11, 3, 7, 5)
+    reply = {"answers": [answer(1, "cannot_tell", "Dark.", "the lock"),
+                         answer(2, "cannot_tell", "Dark.", "the pill box")]}
+    with StubModel([reply]) as stub:
+        verdict.check_many(FRAME, [DOOR, PILLS], config=cfg(stub), now=tuesday)
+    check("the time is said once", user_text(stub).count("It is now Tuesday 3 November, 7:05 AM.") == 1)
+    _, stub = ask([DOOR, PILLS], reply)
+    check("no time without one", "It is now" not in user_text(stub))
+
+
 if __name__ == "__main__":
     test_one_call_one_photo()
     test_no_safety_rule_without_a_safety_question()
@@ -136,4 +148,5 @@ if __name__ == "__main__":
     test_the_single_check_guards_still_hold()
     test_a_failed_call_fails_every_question()
     test_a_reply_off_the_schema_fails_every_question()
+    test_the_day_and_time_ride_once_when_given()
     print("ALL PASS")
