@@ -53,6 +53,9 @@ POLL_LINES = (
     re.compile(r"^GET /desk -> 200 OK$"),
 )
 
+# The start of GET /latest's "no view yet" error (see server.py).
+NO_VIEW = "No view from the glasses"
+
 # A path's tag is its first part, with a few plainer names.
 TAG_NAMES = {"tts": "said", "": "http"}
 TAG_WIDTH = 8
@@ -72,12 +75,18 @@ def tidy(line, keep_polls=False):
     access = ACCESS.match(text)
     if access:
         code = access["code"]
+        # The Desk asks for the glasses' latest view every few seconds,
+        # and "no view yet" is its ordinary answer, not a failure.
+        if not keep_polls and code == "404" and access["path"].split("?", 1)[0] == "/latest":
+            return None
         if code.startswith(("2", "3")) and not keep_polls:
             # A success says nothing the handler's own line does not;
             # the rest are the polls.
             return None
         return ("http", f"{access['method']} {access['path']} -> {code}")
     error = ERROR.match(text)
+    if error and not keep_polls and error["message"].startswith(NO_VIEW):
+        return None
     if error:
         return ("error", f"{error['code']} {error['message']}")
     if not keep_polls and any(p.match(text) for p in POLL_LINES):
