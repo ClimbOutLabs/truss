@@ -606,9 +606,9 @@ private fun HeroCard(
       subtitle =
           when {
             state.captureMode == CaptureMode.LIVE && since != null ->
-                "Live view since $since. Mannie looks when the view changes and holds still."
+                "Live view since $since. The voice in your glasses looks when the view changes and holds still."
             state.captureMode == CaptureMode.LIVE ->
-                "Live view. Mannie looks when the view changes and holds still."
+                "Live view. The voice in your glasses looks when the view changes and holds still."
             since != null -> "Watching since $since."
             else -> "Watching now."
           }
@@ -730,7 +730,7 @@ private fun LastAnswer(state: TrussUiState) {
   Surface(shape = RoundedCornerShape(28.dp), padding = 18.dp) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
       IconTile(TrussIcons.Check, Truss.lime, Truss.onLime, size = 40.dp, shape = CircleShape)
-      Text("What Mannie last said", style = MaterialTheme.typography.titleMedium)
+      Text("The last thing said in your glasses", style = MaterialTheme.typography.titleMedium)
     }
     val photo = state.lastSpokenPhoto
     if (photo == null) {
