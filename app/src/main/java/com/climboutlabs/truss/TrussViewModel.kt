@@ -578,13 +578,17 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       }
       photoLog("Session started (glasses Wi-Fi is handled by the toolkit).")
 
+      // Live view reads the video itself to tell when the view changed, so it asks the
+      // toolkit for decoded frames. Encoded frames cannot be read on the phone, and with
+      // them every look fell straight through to a photo, as timed photos would take.
+      val liveWatch = fromWatch && _uiState.value.captureMode == CaptureMode.LIVE
       var addError: String? = null
       activeSession
           .addCamera(
               StreamConfiguration(
                   videoQuality = VideoQuality.MEDIUM,
                   frameRate = 24,
-                  compressVideo = true,
+                  compressVideo = !liveWatch,
               ),
           )
           .onSuccess { camera = it }
@@ -603,137 +607,191 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       _uiState.update { it.copy(streamActive = true) }
       photoLog("Camera stream is up.")
 
-      // Live view: with the video open, wait for a view worth a look before the photo.
-      var liveDecided = false
-      if (fromWatch && _uiState.value.captureMode == CaptureMode.LIVE) {
-        if (!holdForView(stream, firstError)) return
-        // The video already judged this view new; only readable video counts.
-        liveDecided = pendingLive != null
-      }
+      // Live view keeps this one session and its video open from look to look, as long
+      // as the laptop can be reached with it open (stayOpen below). Opening and closing
+      // a session for every photo is what dropped the glasses. Timed photos, a tapped
+      // photo and a planting look take one look and leave, as before.
+      var looks = 0
+      var stayOpen = false
+      var lookStartedAt = startedAt
+      var lastLookAt = 0L
+      look@ while (true) {
+        if (looks > 0) {
+          lookStartedAt = SystemClock.elapsedRealtime()
+          _uiState.update { it.copy(photoLog = emptyList(), serverBytes = null, spokenLines = emptyList()) }
+          photoLog("Live view: same session, next look.")
+        }
+        looks += 1
 
-      var photoError: String? = null
-      var photoData: PhotoData? = null
-      stream
-          .capturePhoto()
-          .onSuccess { photoData = it }
-          .onFailure { error, _ -> photoError = error.description }
-      check(photoError == null) { photoError ?: "Photo capture failed." }
-      val captured = photoData
-      check(captured != null) { "Photo capture returned nothing." }
-      val bitmap = withContext(Dispatchers.Default) { decodePhoto(captured) }
-      check(bitmap != null) { "The photo from the glasses could not be decoded." }
-      val jpegFile =
-          withContext(Dispatchers.IO) {
-            val dir = File(getApplication<Application>().filesDir, "captures").apply { mkdirs() }
-            val file = File(dir, "capture-${System.currentTimeMillis()}.jpg")
-            file.outputStream().use { out ->
-              bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        // Live view: with the video open, wait for a view worth a look before the photo.
+        // A later look in the same session waits a beat first, as the watch loop would.
+        var liveDecided = false
+        if (liveWatch && _uiState.value.captureMode == CaptureMode.LIVE) {
+          val notBefore =
+              if (looks > 1) lastLookAt + _uiState.value.watchEverySeconds * 1000L else 0L
+          if (!holdForView(stream, firstError, notBefore)) return
+          // The video already judged this view new; only readable video counts.
+          liveDecided = pendingLive != null
+        }
+
+        var photoError: String? = null
+        var photoData: PhotoData? = null
+        stream
+            .capturePhoto()
+            .onSuccess { photoData = it }
+            .onFailure { error, _ -> photoError = error.description }
+        check(photoError == null) { photoError ?: "Photo capture failed." }
+        val captured = photoData
+        check(captured != null) { "Photo capture returned nothing." }
+        val bitmap = withContext(Dispatchers.Default) { decodePhoto(captured) }
+        check(bitmap != null) { "The photo from the glasses could not be decoded." }
+        val jpegFile =
+            withContext(Dispatchers.IO) {
+              val dir = File(getApplication<Application>().filesDir, "captures").apply { mkdirs() }
+              val file = File(dir, "capture-${System.currentTimeMillis()}.jpg")
+              file.outputStream().use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+              }
+              file
             }
-            file
-          }
-      _uiState.update { it.copy(photo = bitmap) }
-      photoLog("Photo saved on the phone (${jpegFile.length()} bytes).")
+        _uiState.update { it.copy(photo = bitmap) }
+        photoLog("Photo saved on the phone (${jpegFile.length()} bytes).")
 
-      // Watching: a view the laptop already saw a moment ago is not sent again.
-      // The camera and session are closed by the finally below either way.
-      var signature: IntArray? = null
-      if (fromWatch) {
-        val current = withContext(Dispatchers.Default) { viewSignature(bitmap) }
-        val previous = lastSentSignature
-        if (!liveDecided &&
-            previous != null &&
-            SystemClock.elapsedRealtime() - lastSentAt < SAME_VIEW_WINDOW_MS &&
-            signatureDistance(previous, current) < SAME_VIEW_THRESHOLD) {
-          withContext(Dispatchers.IO) { jpegFile.delete() }
-          photoLog("Same view as the last one sent, so it was not sent.")
-          watchRecord("skipped")
-          _uiState.update { it.copy(watchSkipped = it.watchSkipped + 1) }
-          return
-        }
-        signature = current
-      }
-
-      // Step 3: is the laptop already reachable again, or must we leave explicitly?
-      val client = laptopClient()
-      val reachableBeforeLeave = withContext(Dispatchers.IO) { client.canReach() }
-      photoLog("Laptop reachable before leaving the glasses session: $reachableBeforeLeave.")
-
-      // Step 4: leave. Stopping the camera and the session is the toolkit's disconnect;
-      // there is no separate Wi-Fi leave call in 1.0.1.
-      runCatching { activeCamera.stop() }
-      runCatching { activeSession.stop() }
-      _uiState.update { it.copy(streamActive = false) }
-      photoLog("Left the glasses session.")
-
-      // Step 5: poll for the laptop, 15 seconds at most.
-      val deadline = SystemClock.elapsedRealtime() + RETURN_TIMEOUT_MS
-      var reachable = reachableBeforeLeave
-      while (!reachable && SystemClock.elapsedRealtime() < deadline) {
-        delay(POLL_MS)
-        reachable = withContext(Dispatchers.IO) { client.canReach() }
-      }
-      check(reachable) {
-        "The phone did not reach the laptop again within 15 seconds of leaving the glasses session."
-      }
-      val how = if (reachableBeforeLeave) "automatic" else "needed explicit leave"
-      _uiState.update { it.copy(wifiReturn = how) }
-      photoLog("Home Wi-Fi is back ($how).")
-
-      // Step 6: upload. A photo taken for a planting goes to /plant/ref instead.
-      // An ordinary capture goes to /capture, and any answers it fired are spoken
-      // through the glasses now, with the camera session already over.
-      val refSlug = pendingRefSlug
-      val refKind = pendingRefKind
-      if (refSlug != null && refKind != null) {
-        pendingRefSlug = null
-        pendingRefKind = null
-        val reply = withContext(Dispatchers.IO) { client.postPlantRef(jpegFile, refSlug, refKind) }
-        val next = reply.getString("next")
-        val completed = reply.getString("state") == "standing"
-        if (completed && plantQueue.firstOrNull() == refSlug) {
-          advancePlantQueue(next)
-        } else if (!completed) {
-          _uiState.update { it.copy(plantPrompt = next) }
-        }
-        // A standing completion for a question that is not the queue head
-        // (a planting replaced mid-capture) is only logged below: the
-        // current question keeps its prompt and its place.
-        plantLog(next)
-        photoLog("Reference look saved. $next")
-        runCatching { fetchQuestions() }.onSuccess { list ->
-          _uiState.update { it.copy(questionsList = list) }
-        }
-      } else {
-        val result = withContext(Dispatchers.IO) { client.postCapture(jpegFile) }
-        _uiState.update { it.copy(serverBytes = result.bytes) }
-        if (signature != null) {
-          // Only a view the laptop really received counts as seen.
-          lastSentSignature = signature
-          lastSentAt = SystemClock.elapsedRealtime()
-          lastSentLive = pendingLive
-        }
+        // Watching: a view the laptop already saw a moment ago is not sent again.
+        // The camera and session are closed by the finally below, unless Live view
+        // is keeping them open for the next look.
+        var signature: IntArray? = null
         if (fromWatch) {
-          watchRecord("sent", fired = result.fired.size)
-          _uiState.update { it.copy(watchSent = it.watchSent + 1) }
-        }
-        photoLog("Uploaded. The laptop says it received ${result.bytes} bytes.")
-        if (result.speak.isNotEmpty()) {
-          val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
-          _uiState.update {
-            it.copy(
-                spokenLines = result.speak,
-                lastSpoken = result.speak,
-                lastSpokenAt = at,
-                lastSpokenPhoto = bitmap,
-                lastSpokenAloud = null,
-            )
+          val current = withContext(Dispatchers.Default) { viewSignature(bitmap) }
+          val previous = lastSentSignature
+          if (!liveDecided &&
+              previous != null &&
+              SystemClock.elapsedRealtime() - lastSentAt < SAME_VIEW_WINDOW_MS &&
+              signatureDistance(previous, current) < SAME_VIEW_THRESHOLD) {
+            withContext(Dispatchers.IO) { jpegFile.delete() }
+            photoLog("Same view as the last one sent, so it was not sent.")
+            watchRecord("skipped")
+            _uiState.update { it.copy(watchSkipped = it.watchSkipped + 1) }
+            if (stayOpen) {
+              lastLookAt = SystemClock.elapsedRealtime()
+              continue@look
+            }
+            return
           }
-          result.speak.forEach { line -> photoLog("Mannie says: $line") }
-          val spoken = speakViaGlasses(result.speak)
-          _uiState.update { it.copy(lastSpokenAloud = spoken) }
+          signature = current
+        }
+
+        // Step 3: is the laptop already reachable again, or must we leave explicitly?
+        val client = laptopClient()
+        val reachableBeforeLeave = withContext(Dispatchers.IO) { client.canReach() }
+        photoLog("Laptop reachable before leaving the glasses session: $reachableBeforeLeave.")
+
+        // Live view with the laptop reachable from here: stay in the session for the
+        // next look. Anything else leaves, as every capture did before.
+        stayOpen =
+            liveWatch &&
+                reachableBeforeLeave &&
+                pendingRefSlug == null &&
+                !watchStopAsked &&
+                _uiState.value.captureMode == CaptureMode.LIVE
+        if (stayOpen) {
+          photoLog("The laptop is reachable with the session open, so the session stays open.")
+        } else {
+          // Step 4: leave. Stopping the camera and the session is the toolkit's disconnect;
+          // there is no separate Wi-Fi leave call in 1.0.1.
+          runCatching { activeCamera.stop() }
+          runCatching { activeSession.stop() }
+          _uiState.update { it.copy(streamActive = false) }
+          photoLog("Left the glasses session.")
+
+          // Step 5: poll for the laptop, 15 seconds at most.
+          val deadline = SystemClock.elapsedRealtime() + RETURN_TIMEOUT_MS
+          var reachable = reachableBeforeLeave
+          while (!reachable && SystemClock.elapsedRealtime() < deadline) {
+            delay(POLL_MS)
+            reachable = withContext(Dispatchers.IO) { client.canReach() }
+          }
+          check(reachable) {
+            "The phone did not reach the laptop again within 15 seconds of leaving the glasses session."
+          }
+          val how = if (reachableBeforeLeave) "automatic" else "needed explicit leave"
+          _uiState.update { it.copy(wifiReturn = how) }
+          photoLog("Home Wi-Fi is back ($how).")
+        }
+
+        // Step 6: upload. A photo taken for a planting goes to /plant/ref instead.
+        // An ordinary capture goes to /capture, and any answers it fired are spoken
+        // through the glasses now, with the camera session already over.
+        val refSlug = pendingRefSlug
+        val refKind = pendingRefKind
+        if (refSlug != null && refKind != null) {
+          pendingRefSlug = null
+          pendingRefKind = null
+          val reply = withContext(Dispatchers.IO) { client.postPlantRef(jpegFile, refSlug, refKind) }
+          val next = reply.getString("next")
+          val completed = reply.getString("state") == "standing"
+          if (completed && plantQueue.firstOrNull() == refSlug) {
+            advancePlantQueue(next)
+          } else if (!completed) {
+            _uiState.update { it.copy(plantPrompt = next) }
+          }
+          // A standing completion for a question that is not the queue head
+          // (a planting replaced mid-capture) is only logged below: the
+          // current question keeps its prompt and its place.
+          plantLog(next)
+          photoLog("Reference look saved. $next")
+          runCatching { fetchQuestions() }.onSuccess { list ->
+            _uiState.update { it.copy(questionsList = list) }
+          }
+        } else {
+          val result = withContext(Dispatchers.IO) { client.postCapture(jpegFile) }
+          _uiState.update { it.copy(serverBytes = result.bytes) }
+          if (signature != null) {
+            // Only a view the laptop really received counts as seen.
+            lastSentSignature = signature
+            lastSentAt = SystemClock.elapsedRealtime()
+            lastSentLive = pendingLive
+          }
+          if (fromWatch) {
+            watchRecord("sent", fired = result.fired.size)
+            _uiState.update { it.copy(watchSent = it.watchSent + 1) }
+          }
+          photoLog("Uploaded. The laptop says it received ${result.bytes} bytes.")
+          if (result.speak.isNotEmpty()) {
+            val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
+            _uiState.update {
+              it.copy(
+                  spokenLines = result.speak,
+                  lastSpoken = result.speak,
+                  lastSpokenAt = at,
+                  lastSpokenPhoto = bitmap,
+                  lastSpokenAloud = null,
+              )
+            }
+            result.speak.forEach { line -> photoLog("Mannie says: $line") }
+            if (stayOpen) {
+              // Bluetooth audio and a camera session are never held together, so the
+              // session ends here, and the watch loop opens a new one for the next look.
+              runCatching { activeCamera.stop() }
+              runCatching { activeSession.stop() }
+              _uiState.update { it.copy(streamActive = false) }
+              stayOpen = false
+              photoLog("Left the glasses session to speak.")
+            }
+            val spoken = speakViaGlasses(result.speak)
+            _uiState.update { it.copy(lastSpokenAloud = spoken) }
+          }
+        }
+        photoLog("Done in ${SystemClock.elapsedRealtime() - lookStartedAt} ms.")
+        if (!stayOpen || watchStopAsked) break@look
+        lastLookAt = SystemClock.elapsedRealtime()
+        // A look that reached the laptop means the glasses are back, which the watch
+        // loop would otherwise only say once this session ends.
+        if (_uiState.value.watchAwaySince != null && !_uiState.value.glassesOff) {
+          watchRecord("back")
+          _uiState.update { it.copy(watchAwaySince = null) }
         }
       }
-      photoLog("Done in ${SystemClock.elapsedRealtime() - startedAt} ms.")
     } finally {
       errorWatch?.cancel()
       runCatching { camera?.close() }
@@ -765,6 +823,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private suspend fun holdForView(
       stream: com.meta.wearable.dat.camera.Stream,
       firstError: CompletableDeferred<DeviceSessionError>,
+      notBeforeMs: Long = 0L,
   ): Boolean {
     holdYield = false
     pendingLive = null
@@ -801,6 +860,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                     state.plantSlug != null -> true.also { why = "a question is being planted" }
                     state.captureMode != CaptureMode.LIVE -> true.also { why = "the capture mode changed" }
                     item !is VideoFrame -> false
+                    now < notBeforeMs -> false
                     now - lastLooked < LIVE_LOOK_EVERY_MS -> false
                     else -> {
                       lastLooked = now
