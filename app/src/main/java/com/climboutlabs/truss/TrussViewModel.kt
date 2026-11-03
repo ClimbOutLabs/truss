@@ -1523,10 +1523,17 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  /** Mean absolute difference between two signatures, in grey levels (0 to 255). */
+  /**
+   * Mean absolute difference between two signatures, in grey levels (0 to 255), after
+   * each one's own average brightness is taken out. The camera's auto-exposure, a lamp
+   * coming on or a cloud passing makes the whole picture brighter or darker at once;
+   * that is the same view, not a new one, so only the pattern of light and dark counts.
+   */
   private fun signatureDistance(a: IntArray, b: IntArray): Int {
+    if (a.isEmpty() || a.size != b.size) return Int.MAX_VALUE
+    val shift = (a.sum() - b.sum()) / a.size
     var total = 0
-    for (i in a.indices) total += kotlin.math.abs(a[i] - b[i])
+    for (i in a.indices) total += kotlin.math.abs(a[i] - b[i] - shift)
     return total / a.size
   }
 
