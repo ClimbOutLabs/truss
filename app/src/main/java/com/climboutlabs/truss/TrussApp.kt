@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -158,7 +159,6 @@ fun TrussApp(
                     if (on) viewModel.startWatching(onRequestWearablesPermission)
                     else viewModel.stopWatching()
                   },
-                  onWatchEvery = viewModel::setWatchEverySeconds,
                   onOpenMetaAi = viewModel::openMetaAi,
                   onOpenSettings = { tab = Destination.SETTINGS.ordinal },
                   onOpenQuestions = { tab = Destination.QUESTIONS.ordinal },
@@ -513,7 +513,6 @@ private fun HomeScreen(
     onCheckLaptop: () -> Unit,
     onLookNow: () -> Unit,
     onWatch: (Boolean) -> Unit,
-    onWatchEvery: (Int) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenQuestions: () -> Unit,
     onOpenMetaAi: () -> Unit,
@@ -522,7 +521,7 @@ private fun HomeScreen(
     ScreenBody(Modifier.weight(1f)) {
       state.lastError?.let { ErrorBanner(it, onDismissError) }
       Greeting()
-      HeroCard(state, onConnectGlasses, onCheckLaptop, onWatch, onWatchEvery, onOpenSettings, onOpenMetaAi)
+      HeroCard(state, onConnectGlasses, onCheckLaptop, onWatch, onOpenSettings, onOpenMetaAi)
       LastAnswer(state)
       QuestionTiles(state, onOpenQuestions)
     }
@@ -537,7 +536,7 @@ private fun HomeScreen(
   }
 }
 
-/** The date and a time-of-day greeting at the top of Home. */
+/** The date, a time-of-day greeting, and one plain line saying what Truss does. */
 @Composable
 private fun Greeting() {
   val now = java.time.LocalDateTime.now()
@@ -547,13 +546,18 @@ private fun Greeting() {
         in 12..17 -> "Good afternoon"
         else -> "Good evening"
       }
-  Column(modifier = Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+  Column(modifier = Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
     Text(
         now.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.US)),
         style = MaterialTheme.typography.bodySmall,
         color = Truss.muted,
     )
     Text(hello, style = MaterialTheme.typography.displaySmall, modifier = Modifier.semantics { heading() })
+    Text(
+        "Truss remembers what you already did, so you don't do it twice.",
+        style = MaterialTheme.typography.bodyLarge,
+        color = Truss.ink,
+    )
   }
 }
 
@@ -563,7 +567,6 @@ private fun HeroCard(
     onConnectGlasses: () -> Unit,
     onCheckLaptop: () -> Unit,
     onWatch: (Boolean) -> Unit,
-    onWatchEvery: (Int) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenMetaAi: () -> Unit,
 ) {
@@ -599,13 +602,16 @@ private fun HeroCard(
     }
     state.watching -> {
       title = "Watching"
-      val how =
-          if (state.captureMode == CaptureMode.LIVE) {
-            "Live view since ${clock12(state.watchStartedAt)}, looking when the view changes and holds still. "
-          } else {
-            "Every ${state.watchEverySeconds} s since ${clock12(state.watchStartedAt)}. "
+      val since = clock12(state.watchStartedAt)
+      subtitle =
+          when {
+            state.captureMode == CaptureMode.LIVE && since != null ->
+                "Live view since $since. The voice in your glasses looks when the view changes and holds still."
+            state.captureMode == CaptureMode.LIVE ->
+                "Live view. The voice in your glasses looks when the view changes and holds still."
+            since != null -> "Watching since $since."
+            else -> "Watching now."
           }
-      subtitle = how + "${state.watchSent} looks, ${state.watchSkipped} skipped as unchanged."
     }
     state.photoBusy -> {
       title = "Looking"
@@ -621,12 +627,12 @@ private fun HeroCard(
     }
     minding == 0 -> {
       title = "Ready"
-      subtitle = "Glasses and laptop are on. Add a question for Mannie to mind."
+      subtitle = "Glasses and laptop are on. Add a question for Mannie, the voice in your glasses, to mind."
     }
     else -> {
       title = "Ready"
       subtitle =
-          "Mannie is minding $minding question" + (if (minding == 1) "" else "s") +
+          "Mannie, the voice in your glasses, is minding $minding question" + (if (minding == 1) "" else "s") +
               ". Start watching and keep this screen open."
     }
   }
@@ -665,13 +671,6 @@ private fun HeroCard(
         BigButton("Try the laptop again", TrussIcons.Refresh, onCheckLaptop)
       }
     } else {
-      Segmented(
-          options = listOf(15, 30, 60),
-          selected = state.watchEverySeconds,
-          label = { "Every $it s" },
-          onSelect = onWatchEvery,
-          onDark = false,
-      )
       if (state.watchWaiting && !state.glassesOff) {
         BigButton("Open Meta AI to reconnect", TrussIcons.Glasses, onOpenMetaAi, height = 52.dp)
       }
@@ -702,7 +701,7 @@ private fun LastAnswer(state: TrussUiState) {
     if (!state.photoBusy && state.serverBytes != null) {
       Surface {
         Text(
-            "Nothing to say about the last look. Mannie speaks up when an answer is yes.",
+            "Nothing to say about the last look. Mannie, the voice in your glasses, speaks up when an answer is yes.",
             style = MaterialTheme.typography.bodyMedium,
             color = Truss.muted,
         )
@@ -717,36 +716,39 @@ private fun LastAnswer(state: TrussUiState) {
         null -> "telling you now"
       }
   val when_ = clock12(state.lastSpokenAt)?.let { "$it · $how" } ?: how.replaceFirstChar { it.uppercase() }
-  val answer: @Composable () -> Unit = {
-    Row(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Truss.card).padding(14.dp, 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      IconTile(TrussIcons.Check, Truss.lime, Truss.onLime, size = 40.dp, shape = CircleShape)
-      Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        state.lastSpoken.forEach { line ->
-          Text(line, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
-        }
-        Text(when_, style = MaterialTheme.typography.bodySmall, color = Truss.muted)
+  val line: @Composable () -> Unit = {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+      state.lastSpoken.forEach { spoken ->
+        Text(spoken, style = MaterialTheme.typography.titleLarge, maxLines = 3, overflow = TextOverflow.Ellipsis)
       }
+      Text(when_, style = MaterialTheme.typography.bodySmall, color = Truss.muted)
     }
   }
-  val photo = state.lastSpokenPhoto
-  if (photo == null) {
-    answer()
-  } else {
-    // The photo stays whole above the answer, never under it; a tap opens it full screen.
-    var open by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+  // One card for the proof: what Mannie last said, in large type, with the photo
+  // it was seen in. The photo stays whole above the line, never under it; a tap
+  // opens it full screen.
+  Surface(shape = RoundedCornerShape(28.dp), padding = 18.dp) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+      IconTile(TrussIcons.Check, Truss.lime, Truss.onLime, size = 40.dp, shape = CircleShape)
+      Text("The last thing said in your glasses", style = MaterialTheme.typography.titleMedium)
+    }
+    val photo = state.lastSpokenPhoto
+    if (photo == null) {
+      line()
+    } else {
+      var open by remember { mutableStateOf(false) }
       Photo(
           photo,
-          "What Mannie saw",
-          Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(24.dp)).background(Truss.sage).clickable { open = true },
+          "What the glasses saw",
+          Modifier.fillMaxWidth()
+              .aspectRatio(4f / 3f)
+              .clip(RoundedCornerShape(20.dp))
+              .background(Truss.sage)
+              .clickable { open = true },
       )
-      answer()
+      line()
+      if (open) PhotoViewer(photo, state.lastSpoken.joinToString(" "), onClose = { open = false })
     }
-    if (open) PhotoViewer(photo, state.lastSpoken.joinToString(" "), onClose = { open = false })
   }
 }
 
@@ -797,6 +799,127 @@ private fun QuestionTiles(state: TrussUiState, onOpenQuestions: () -> Unit) {
         }
       }
       if (pair.size == 1) Spacer(Modifier.weight(1f))
+    }
+  }
+}
+
+// MARK: - Home previews
+
+/**
+ * A stand-in for a glasses photo in previews: a plain warm block, since previews
+ * run without the glasses or the laptop. It is not the real thing; on the phone
+ * this space holds the photo Mannie saw.
+ */
+@Composable
+private fun previewPhoto(): Bitmap =
+    remember { Bitmap.createBitmap(400, 300, Bitmap.Config.ARGB_8888).apply { eraseColor(0xFFA9805A.toInt()) } }
+
+private fun previewQuestions(): List<QuestionInfo> =
+    listOf(
+        QuestionInfo(
+            slug = "night-pills",
+            question = "Did I take my night pills?",
+            state = "answered",
+            hasRefYes = true,
+            hasRefNo = true,
+            kind = "done",
+            answeredAt = LocalDate.now().toString() + "T21:12",
+        ),
+        QuestionInfo(
+            slug = "stove-off",
+            question = "Is the stove off?",
+            state = "standing",
+            hasRefYes = true,
+            hasRefNo = true,
+        ),
+        QuestionInfo(
+            slug = "front-door",
+            question = "Is the front door locked?",
+            state = "standing",
+            hasRefYes = true,
+            hasRefNo = true,
+        ),
+    )
+
+@Preview(name = "Home, watching", widthDp = 393, heightDp = 852, showBackground = true)
+@Composable
+private fun HomeWatchingPreview() {
+  val state =
+      TrussUiState(
+          laptopIp = "192.168.1.20",
+          registrationState = RegistrationState.REGISTERED,
+          deviceNames = listOf("Glasses"),
+          laptopReachable = true,
+          watching = true,
+          watchStartedAt = "21:02",
+          watchEverySeconds = 30,
+          questionsList = previewQuestions(),
+          lastSpoken = listOf("You took your night pills at 9:12 PM. I saw you."),
+          lastSpokenAt = "21:12",
+          lastSpokenAloud = true,
+          lastSpokenPhoto = previewPhoto(),
+      )
+  TrussTheme {
+    Box(Modifier.background(Truss.ground)) {
+      HomeScreen(
+          state = state,
+          onDismissError = {},
+          onConnectGlasses = {},
+          onCheckLaptop = {},
+          onLookNow = {},
+          onWatch = {},
+          onOpenSettings = {},
+          onOpenQuestions = {},
+          onOpenMetaAi = {},
+      )
+    }
+  }
+}
+
+@Preview(name = "Home, ready", widthDp = 393, heightDp = 852, showBackground = true)
+@Composable
+private fun HomeReadyPreview() {
+  val state =
+      TrussUiState(
+          laptopIp = "192.168.1.20",
+          registrationState = RegistrationState.REGISTERED,
+          deviceNames = listOf("Glasses"),
+          laptopReachable = true,
+          questionsList = previewQuestions(),
+      )
+  TrussTheme {
+    Box(Modifier.background(Truss.ground)) {
+      HomeScreen(
+          state = state,
+          onDismissError = {},
+          onConnectGlasses = {},
+          onCheckLaptop = {},
+          onLookNow = {},
+          onWatch = {},
+          onOpenSettings = {},
+          onOpenQuestions = {},
+          onOpenMetaAi = {},
+      )
+    }
+  }
+}
+
+@Preview(name = "Home, getting set up", widthDp = 393, heightDp = 852, showBackground = true)
+@Composable
+private fun HomeSetUpPreview() {
+  TrussTheme {
+    Box(Modifier.background(Truss.ground)) {
+      HomeScreen(
+          state = TrussUiState(),
+          onDismissError = {},
+          onConnectGlasses = {},
+          onCheckLaptop = {},
+          onLookNow = {},
+          onWatch = {},
+          onOpenSettings = {},
+          onOpenQuestions = {},
+          onOpenMetaAi = {},
+      )
     }
   }
 }

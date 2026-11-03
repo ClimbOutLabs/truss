@@ -64,8 +64,10 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.material3)
-  implementation(libs.androidx.ui.tooling.preview)
   implementation(libs.mwdat.core)
   implementation(libs.mwdat.camera)
+  // Compose preview support only: the annotation ships with the app, the
+  // renderer is debug-only. Neither adds anything the running app can call.
+  implementation(libs.androidx.ui.tooling.preview)
   debugImplementation(libs.androidx.ui.tooling)
 }
