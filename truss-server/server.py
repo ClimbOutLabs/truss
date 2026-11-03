@@ -604,6 +604,10 @@ class TrussHandler(BaseHTTPRequestHandler):
         if path == "/watch/phone":
             self.handle_watch_phone()
             return
+        if path == "/watch/look":
+            self.send_json(WATCH.look())
+            print("POST /watch/look -> ask the phone for a photo now")
+            return
         # Settings carry keys: saved and tested off the write lock (a
         # test can take seconds), and only from the Desk's own page.
         if path == "/settings":

@@ -24,7 +24,7 @@ Muse Spark over the Meta Model API, first, with the above as fallback:
     TRUSS_META_BASE_URL   default https://api.meta.ai/v1 (https only)
     TRUSS_META_MODEL      default muse-spark-1.3 (never the
                           contributor tier)
-    TRUSS_META_TIMEOUT_S  default 45
+    TRUSS_META_TIMEOUT_S  default 90
 
 With TRUSS_META_API_KEY set, every call that names no config of its
 own (checks, the plant-time compile, the guide) goes to Muse Spark.
@@ -76,7 +76,9 @@ DEFAULT_TIMEOUT_S = 120.0
 
 DEFAULT_META_BASE_URL = "https://api.meta.ai/v1"
 DEFAULT_META_MODEL = "muse-spark-1.3"
-DEFAULT_META_TIMEOUT_S = 45.0
+# Room for a full 4096-token reply (about 60 s live) and part of a retry;
+# at 45 s a cut-off first try left no time for the retry to finish.
+DEFAULT_META_TIMEOUT_S = 90.0
 # How long Muse Spark rests after a failure saying the API is down, when
 # there is a fallback to ask instead.
 META_REST_S = 300.0
