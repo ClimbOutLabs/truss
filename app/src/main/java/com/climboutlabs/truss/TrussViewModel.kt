@@ -1496,9 +1496,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private val watchNudge = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
   private suspend fun waitForBeat() {
-    // A photo the Desk asked for does not wait out the beat; a short pause still keeps
-    // the loop from spinning while the glasses cannot take it.
-    if (lookPending()) {
+    // A photo the Desk asked for does not wait out the beat while the glasses are there;
+    // a short pause still keeps the loop from spinning. While they are away the usual
+    // beat stands, so a look does not open a session every second (and re-ask the
+    // camera permission) for its whole minute.
+    val there = _uiState.value.watchAwaySince == null && !_uiState.value.glassesOff
+    if (there && lookPending()) {
       delay(1_000L)
       return
     }
