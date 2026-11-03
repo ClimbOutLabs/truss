@@ -567,6 +567,7 @@ function renderDay() {
   const byText = new Map(live.map((q) => [norm(q.question), q]));
 
   renderSummary(live);
+  paintSeen();
 
   // A question the seen timeline already tells the story of does not
   // repeat as a card. When the timeline has not loaded, every live
@@ -636,11 +637,11 @@ function lineRow(q) {
 // One timeline row, shared by Today's seen list and History: the
 // photo, the time, the question, the one plain sentence the answer
 // kept, and its chip.
-function eventRow(a, day, chipWord, chipCls, story) {
+function eventRow(a, day, chipWord, chipCls, story, extra = "") {
   const img = a.evidence
     ? `<a href="/evidence?day=${encodeURIComponent(day)}&name=${encodeURIComponent(a.evidence)}" target="_blank" rel="noopener"><img loading="lazy" alt="Evidence photo" src="/evidence?day=${encodeURIComponent(day)}&name=${encodeURIComponent(a.evidence)}"></a>`
     : `<div class="ph"></div>`;
-  return `<div class="event${story ? " story" : ""}"><span class="etime">${esc(clock(a.time.slice(0, 5)))}</span>${img}<div class="emain"><div class="eq">${esc(a.question)}</div><div class="esub">${esc(a.text)}</div></div>${chipWord ? `<span class="${chipCls}">${esc(chipWord)}</span>` : ""}</div>`;
+  return `<div class="event${story ? " story" : ""}"><span class="etime">${esc(clock(a.time.slice(0, 5)))}</span>${img}<div class="emain"><div class="eq">${esc(a.question)}</div><div class="esub">${esc(a.text)}</div></div>${chipWord ? `<span class="${chipCls}">${esc(chipWord)}</span>` : ""}${extra}</div>`;
 }
 
 // Today's sightings, read from the same answers the History page
@@ -654,13 +655,28 @@ async function loadSeen() {
   try { SEEN = await getJSON("/answers"); } catch (e) { SEEN = null; }
   renderSeen();
 }
+// The seen rows. A state checked after its window closed keeps the
+// same "Checked late" chip History gives it. A live question that has
+// no card because its sighting is here gets its Stop button on its
+// latest row, so it can always be stopped from Today.
+function paintSeen() {
+  const rows = SEEN ? (SEEN.answers || []).filter((a) => a.kind === "answer" || a.kind === "state_check") : [];
+  if (!rows.length) { $("seen").innerHTML = ""; return; }
+  const live = new Map(QUESTIONS.filter((q) => q.state !== "retired" && answeredQ(q)).map((q) => [norm(q.question), q]));
+  const last = new Map();
+  rows.forEach((a, i) => last.set(norm(a.question), i));
+  $("seen").innerHTML = `<h2>What Truss has seen today</h2>` + rows.map((a, i) => {
+    const [word, cls] = a.kind === "state_check" ? ["Checked late", "chip clay"] : ["Seen", "chip slate"];
+    const q = last.get(norm(a.question)) === i ? live.get(norm(a.question)) : null;
+    const stop = q ? `<button class="pillstop" data-retire="${esc(q.slug)}">Stop</button>` : "";
+    return eventRow(a, SEEN.day, word, cls, false, stop);
+  }).join("");
+}
 function renderSeen() {
   if (!SEEN) { SEEN_SIGHTS = null; $("seen").innerHTML = ""; return; }
   const rows = (SEEN.answers || []).filter((a) => a.kind === "answer" || a.kind === "state_check");
   SEEN_SIGHTS = rows.length ? new Set(rows.map((a) => norm(a.question))) : null;
-  $("seen").innerHTML = rows.length
-    ? `<h2>What Truss has seen today</h2>` + rows.map((a) => eventRow(a, SEEN.day, "Seen", "chip slate", false)).join("")
-    : "";
+  paintSeen();
   const sig = SEEN_SIGHTS ? [...SEEN_SIGHTS].sort().join("|") : "";
   if (sig !== SEEN_SIG) { SEEN_SIG = sig; if (QUESTIONS.length) renderDay(); }
 }

@@ -289,6 +289,33 @@ def _part_of_day(moment):
     return "tonight"
 
 
+def _banner_day(date_text, closed_at, now):
+    """Which day the banner names, from the alert's date and the time
+    its window closed. A window that closed in the small hours belongs
+    to the night before. An alert older than yesterday names its
+    weekday, and one older than a week, or with no readable date, says
+    "earlier", so an old alert is never called last night."""
+    try:
+        date = datetime.strptime(str(date_text).strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return "earlier"
+    small_hours = closed_at is not None and closed_at.hour < 5
+    ago = (now.date() - date).days
+    if ago == 0:
+        if closed_at is None:
+            return "today"
+        return "last night" if small_hours else _part_of_day(closed_at)
+    if ago == 1 and not small_hours:
+        if closed_at is not None and _part_of_day(closed_at) == "tonight":
+            return "last night"
+        if closed_at is not None and _part_of_day(closed_at) == "this evening":
+            return "yesterday evening"
+        return "yesterday"
+    if 1 <= ago < 7:
+        return date.strftime("%A")
+    return "earlier"
+
+
 def desk_banner(alert, now=None):
     """The Desk's words for a pending alert: a headline and one line
     under it, in the shape the owner chose, filled from the alert's
@@ -313,15 +340,7 @@ def desk_banner(alert, now=None):
             closed_at = datetime.strptime(until.strip(), "%H:%M")
         except ValueError:
             closed_at = None
-    today = alert.get("date") == now.date().isoformat()
-    if today:
-        day = _part_of_day(closed_at) if closed_at is not None else "today"
-    elif closed_at is not None and _part_of_day(closed_at) == "tonight":
-        day = "last night"
-    elif closed_at is not None and _part_of_day(closed_at) == "this evening":
-        day = "yesterday evening"
-    else:
-        day = "yesterday"
+    day = _banner_day(alert.get("date"), closed_at, now)
     headline = f"One thing from {day} is still open: {name}"
     if not headline.endswith("?"):
         headline += "."

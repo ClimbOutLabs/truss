@@ -41,6 +41,12 @@ def test_the_part_of_the_day_matches_the_window():
     check("a late window yesterday", banner("Did I take my night pills?", "22:00", YESTERDAY)[0].startswith("One thing from last night"))
     check("a midday window yesterday", banner("Did I feed the dog?", "15:00", YESTERDAY)[0].startswith("One thing from yesterday is"))
     check("no window time today", banner("Did I feed the dog?", None)[0].startswith("One thing from today"))
+    check("a window that closed after midnight today", banner("Did I take my night pills?", "00:30")[0].startswith("One thing from last night"))
+    check("a window that closed after midnight yesterday", banner("Did I take my night pills?", "00:30", YESTERDAY)[0].startswith("One thing from Monday"))
+    check("an alert from three days ago names its day", banner("Did I take my night pills?", "22:00", "2026-10-31")[0].startswith("One thing from Saturday"))
+    check("an alert older than a week", banner("Did I take my night pills?", "22:00", "2026-10-20")[0].startswith("One thing from earlier"))
+    check("an unreadable date", banner("Did I take my night pills?", "22:00", "soon")[0].startswith("One thing from earlier"))
+    check("an alert dated ahead of the clock", banner("Did I take my night pills?", "22:00", "2026-11-04")[0].startswith("One thing from earlier"))
 
 
 def test_the_close_time_and_the_name():
