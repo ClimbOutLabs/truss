@@ -797,7 +797,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         alerts = []
         for a in ALERTS.pending():
             item = {"id": a["id"], "line": a["line"]}
-            banner = desk_banner(a)
+            banner = desk_banner(a, now=CLOCK())
             if banner is not None:
                 item["headline"], item["note"] = banner
             alerts.append(item)

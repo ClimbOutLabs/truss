@@ -19,15 +19,15 @@ second alert for the same question and day.
 What an alert says is held to two rules.
 
 It never says more than the loop knows. A missed witness is not a
-missed act: she may have done it with the glasses off. So the line
+missed act: the wearer may have done it with the glasses off. So the line
 never says the thing was not done. It says what was watched, read
 from the frames actually checked for that question (see coverage.py):
 the whole window, the spans it was watched, or none of it.
 
-For a safety question (the stove, the pills) it directs her to look
-and never tells her to act. "You didn't take your pills" after a
+For a safety question (the stove, the pills) it directs the wearer to look
+and never tells them to act. "You didn't take your pills" after a
 missed witness is how the product would cause the double dose it
-exists to prevent. The line sends her to the thing itself, and the
+exists to prevent. The line sends the wearer to the thing itself, and the
 sweep leaves a state check owed: the next frame that shows the thing
 is checked as it is now, and that result is spoken (see checkloop.py).
 
@@ -277,10 +277,51 @@ def _desk_name(question):
     return " ".join(rest) or None
 
 
-def desk_banner(alert):
+def _part_of_day(moment):
+    """Which part of the day a clock time falls in, for the banner."""
+    minutes = moment.hour * 60 + moment.minute
+    if 300 <= minutes < 720:
+        return "this morning"
+    if 720 <= minutes < 1020:
+        return "this afternoon"
+    if 1020 <= minutes < 1260:
+        return "this evening"
+    return "tonight"
+
+
+def _banner_day(date_text, closed_at, now):
+    """Which day the banner names, from the alert's date and the time
+    its window closed. A window that closed in the small hours belongs
+    to the night before. An alert older than yesterday names its
+    weekday, and one older than a week, or with no readable date, says
+    "earlier", so an old alert is never called last night."""
+    try:
+        date = datetime.strptime(str(date_text).strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return "earlier"
+    small_hours = closed_at is not None and closed_at.hour < 5
+    ago = (now.date() - date).days
+    if ago == 0:
+        if closed_at is None:
+            return "today"
+        return "last night" if small_hours else _part_of_day(closed_at)
+    if ago == 1 and not small_hours:
+        if closed_at is not None and _part_of_day(closed_at) == "tonight":
+            return "last night"
+        if closed_at is not None and _part_of_day(closed_at) == "this evening":
+            return "yesterday evening"
+        return "yesterday"
+    if 1 <= ago < 7:
+        return date.strftime("%A")
+    return "earlier"
+
+
+def desk_banner(alert, now=None):
     """The Desk's words for a pending alert: a headline and one line
     under it, in the shape the owner chose, filled from the alert's
     own record (the question it names, the time its window closed).
+    The words are the same for every question: nothing here knows
+    what the question is about.
 
     Display only. The phone speaks alert["line"], which miss_line
     composes under the safety rules above; this never touches that
@@ -290,19 +331,24 @@ def desk_banner(alert):
     question = alert.get("question")
     if not isinstance(question, str) or not question.strip():
         return None
+    now = now or datetime.now()
     name = _desk_name(question) or question.strip()
-    day = "tonight" if alert.get("date") == datetime.now().date().isoformat() else "last night"
-    headline = f"One thing from {day} is still open: {name}"
-    if not headline.endswith("?"):
-        headline += "."
-    closed = ""
+    closed_at = None
     until = alert.get("until")
     if isinstance(until, str):
         try:
-            closed = f" at {_clock(datetime.strptime(until.strip(), '%H:%M'))}"
+            closed_at = datetime.strptime(until.strip(), "%H:%M")
         except ValueError:
-            closed = ""
-    note = f"The window closed{closed} with nothing seen. You may well have taken them."
+            closed_at = None
+    day = _banner_day(alert.get("date"), closed_at, now)
+    headline = f"One thing from {day} is still open: {name}"
+    if not headline.endswith("?"):
+        headline += "."
+    closed = f" at {_clock(closed_at)}" if closed_at is not None else ""
+    note = (
+        f"The window closed{closed} with nothing seen. "
+        "It may well have been done; Truss just did not see it."
+    )
     return headline, note
 
 
@@ -422,8 +468,8 @@ def _sweep_one(store, alerts, entry, now, day, checks, gap_minutes):
     if safety:
         # Owed before the alert is written: an owed check with no
         # alert only means one extra look is spoken, while an alert
-        # with no owed check would leave her sent to look with no
-        # one to tell her what is there. Owing is once per day: a
+        # with no owed check would leave the wearer sent to look with no
+        # one to tell them what is there. Owing is once per day: a
         # check already owed or spoken today is left as it is, so a
         # retried sweep never speaks a state check twice.
         store.owe_miss_check(entry["slug"], today)
