@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from alerts import AlertStore, sweep_missed
+from alerts import AlertStore, desk_banner, sweep_missed
 import aman_check
 from coverage import CheckLog
 import endpoint
@@ -750,9 +750,14 @@ class TrussHandler(BaseHTTPRequestHandler):
         sweep runs first, so a window that closed a moment ago is
         already here on this poll."""
         run_sweep()
-        alerts = [
-            {"id": a["id"], "line": a["line"]} for a in ALERTS.pending()
-        ] + guide_waiting()
+        alerts = []
+        for a in ALERTS.pending():
+            item = {"id": a["id"], "line": a["line"]}
+            banner = desk_banner(a)
+            if banner is not None:
+                item["headline"], item["note"] = banner
+            alerts.append(item)
+        alerts += guide_waiting()
         self.send_json({"alerts": alerts})
         print(f"GET /alerts -> {len(alerts)} pending")
 
