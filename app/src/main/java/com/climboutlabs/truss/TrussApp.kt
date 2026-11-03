@@ -934,7 +934,7 @@ private fun QuestionRow(
     }
     if (item.state == "planting" && canResume) {
       BigButton(
-          if (!item.hasRefYes) "Show Mannie the yes look" else "Show Mannie the no look",
+          if (!item.hasRefYes) "Show the yes look" else "Show the no look",
           TrussIcons.Camera,
           onResume,
           container = Truss.apricot,
