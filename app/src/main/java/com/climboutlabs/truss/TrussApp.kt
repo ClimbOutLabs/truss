@@ -627,12 +627,12 @@ private fun HeroCard(
     }
     minding == 0 -> {
       title = "Ready"
-      subtitle = "Glasses and laptop are on. Add a question for Mannie to mind."
+      subtitle = "Glasses and laptop are on. Add a question for Mannie, the voice in your glasses, to mind."
     }
     else -> {
       title = "Ready"
       subtitle =
-          "Mannie is minding $minding question" + (if (minding == 1) "" else "s") +
+          "Mannie, the voice in your glasses, is minding $minding question" + (if (minding == 1) "" else "s") +
               ". Start watching and keep this screen open."
     }
   }
@@ -701,7 +701,7 @@ private fun LastAnswer(state: TrussUiState) {
     if (!state.photoBusy && state.serverBytes != null) {
       Surface {
         Text(
-            "Nothing to say about the last look. Mannie speaks up when an answer is yes.",
+            "Nothing to say about the last look. Mannie, the voice in your glasses, speaks up when an answer is yes.",
             style = MaterialTheme.typography.bodyMedium,
             color = Truss.muted,
         )
@@ -739,7 +739,7 @@ private fun LastAnswer(state: TrussUiState) {
       var open by remember { mutableStateOf(false) }
       Photo(
           photo,
-          "What Mannie saw",
+          "What the glasses saw",
           Modifier.fillMaxWidth()
               .aspectRatio(4f / 3f)
               .clip(RoundedCornerShape(20.dp))
