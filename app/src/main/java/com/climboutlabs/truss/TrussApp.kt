@@ -79,6 +79,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
+import com.meta.wearable.dat.core.types.RegistrationState
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime

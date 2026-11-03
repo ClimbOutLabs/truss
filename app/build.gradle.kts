@@ -64,6 +64,8 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.material3)
+  implementation(libs.androidx.ui.tooling.preview)
   implementation(libs.mwdat.core)
   implementation(libs.mwdat.camera)
+  debugImplementation(libs.androidx.ui.tooling)
 }
