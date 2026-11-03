@@ -391,6 +391,127 @@ def test_malformed_reason_still_speaks():
     )
 
 
+class ScriptedBatch:
+    """A batch function: returns scripted results by slug, or raises."""
+
+    def __init__(self, by_slug=None, raises=None, returns=None):
+        self.by_slug = by_slug or {}
+        self.raises = raises
+        self.returns = returns
+        self.calls = []
+
+    def __call__(self, frame_path, entries):
+        self.calls.append([e["slug"] for e in entries])
+        if self.raises is not None:
+            raise self.raises
+        if self.returns is not None:
+            return self.returns
+        return [
+            self.by_slug.get(e["slug"], {"verdict": "cannot_tell", "reason": "", "failure": "unanswered"})
+            for e in entries
+        ]
+
+
+def batch_rig(scripts, batch):
+    store, loop, spoken, captures = rig(scripts)
+    loop.batch_fn = batch
+    return store, loop, spoken, captures
+
+
+def two_questions(store):
+    stove = plant(store, "Is the stove off?", {"kind": "interval", "minutes": 0})
+    door = plant(store, "Is the front door locked?", {"kind": "interval", "minutes": 0})
+    return stove, door
+
+
+def test_one_call_answers_every_due_question():
+    batch = ScriptedBatch({
+        "is-the-stove-off": dict(verdict("yes", "All four burners are dark."), failure=None),
+        "is-the-front-door-locked": dict(verdict("no", "The latch is open."), failure=None),
+    })
+    store, loop, spoken, captures = batch_rig({}, batch)
+    stove, door = two_questions(store)
+    result = loop.process_frame(frame(captures, "a.jpg"))
+    check("one batch call for both questions", len(batch.calls) == 1 and len(batch.calls[0]) == 2)
+    check("no question asked on its own", loop.check_fn.calls == [])
+    check("the yes fires from the batch", result["fired"] == [stove])
+    check("one spoken line", len(spoken) == 1)
+    check("both questions marked checked",
+          store.get(stove)["last_checked_at"] is not None
+          and store.get(door)["last_checked_at"] is not None)
+
+
+def test_a_question_the_batch_missed_is_asked_alone():
+    batch = ScriptedBatch({
+        "is-the-stove-off": dict(verdict("no", "A burner is lit."), failure=None),
+    })
+    store, loop, spoken, captures = batch_rig(
+        {"is-the-front-door-locked": [verdict("yes", "The deadbolt is thrown.")]}, batch
+    )
+    stove, door = two_questions(store)
+    result = loop.process_frame(frame(captures, "a.jpg"))
+    check("only the missed question is asked alone", loop.check_fn.calls == [door])
+    check("its own answer still fires", result["fired"] == [door])
+
+
+def test_a_failed_batch_falls_back_to_one_by_one():
+    # Raises; returns None (batching off); returns the wrong number of results.
+    for batch in (ScriptedBatch(raises=RuntimeError("down")), lambda frame_path, entries: None,
+                  ScriptedBatch(returns=[{"verdict": "yes"}])):
+        store, loop, spoken, captures = batch_rig(
+            {"is-the-stove-off": [verdict("yes", "All four burners are dark.")]}, batch
+        )
+        stove, door = two_questions(store)
+        result = loop.process_frame(frame(captures, "a.jpg"))
+        check("every question asked alone after a failed batch",
+              sorted(loop.check_fn.calls) == sorted([stove, door]))
+        check("the answer still fires", result["fired"] == [stove])
+        check("a failed batch is not an error", result["errors"] == 0)
+
+
+def test_one_due_question_skips_the_batch():
+    batch = ScriptedBatch()
+    store, loop, spoken, captures = batch_rig(
+        {"is-the-stove-off": [verdict("cannot_tell", "Dark.")]}, batch
+    )
+    plant(store, "Is the stove off?", {"kind": "interval", "minutes": 0})
+    loop.process_frame(frame(captures, "a.jpg"))
+    check("no batch for a single question", batch.calls == [])
+    check("the question is asked alone", loop.check_fn.calls == ["is-the-stove-off"])
+
+
+def plant_safety(store, text):
+    slug = store.create(text, {"kind": "interval", "minutes": 0}, safety=True)
+    store.save_ref(slug, "yes", JPEG)
+    store.save_ref(slug, "no", JPEG)
+    return slug
+
+
+def test_a_safety_question_is_never_batched():
+    batch = ScriptedBatch({
+        "is-the-front-door-locked": dict(verdict("no", "The latch is open."), failure=None),
+        "is-the-back-door-locked": dict(verdict("no", "The bolt is open."), failure=None),
+    })
+    store, loop, spoken, captures = batch_rig(
+        {"is-the-stove-off": [verdict("cannot_tell", "Knobs out of view.")]}, batch
+    )
+    stove = plant_safety(store, "Is the stove off?")
+    plant(store, "Is the front door locked?", {"kind": "interval", "minutes": 0})
+    plant(store, "Is the back door locked?", {"kind": "interval", "minutes": 0})
+    loop.process_frame(frame(captures, "a.jpg"))
+    check("the batch holds only the non-safety questions",
+          len(batch.calls) == 1 and stove not in batch.calls[0] and len(batch.calls[0]) == 2)
+    check("the safety question is asked alone", loop.check_fn.calls == [stove])
+
+    # One safety and one ordinary question: nothing is left to batch.
+    batch = ScriptedBatch()
+    store, loop, spoken, captures = batch_rig({}, batch)
+    stove = plant_safety(store, "Is the stove off?")
+    plant(store, "Is the front door locked?", {"kind": "interval", "minutes": 0})
+    loop.process_frame(frame(captures, "b.jpg"))
+    check("no batch when only one non-safety question is due", batch.calls == [])
+
+
 if __name__ == "__main__":
     test_unmanaged_without_standing_questions()
     test_cannot_tell_is_silent_and_deletes()
@@ -406,4 +527,9 @@ if __name__ == "__main__":
     test_bookkeeping_failure_skips_one_question_only()
     test_evidence_names_never_overwrite()
     test_malformed_reason_still_speaks()
+    test_one_call_answers_every_due_question()
+    test_a_question_the_batch_missed_is_asked_alone()
+    test_a_failed_batch_falls_back_to_one_by_one()
+    test_one_due_question_skips_the_batch()
+    test_a_safety_question_is_never_batched()
     print("ALL PASS")

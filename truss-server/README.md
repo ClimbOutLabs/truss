@@ -171,6 +171,7 @@ before:
 | `TRUSS_TIMEOUT_S` | `120` (the whole check, retry included) | |
 | `TRUSS_MAX_TOKENS` | `2048` (room to think, then answer) | |
 | `TRUSS_CHECK_MODE` | `single` | |
+| `TRUSS_BATCH_CHECKS` | `1` (every question due on a photo in one call; `0` = one call each) | |
 
 Any model name containing `contributor` is refused before anything is
 sent: that tier trains on what it is sent. A key is only sent over

@@ -627,12 +627,12 @@ private fun HeroCard(
     }
     minding == 0 -> {
       title = "Ready"
-      subtitle = "Glasses and laptop are on. Add a question for Mannie, the voice in your glasses, to mind."
+      subtitle = "Glasses and laptop are on. Add a question for Truss to mind."
     }
     else -> {
       title = "Ready"
       subtitle =
-          "Mannie, the voice in your glasses, is minding $minding question" + (if (minding == 1) "" else "s") +
+          "Truss is minding $minding question" + (if (minding == 1) "" else "s") +
               ". Start watching and keep this screen open."
     }
   }
@@ -701,7 +701,7 @@ private fun LastAnswer(state: TrussUiState) {
     if (!state.photoBusy && state.serverBytes != null) {
       Surface {
         Text(
-            "Nothing to say about the last look. Mannie, the voice in your glasses, speaks up when an answer is yes.",
+            "Nothing to say about the last look. The voice in the glasses speaks up when an answer is yes.",
             style = MaterialTheme.typography.bodyMedium,
             color = Truss.muted,
         )
@@ -926,6 +926,37 @@ private fun HomeSetUpPreview() {
 
 // MARK: - Questions
 
+/** The three planting steps, in the order they happen: ask, then show yes, then show no. */
+@Composable
+private fun PlantSteps() {
+  Surface(padding = 16.dp) {
+    PlantStep(1, "Ask the question.")
+    PlantStep(2, "Show what yes looks like.")
+    PlantStep(3, "Show what no looks like.")
+    Text(
+        "For a number on a display, the yes look alone is enough.",
+        style = MaterialTheme.typography.bodySmall,
+        color = Truss.muted,
+    )
+  }
+}
+
+@Composable
+private fun PlantStep(number: Int, text: String) {
+  Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+  ) {
+    Box(
+        modifier = Modifier.size(26.dp).clip(CircleShape).background(Truss.sky),
+        contentAlignment = Alignment.Center,
+    ) {
+      Text("$number", style = MaterialTheme.typography.labelMedium, color = Truss.onSky)
+    }
+    Text(text, style = MaterialTheme.typography.bodyLarge, color = Truss.ink)
+  }
+}
+
 @Composable
 private fun QuestionsScreen(
     state: TrussUiState,
@@ -937,7 +968,7 @@ private fun QuestionsScreen(
 
   ScreenBody {
     state.lastError?.let { ErrorBanner(it, viewModel::clearError) }
-    ScreenTitle("Questions")
+    ScreenTitle("Questions", "Ask a question once, then show what yes and no look like.")
 
     if (state.plantSlug == null) {
       OutlinedTextField(
@@ -971,19 +1002,13 @@ private fun QuestionsScreen(
               ),
           modifier = Modifier.fillMaxWidth(),
       )
-      Text(
-          "Next, you show Mannie what yes looks like and what no looks like, through the glasses. " +
-              "For a number on a display, the yes look alone is enough.",
-          style = MaterialTheme.typography.bodySmall,
-          color = Truss.muted,
-          modifier = Modifier.padding(horizontal = 6.dp),
-      )
+      PlantSteps()
     } else {
       PlantingCard(state, planting, onCaptureRef, viewModel::cancelPlanting, viewModel::finishPlantingWithoutMore)
     }
 
     val shown = state.questionsList.filter { it.state != "retired" }
-    if (shown.isNotEmpty()) SectionLabel("Minding")
+    if (shown.isNotEmpty()) SectionLabel("Questions being minded")
     shown.forEach { item ->
       QuestionRow(
           item = item,
@@ -998,23 +1023,7 @@ private fun QuestionsScreen(
     }
 
     if (state.plantSlug == null) {
-      Row(
-          modifier =
-              Modifier.fillMaxWidth()
-                  .clip(RoundedCornerShape(24.dp))
-                  .background(Truss.card)
-                  .border(1.dp, Truss.line, RoundedCornerShape(24.dp))
-                  .clickable(enabled = !state.plantBusy, onClick = viewModel::plantBedtimeRound)
-                  .padding(14.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(14.dp),
-      ) {
-        IconTile(TrussIcons.Moon, Truss.lime, Truss.onLime, size = 40.dp, shape = CircleShape)
-        Column {
-          Text("Bedtime round", style = MaterialTheme.typography.titleMedium)
-          Text("Stove, door and pills in one go", style = MaterialTheme.typography.bodySmall, color = Truss.muted)
-        }
-      }
+      BedtimeRoundTile(enabled = !state.plantBusy, onClick = viewModel::plantBedtimeRound)
     }
   }
 }
@@ -1034,7 +1043,7 @@ private fun QuestionRow(
       Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(item.question, style = MaterialTheme.typography.titleMedium)
         Chip(
-            look.status + if (item.kind == "done") " · done check" else "",
+            look.status + if (item.kind == "done") " · done question" else "",
             look.background,
             look.onBackground,
         )
@@ -1045,7 +1054,7 @@ private fun QuestionRow(
     }
     if (item.state == "planting" && canResume) {
       BigButton(
-          if (!item.hasRefYes) "Show Mannie the yes look" else "Show Mannie the no look",
+          if (!item.hasRefYes) "Show the yes look" else "Show the no look",
           TrussIcons.Camera,
           onResume,
           container = Truss.apricot,
@@ -1078,7 +1087,11 @@ private fun PlantingCard(
           )
         }
         Spacer(Modifier.width(6.dp))
-        Text("Step $step of 3", style = MaterialTheme.typography.labelMedium, color = Truss.onApricotSoft)
+        Text(
+            if (needsYes) "Step 2 of 3 · The yes look" else "Step 3 of 3 · The no look",
+            style = MaterialTheme.typography.labelMedium,
+            color = Truss.onApricotSoft,
+        )
       }
       Spacer(Modifier.weight(1f))
       IconButton(onClick = onCancel, enabled = !state.busy) {
@@ -1118,6 +1131,97 @@ private fun PlantingCard(
             color = Truss.onApricot,
         )
       }
+    }
+  }
+}
+
+/** The bedtime round, given the weight of the shortcut it is: one tap plants three questions. */
+@Composable
+private fun BedtimeRoundTile(enabled: Boolean, onClick: () -> Unit) {
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .clip(RoundedCornerShape(24.dp))
+              .background(Truss.ink)
+              .clickable(enabled = enabled, onClick = onClick)
+              .padding(14.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(14.dp),
+  ) {
+    IconTile(TrussIcons.Moon, Truss.lime, Truss.onLime, size = 40.dp, shape = CircleShape)
+    Column {
+      Text("Bedtime round", style = MaterialTheme.typography.titleMedium, color = Color.White)
+      Text(
+          "One tap plants the stove, the door and the pills, all together.",
+          style = MaterialTheme.typography.bodySmall,
+          color = Color.White.copy(alpha = 0.75f),
+      )
+    }
+  }
+}
+
+/**
+ * The Questions screen filled with sample questions, one in each state, so the screen can be
+ * looked at and screenshotted without the glasses or the laptop. It has no Preview annotation
+ * because the app does not declare the compose tooling dependency; adding that one debug
+ * dependency is all it takes to light it up in Android Studio.
+ */
+@Composable
+private fun QuestionsScreenPreview() {
+  val tonight = LocalDate.now().atTime(21, 12).toString()
+  TrussTheme {
+    Column(
+        modifier = Modifier.background(Truss.ground).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+      ScreenTitle("Questions", "Ask a question once, then show what yes and no look like.")
+      PlantSteps()
+      SectionLabel("Questions being minded")
+      QuestionRow(
+          item =
+              QuestionInfo(
+                  "stove-off",
+                  "Is the stove off?",
+                  "standing",
+                  hasRefYes = true,
+                  hasRefNo = true,
+              ),
+          canResume = false,
+          onResume = {},
+          onRemove = {},
+          removeEnabled = false,
+      )
+      QuestionRow(
+          item =
+              QuestionInfo(
+                  "night-pills",
+                  "Did I take my night pills?",
+                  "answered",
+                  hasRefYes = true,
+                  hasRefNo = true,
+                  kind = "done",
+                  answeredAt = tonight,
+              ),
+          canResume = false,
+          onResume = {},
+          onRemove = {},
+          removeEnabled = false,
+      )
+      QuestionRow(
+          item =
+              QuestionInfo(
+                  "front-door",
+                  "Is the front door locked?",
+                  "planting",
+                  hasRefYes = true,
+                  hasRefNo = false,
+              ),
+          canResume = true,
+          onResume = {},
+          onRemove = {},
+          removeEnabled = false,
+      )
+      BedtimeRoundTile(enabled = true, onClick = {})
     }
   }
 }
