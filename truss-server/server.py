@@ -216,7 +216,7 @@ def batch_check(frame_path, entries):
         }
         for entry in entries
     ]
-    return verdict.check_many(frame_path, items)
+    return verdict.check_many(frame_path, items, now=CLOCK())
 
 
 # The check being made right now, for the Desk: a Muse Spark check can
@@ -801,7 +801,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         alerts = []
         for a in ALERTS.pending():
             item = {"id": a["id"], "line": a["line"]}
-            banner = desk_banner(a)
+            banner = desk_banner(a, now=CLOCK())
             if banner is not None:
                 item["headline"], item["note"] = banner
             alerts.append(item)
