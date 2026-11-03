@@ -420,6 +420,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       if (!fromWatch) showError(e)
       return null
     } catch (e: Exception) {
+      if (fromWatch && watchStopAsked) {
+        // Stop closed the glasses session under this photo: not a failure, and the
+        // camera permission is fine.
+        photoLog("Stopped while a photo was being taken: ${e.message ?: e.toString()}")
+        return false
+      }
       cameraGranted = false
       photoLog("FAILED: ${e.message ?: e.toString()}")
       showError(e)
