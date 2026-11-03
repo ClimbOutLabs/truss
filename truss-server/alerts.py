@@ -263,6 +263,49 @@ def miss_line(entry, until, cov=None, start=None, day=None, yesterday=False):
     return " ".join(sentences)
 
 
+def _desk_name(question):
+    """The short name of a done question for the Desk banner: "Did I
+    take my night pills?" names "the night pills". None when the
+    question does not open "Did I <verb>", so the banner falls back
+    to the question's own words."""
+    words = question.strip().rstrip("?.").split()
+    if len(words) < 4 or words[0].lower() != "did" or words[1].lower() != "i":
+        return None
+    rest = words[3:]
+    if rest and rest[0].lower() in ("my", "your"):
+        rest[0] = "the"
+    return " ".join(rest) or None
+
+
+def desk_banner(alert):
+    """The Desk's words for a pending alert: a headline and one line
+    under it, in the shape the owner chose, filled from the alert's
+    own record (the question it names, the time its window closed).
+
+    Display only. The phone speaks alert["line"], which miss_line
+    composes under the safety rules above; this never touches that
+    line, so what the wearer hears is unchanged. None when the
+    record holds no question to name, and the Desk then shows the
+    spoken line as it did before."""
+    question = alert.get("question")
+    if not isinstance(question, str) or not question.strip():
+        return None
+    name = _desk_name(question) or question.strip()
+    day = "tonight" if alert.get("date") == datetime.now().date().isoformat() else "last night"
+    headline = f"One thing from {day} is still open: {name}"
+    if not headline.endswith("?"):
+        headline += "."
+    closed = ""
+    until = alert.get("until")
+    if isinstance(until, str):
+        try:
+            closed = f" at {_clock(datetime.strptime(until.strip(), '%H:%M'))}"
+        except ValueError:
+            closed = ""
+    note = f"The window closed{closed} with nothing seen. You may well have taken them."
+    return headline, note
+
+
 def sweep_missed(store, alerts, now=None, checks=None, gap_minutes=DEFAULT_GAP_MINUTES):
     """Create one pending alert for each done question whose window
     has closed today with no witness. Returns the alerts created.
