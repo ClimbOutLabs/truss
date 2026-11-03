@@ -114,7 +114,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
   <nav role="tablist">
     <button class="tab" role="tab" aria-selected="true" data-tab="today">Today</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="live">Live View</button>
-    <button class="tab" role="tab" aria-selected="false" data-tab="plant">Plant</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="plant">Watch for me</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="guide">Guide</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="answers">Answers</button>
     <button class="tab end" role="tab" aria-selected="false" data-tab="settings">Settings</button>
@@ -184,7 +184,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
       <label class="field" id="look-at-field" hidden><span class="fl">What to look at, if it is missed</span>
         <input type="text" id="p-look" placeholder="the {weekday} PM compartment"></label>
 
-      <div><button class="btn" type="submit" id="p-go">Plant and start watching</button></div>
+      <div><button class="btn" type="submit" id="p-go">Start watching for me</button></div>
       <div class="msg" id="p-msg" hidden></div>
     </form>
 
@@ -589,7 +589,7 @@ function fillForm(f) {
   syncForm();
   $("p-safety").checked = !!f.safety;
   $("p-look").value = f.look || "";
-  showMsg("p-msg", f.safety ? "Filled in. Drop in the yes and no photos, then plant." : "Filled in. Drop in the photos if you have them, then plant.");
+  showMsg("p-msg", f.safety ? "Filled in. Drop in the yes and no photos, then start watching for me." : "Filled in. Drop in the photos if you have them, then start watching for me.");
 }
 
 const LOOKS = {yes: null, no: null};
@@ -709,7 +709,7 @@ $("plant").addEventListener("submit", async (ev) => {
   if (kind === "done" && look) body.look_at = look;
   $("p-go").disabled = true;
   try {
-    showMsg("p-msg", "Planting…");
+    showMsg("p-msg", "Starting…");
     const r = await postJSON("/plant/question", body);
     let state = r.state;
     for (const k of ["yes", "no"]) {
@@ -826,7 +826,7 @@ $("phone-go").addEventListener("click", async () => {
   const start = $("phone-go").dataset.on !== "0";
   if (start) {
     const live = QUESTIONS.filter((q) => q.state !== "retired" && q.state !== "planting").length;
-    if (!live) { openTab("today"); showMsg("msg-today", "Nothing is planted yet. Plant a question first, or pick one of the samples below.", true); return; }
+    if (!live) { openTab("today"); showMsg("msg-today", "Nothing is planted yet. Go to Watch for me and ask a question, or pick one of the samples below.", true); return; }
   }
   $("phone-go").disabled = true;
   const said = await askPhone(start);
