@@ -84,6 +84,11 @@ details{border-top:1px solid var(--line);padding-top:16px;max-width:560px}
 summary{cursor:pointer;font-weight:600;font-size:14px}
 .block{border-top:1px solid var(--line);padding-top:24px;max-width:560px}
 .okt{color:var(--ok);font-weight:500} .badt{color:var(--on-apricot);font-weight:500}
+/* live */
+.view{width:100%;max-width:560px;aspect-ratio:4/3;object-fit:cover;border-radius:12px;background:var(--sage);display:block}
+.said{display:grid;grid-template-columns:76px minmax(0,1fr) auto;gap:16px;align-items:baseline;padding:14px 0;border-top:1px solid var(--line)}
+.said .qt{font-weight:500}
+.said.new .qt{font-weight:600}
 [hidden]{display:none!important}
 .checking{font-size:13px;color:var(--muted);margin:-8px 0 16px}
 </style>
@@ -101,6 +106,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 
   <nav role="tablist">
     <button class="tab" role="tab" aria-selected="true" data-tab="today">Today</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="live">Live</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="plant">Plant</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="guide">Guide</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="answers">Answers</button>
@@ -115,6 +121,19 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
       <div id="msg-today" class="msg" hidden></div>
       <div id="day"></div>
       <div id="stopped"></div>
+    </section>
+  </div>
+
+  <!-- Live: what the glasses see and say, for everyone else in the room -->
+  <div id="tab-live" class="pane" hidden>
+    <section>
+      <div class="spread"><h2>Live</h2>
+        <label class="row" style="cursor:pointer"><input type="checkbox" id="l-play"><span>Play what Truss says on this device</span></label>
+      </div>
+      <p class="note" style="margin:0">Everything Truss speaks in the glasses shows here as it is said. Anyone on this Wi-Fi can open this page at the same address and pick Live.</p>
+      <img id="l-view" class="view" hidden alt="The glasses' latest view">
+      <span class="note" id="l-view-note">No view from the glasses yet. Start watching on the phone.</span>
+      <div id="l-said"></div>
     </section>
   </div>
 
@@ -327,7 +346,7 @@ let TAB = "today";
 function openTab(name) {
   TAB = name;
   document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === name)));
-  ["today", "plant", "guide", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
+  ["today", "live", "plant", "guide", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
   refresh();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => openTab(t.dataset.tab)));
@@ -915,6 +934,69 @@ $("g-skip").addEventListener("click", () => guideAct("skip"));
 $("g-stop").addEventListener("click", () => guideAct("stop"));
 setInterval(() => { if (TAB === "guide") loadGuide(); }, 4000);
 
+// ---- live -------------------------------------------------------------------
+// Polls the lines Truss spoke (GET /feed) and the glasses' latest view
+// (GET /latest). With "Play" on, each new line is played here with the
+// same audio the glasses played.
+let FEED_AFTER = 0;
+let FEED_LINES = [];
+let FEED_STARTED = false;
+const PLAY_QUEUE = [];
+let PLAYING = false;
+function playNext() {
+  if (PLAYING || !PLAY_QUEUE.length) return;
+  PLAYING = true;
+  const audio = new Audio(`/feed/audio?id=${PLAY_QUEUE.shift()}`);
+  const done = () => { PLAYING = false; playNext(); };
+  audio.addEventListener("ended", done);
+  audio.addEventListener("error", done);
+  audio.play().catch(done);
+}
+function drawFeed() {
+  const lines = FEED_LINES.slice().reverse();
+  $("l-said").innerHTML = lines.length
+    ? lines.map((l, i) => `<div class="said${i === 0 ? " new" : ""}"><span class="t">${esc(new Date(l.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}))}</span><span class="qt">${esc(l.text)}</span><span></span></div>`).join("")
+    : `<div class="empty">Nothing said yet. Lines appear here the moment the glasses speak them.</div>`;
+}
+async function loadFeed() {
+  try {
+    const r = await getJSON(`/feed?after=${FEED_AFTER}`);
+    const fresh = r.lines || [];
+    if (fresh.length) {
+      FEED_AFTER = fresh[fresh.length - 1].id;
+      FEED_LINES = FEED_LINES.concat(fresh).slice(-40);
+      // Lines already said before this page opened are listed, not played.
+      if (FEED_STARTED && $("l-play").checked) fresh.filter((l) => l.audio).forEach((l) => PLAY_QUEUE.push(l.id));
+      playNext();
+    }
+    FEED_STARTED = true;
+    drawFeed();
+  } catch (e) { /* the laptop is between restarts; the next poll tries again */ }
+}
+async function loadView() {
+  if (TAB !== "live") return;
+  try {
+    const r = await fetch("/latest", {cache: "no-store"});
+    if (!r.ok) { $("l-view").hidden = true; $("l-view-note").hidden = false; return; }
+    const ago = Number(r.headers.get("X-Seconds-Ago") || "0");
+    const url = URL.createObjectURL(await r.blob());
+    const img = $("l-view");
+    if (img.src) URL.revokeObjectURL(img.src);
+    img.src = url;
+    img.hidden = false;
+    $("l-view-note").hidden = false;
+    $("l-view-note").textContent = `The glasses' view, ${ago.toFixed(0)} s ago.`;
+  } catch (e) { /* tried again in a moment */ }
+}
+// Ticking the box is the tap a browser needs before it plays sound, so
+// the latest line is played once then, as a sound check.
+$("l-play").addEventListener("change", () => {
+  const last = FEED_LINES.filter((l) => l.audio).pop();
+  if ($("l-play").checked && last) { PLAY_QUEUE.push(last.id); playNext(); }
+});
+setInterval(loadFeed, 2000);
+setInterval(loadView, 3000);
+
 // ---- refresh --------------------------------------------------------------
 function refresh() {
   loadStatus();
@@ -924,9 +1006,11 @@ function refresh() {
   if (TAB === "guide") loadGuide();
   if (TAB === "answers") loadAnswers();
   if (TAB === "settings") loadSettings();
+  if (TAB === "live") { loadFeed(); loadView(); }
 }
 syncForm();
-loadStatus().then(() => { refresh(); });
+if (location.hash === "#live") TAB = "live";
+loadStatus().then(() => { openTab(TAB); });
 setInterval(() => { loadQuestions(); loadAlerts(); }, 15000);
 // A tab in the background has its timers slowed to once a minute by the
 // browser; catch up the moment it is looked at again.

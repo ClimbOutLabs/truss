@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""
+The server log, and the feed of what Truss says.
+
+Everything the server prints goes through one tidy writer: to the
+terminal as before, and to log/server.log, so a test run can be
+followed from a second window with
+
+    tail -f truss-server/log/server.log
+
+and the file can be handed over or read by a script. Each line is
+
+    2026-11-03 05:30:45 | capture  | saved capture_20261103_053045.jpg (176142 bytes)
+
+the date and time, a short tag saying what part of the server spoke,
+and the message, split by " | " like the answer log.
+
+The every-few-seconds polls (the phone's check-ins, the Desk's
+refreshes, an empty alert poll) are left out, since they buried the
+lines that matter. Their failures are kept, and a line repeated many
+times in a row is written once with a count. TRUSS_LOG_POLLS=1 keeps
+the polls too.
+
+The feed is the other half: every line Truss speaks through the
+glasses is synthesized here (POST /tts), so this is where it is kept,
+text and audio, for the Desk's Live tab to show and play to anyone
+else in the room. It lives in memory only and holds the last few
+dozen lines.
+"""
+
+import itertools
+import os
+import re
+import sys
+import threading
+from collections import deque
+from datetime import datetime
+from pathlib import Path
+
+# An access line from BaseHTTPRequestHandler, as server.py prints it:
+#   [2026-11-03 05:30:15] "GET /latest HTTP/1.1" 404 -
+ACCESS = re.compile(r'^\[[^\]]+\] "(?P<method>[A-Z]+) (?P<path>\S+) HTTP/[\d.]+" (?P<code>\d{3})')
+# The handler's error line, printed just before the access line above.
+ERROR = re.compile(r"^\[[^\]]+\] code (?P<code>\d{3}), message (?P<message>.*)$")
+# The handlers' own lines: "POST /capture -> saved ...".
+ARROW = re.compile(r"^(?P<method>GET|POST) (?P<path>/\S*) -> (?P<message>.*)$")
+
+# Handler lines that only report a routine poll.
+POLL_LINES = (
+    re.compile(r"^GET / -> 200 OK$"),
+    re.compile(r"^GET /alerts -> 0 pending$"),
+    re.compile(r"^GET /questions -> \d+ questions?$"),
+    re.compile(r"^GET /desk -> 200 OK$"),
+)
+
+# A path's tag is its first part, with a few plainer names.
+TAG_NAMES = {"tts": "said", "": "http"}
+TAG_WIDTH = 8
+
+
+def tag_for(path):
+    first = path.split("?", 1)[0].strip("/").split("/", 1)[0]
+    return TAG_NAMES.get(first, first)[:TAG_WIDTH] or "http"
+
+
+def tidy(line, keep_polls=False):
+    """(tag, message) for one printed line, or None when it is a
+    routine poll that is left out."""
+    text = line.rstrip()
+    if not text:
+        return None
+    access = ACCESS.match(text)
+    if access:
+        code = access["code"]
+        if code.startswith(("2", "3")) and not keep_polls:
+            # A success says nothing the handler's own line does not;
+            # the rest are the polls.
+            return None
+        return ("http", f"{access['method']} {access['path']} -> {code}")
+    error = ERROR.match(text)
+    if error:
+        return ("error", f"{error['code']} {error['message']}")
+    if not keep_polls and any(p.match(text) for p in POLL_LINES):
+        return None
+    arrow = ARROW.match(text)
+    if arrow:
+        return (tag_for(arrow["path"]), arrow["message"])
+    stripped = text.strip()
+    if stripped.startswith("check"):
+        return ("check", stripped[len("check"):].lstrip(" :"))
+    if stripped.startswith("Traceback") or text.startswith(" "):
+        # A traceback's lines keep their indent, so it still reads as one.
+        return ("error", text.rstrip())
+    return ("server", stripped)
+
+
+class TidyLog:
+    """A stream that takes what the server prints, tidies it line by
+    line, and writes each kept line to the terminal and the log file."""
+
+    def __init__(self, console, path=None, keep_polls=None, clock=datetime.now):
+        self.console = console
+        self.path = Path(path) if path else None
+        self.keep_polls = (
+            os.environ.get("TRUSS_LOG_POLLS", "").strip() == "1"
+            if keep_polls is None
+            else keep_polls
+        )
+        self.clock = clock
+        self._partial = ""
+        self._last = None
+        self._repeats = 0
+        self._lock = threading.Lock()
+        self._file = None
+        if self.path is not None:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self._file = open(self.path, "a", buffering=1, encoding="utf-8")
+            except OSError:
+                self._file = None
+
+    # The parts of a text stream print() and tracebacks use.
+    def write(self, text):
+        if not isinstance(text, str):
+            text = str(text)
+        with self._lock:
+            self._partial += text
+            while "\n" in self._partial:
+                line, self._partial = self._partial.split("\n", 1)
+                self._line(line)
+        return len(text)
+
+    def flush(self):
+        try:
+            self.console.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
+
+    @property
+    def encoding(self):
+        return getattr(self.console, "encoding", "utf-8")
+
+    def _line(self, line):
+        kept = tidy(line, keep_polls=self.keep_polls)
+        if kept is None:
+            return
+        if kept == self._last:
+            self._repeats += 1
+            return
+        if self._repeats:
+            self._emit(self._last[0], f"(the line above, {self._repeats} more times)")
+        self._last = kept
+        self._repeats = 0
+        self._emit(*kept)
+
+    def _emit(self, tag, message):
+        stamp = self.clock().strftime("%Y-%m-%d %H:%M:%S")
+        out = f"{stamp} | {tag:<{TAG_WIDTH}} | {message}\n"
+        try:
+            self.console.write(out)
+            self.console.flush()
+        except Exception:
+            pass
+        if self._file is not None:
+            try:
+                self._file.write(out)
+            except Exception:
+                pass
+
+
+def install(log_dir):
+    """Send the server's prints (and its tracebacks) through the tidy
+    log, writing log_dir/server.log. Returns the log file's path."""
+    path = Path(log_dir) / "server.log"
+    out = TidyLog(sys.stdout, path)
+    sys.stdout = out
+    sys.stderr = out
+    return path
+
+
+class Feed:
+    """The last lines Truss spoke, with their audio, newest last."""
+
+    def __init__(self, size=40, clock=datetime.now):
+        self._items = deque(maxlen=size)
+        self._ids = itertools.count(1)
+        self._lock = threading.Lock()
+        self.clock = clock
+
+    def add(self, text, wav=None):
+        with self._lock:
+            item = {
+                "id": next(self._ids),
+                "at": self.clock().isoformat(timespec="seconds"),
+                "text": text,
+                "wav": wav,
+            }
+            self._items.append(item)
+            return item["id"]
+
+    def since(self, after=0):
+        """The lines after the given id, without their audio."""
+        with self._lock:
+            return [
+                {"id": i["id"], "at": i["at"], "text": i["text"], "audio": i["wav"] is not None}
+                for i in self._items
+                if i["id"] > after
+            ]
+
+    def audio(self, item_id):
+        with self._lock:
+            for item in self._items:
+                if item["id"] == item_id:
+                    return item["wav"]
+        return None
