@@ -554,10 +554,21 @@ class TrussHandler(BaseHTTPRequestHandler):
         print(f"[{timestamp}] {format % args}")
     
     def send_json(self, obj, status=200):
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(obj).encode())
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(obj).encode())
+        except (BrokenPipeError, ConnectionResetError):
+            # The page went away (a reload, a closed tab) before the
+            # reply was sent: one line, not a traceback.
+            print(f"{self.command} {urlparse(self.path).path}: the page left before the reply was sent.")
+
+    def send_error(self, code, message=None, explain=None):
+        try:
+            super().send_error(code, message, explain)
+        except (BrokenPipeError, ConnectionResetError):
+            print(f"{self.command} {urlparse(self.path).path}: the page left before the error was sent.")
 
     def do_GET(self):
         """Handle GET requests. Reads run alongside a capture (the stores
@@ -635,6 +646,13 @@ class TrussHandler(BaseHTTPRequestHandler):
         if path == "/settings/test":
             self.handle_settings_test()
             return
+        # Writing a job's steps is two model calls that can take a
+        # minute or more; they run off the write lock, so captures, the
+        # guide's status and every other POST never wait behind them.
+        # Only starting the guide on the written steps takes the lock.
+        if path == "/guide/task":
+            self.handle_guide_task()
+            return
         with WRITE_LOCK:
             self._do_post(path)
 
@@ -655,8 +673,6 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_questions_retire(delete=True)
         elif path == "/guide/start":
             self.handle_guide_start()
-        elif path == "/guide/task":
-            self.handle_guide_task()
         elif path == "/guide/skip":
             self.handle_guide_skip()
         elif path == "/guide/stop":
@@ -1155,23 +1171,32 @@ class TrussHandler(BaseHTTPRequestHandler):
         if session is not None and session.state == "active":
             self.send_error(400, "A guide is already running. Stop it first.")
             return
+        started = time.monotonic()
+        print(f"POST /guide/task: writing the steps for {str(body.get('task'))[:80]!r}")
         try:
             plan = task_steps.compose_steps(
                 body.get("task"), endpoint.ask_json, endpoint.text_part
             )
         except task_steps.TaskError as e:
-            print(f"POST /guide/task -> no steps: {e}")
+            print(f"POST /guide/task -> no steps ({time.monotonic() - started:.1f} s): {e}")
             self.send_error(400, str(e))
             return
-        self._start_guide(
-            plan["steps"], plan["title"], body.get("phone") is True, "/guide/task",
-            extra={
-                "steps": plan["steps"],
-                "left_out": plan["left_out"],
-                "model": plan["model"],
-                "left_out_line": task_steps.left_out_line(plan["left_out"]),
-            },
-        )
+        except Exception as e:
+            # Never leave the Desk waiting on an unexpected failure.
+            print(f"POST /guide/task -> failed ({time.monotonic() - started:.1f} s): {e!r}")
+            self.send_error(500, "Something went wrong writing the steps. Try again in a moment.")
+            return
+        print(f"POST /guide/task: steps written in {time.monotonic() - started:.1f} s")
+        with WRITE_LOCK:
+            self._start_guide(
+                plan["steps"], plan["title"], body.get("phone") is True, "/guide/task",
+                extra={
+                    "steps": plan["steps"],
+                    "left_out": plan["left_out"],
+                    "model": plan["model"],
+                    "left_out_line": task_steps.left_out_line(plan["left_out"]),
+                },
+            )
 
     def handle_guide_skip(self):
         """Skip the current step, at the wearer's word."""
