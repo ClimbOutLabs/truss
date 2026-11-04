@@ -206,7 +206,9 @@ def test_rest_and_uncollected():
     p = holdon.Pending()
     check("pending: may hold at first", p.may_hold())
     p.held()
-    check("pending: no rest by default (every photo in shot hears it)", p.may_hold())
+    check("pending: rests 3 s after a hold-on", not p.may_hold())
+    p._last_hold -= holdon.HOLD_REST_S + 0.1
+    check("pending: and may hold again after", p.may_hold())
     saved = holdon.COLLECT_S
     holdon.COLLECT_S = 0.1
     try:

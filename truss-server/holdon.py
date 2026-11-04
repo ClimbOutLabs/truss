@@ -94,10 +94,11 @@ def follow_up(checked, fired=(), speak=(), now=None):
 
 # How long the gate may take before it is no longer worth waiting for.
 GATE_LIMIT_S = 8.0
-# After a hold-on is spoken, the next one waits this long (0 by
-# default: every photo with the thing in shot hears it; Live view only
-# sends a photo when the view changes, so a still scene never repeats).
-HOLD_REST_S = float(os.environ.get("TRUSS_HOLD_REST_S") or 0)
+# After a hold-on's answer is spoken, the next hold-on waits this long
+# (3 s by default), so a wearer who stops at "hold on" has time to act
+# before the next one; Live view only sends a photo when the view
+# changes, so a still scene never repeats either way.
+HOLD_REST_S = float(os.environ.get("TRUSS_HOLD_REST_S") or 3)
 # How long a finished result waits to be collected before its lines
 # go to the alert queue instead.
 COLLECT_S = 45.0
@@ -197,6 +198,8 @@ class Pending:
             return
         item["result"] = result
         item["done"].set()
+        # The rest counts from the answer, not from the hold-on line.
+        self.held()
         timer = threading.Timer(COLLECT_S, self._uncollected, args=(pid,))
         timer.daemon = True
         timer.start()
