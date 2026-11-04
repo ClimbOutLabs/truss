@@ -67,6 +67,7 @@ section{display:flex;flex-direction:column;gap:16px}
 .chip{flex:none;font-size:13.5px;font-weight:600;border-radius:999px;padding:5px 13px;background:var(--sage);color:var(--ink)}
 .chip.slate{background:var(--sky);color:var(--on-sky)}
 .chip.clay{background:var(--card);color:var(--on-apricot);border:1px solid var(--clayline)}
+.pilldel{font:inherit;font-size:13.5px;font-weight:600;border-radius:999px;padding:5px 13px;cursor:pointer;border:1px solid var(--line);background:transparent;color:inherit;margin-left:6px}
 .pillstop{font:inherit;font-size:13.5px;font-weight:600;border-radius:999px;padding:5px 13px;cursor:pointer;border:0;background:var(--apricot);color:var(--on-apricot)}
 .cards{display:grid;grid-template-columns:1fr 1fr;gap:15px}
 @media (max-width:640px){.cards{grid-template-columns:1fr}}
@@ -605,7 +606,7 @@ function questionCard(q) {
   const bits = answeredQ(q) ? [] : [whenText(q.pattern)];
   if (q.state === "planting") bits.push(q.has_ref_yes ? "Yes photo added" : q.has_ref_no ? "No photo added" : "");
   const pill = cls === "live" || cls === "yes" ? "chip slate" : cls === "warn" ? "chip clay" : "chip";
-  const stop = q.state === "retired" ? "" : `<button class="pillstop" data-retire="${esc(q.slug)}">Stop</button>`;
+  const stop = (q.state === "retired" ? "" : `<button class="pillstop" data-retire="${esc(q.slug)}">Stop</button>`) + delBtn(q);
   // A question still planting takes its looks right here.
   const add = q.state !== "planting" ? "" : `<div class="row" style="margin-top:8px">` +
     ["yes", "no"].map((k) => `<label class="btn2">${(k === "yes" ? q.has_ref_yes : q.has_ref_no) ? "Replace" : "Choose"} ${k} photo<input type="file" accept="image/jpeg" data-look="${k}" data-slug="${esc(q.slug)}" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label>`).join("") +
@@ -616,8 +617,29 @@ function questionCard(q) {
 function lineRow(q) {
   const [word, cls] = stateText(q);
   const bits = answeredQ(q) ? [] : [whenText(q.pattern)];
-  return `<div class="line"><span class="t"></span><div><div class="qt">${esc(q.question)}</div><div class="sub">${esc(bits.filter(Boolean).join(" · "))}</div></div><span class="st ${cls}">${esc(word)}</span></div>`;
+  return `<div class="line"><span class="t"></span><div><div class="qt">${esc(q.question)}</div><div class="sub">${esc(bits.filter(Boolean).join(" · "))}</div></div><span class="st ${cls}">${esc(word)}</span>${delBtn(q)}</div>`;
 }
+// Delete takes a question off the Desk and the phone for good: it is
+// never checked again and its waiting alerts are never spoken.
+function delBtn(q) {
+  return `<button class="pilldel" data-delete="${esc(q.slug)}">Delete</button>`;
+}
+document.addEventListener("click", async (ev) => {
+  const del = ev.target.closest("[data-delete]");
+  if (!del) return;
+  ev.stopPropagation();
+  if (del.dataset.armed !== "1") {
+    del.dataset.armed = "1";
+    del.textContent = "Click again to delete it";
+    setTimeout(() => { del.dataset.armed = ""; del.textContent = "Delete"; }, 4000);
+    return;
+  }
+  del.disabled = true;
+  try { await postJSON("/questions/delete", {slug: del.dataset.delete}); showMsg("msg-today", ""); }
+  catch (e) { showMsg("msg-today", e.message, true); del.disabled = false; }
+  SHOWN = "";
+  loadQuestions();
+}, true);
 
 // One timeline row, shared by Today's seen list and History: the
 // photo, the time, the question, the one plain sentence the answer
@@ -653,7 +675,7 @@ function paintSeen() {
   $("seen").innerHTML = `<h2>What Truss has seen today</h2>` + rows.map((a, i) => {
     const [word, cls] = a.kind === "state_check" ? ["Checked late", "chip clay"] : ["Seen", "chip slate"];
     const q = last.get(norm(a.question)) === i ? live.get(norm(a.question)) : null;
-    const stop = q ? `<button class="pillstop" data-retire="${esc(q.slug)}">Stop</button>` : "";
+    const stop = q ? `<button class="pillstop" data-retire="${esc(q.slug)}">Stop</button>${delBtn(q)}` : "";
     return eventRow(a, SEEN.day, word, cls, false, stop);
   }).join("");
 }

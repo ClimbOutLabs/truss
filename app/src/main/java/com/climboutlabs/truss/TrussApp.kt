@@ -1055,7 +1055,7 @@ private fun QuestionRow(
         )
       }
       IconButton(onClick = onRemove, enabled = removeEnabled) {
-        Icon(TrussIcons.Trash, contentDescription = "Remove ${item.question}", tint = Truss.muted)
+        Icon(TrussIcons.Trash, contentDescription = "Delete ${item.question}", tint = Truss.muted)
       }
     }
     if (item.state == "planting" && canResume) {

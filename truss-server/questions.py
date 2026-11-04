@@ -773,6 +773,7 @@ class QuestionStore:
                 "kind": _clean_kind(watch.get("kind")),
                 "pattern": watch["pattern"],
                 "state": watch["state"],
+                "deleted": watch.get("deleted") is True,
                 "witness": _clean_witness(watch.get("witness")),
                 "redo_spoken": bool(watch.get("redo_spoken")),
                 "safety": _clean_safety(watch.get("safety"), watch.get("kind")),
@@ -1173,4 +1174,17 @@ class QuestionStore:
             if watch is None:
                 raise KeyError(f"No question named {slug}.")
             watch["state"] = "retired"
+            self._write_watch(slug, watch)
+
+    def delete(self, slug):
+        """Remove a question for good: it is retired (so a check in
+        flight still ends safely, see mark_answered) and marked
+        deleted, so the Desk and the phone no longer list it. Its
+        folder and its past answers stay on disk."""
+        with self._lock:
+            watch = self._read_watch(slug)
+            if watch is None:
+                raise KeyError(f"No question named {slug}.")
+            watch["state"] = "retired"
+            watch["deleted"] = True
             self._write_watch(slug, watch)

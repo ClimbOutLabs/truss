@@ -37,6 +37,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -360,13 +362,17 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   // MARK: - Screen 2, photo (Gate 2)
 
-  fun captureAndUpload(requestPermission: suspend (Permission) -> PermissionStatus) {
+  /** lookOnly: the Desk's one photo while not watching, sent as the glasses' view only. */
+  fun captureAndUpload(
+      requestPermission: suspend (Permission) -> PermissionStatus,
+      lookOnly: Boolean = false,
+  ) {
     if (_uiState.value.liveHolding || watchHoldsCamera()) {
-      viewModelScope.launch { if (freeCameraFromWatch()) captureAndUpload(requestPermission) }
+      viewModelScope.launch { if (freeCameraFromWatch()) captureAndUpload(requestPermission, lookOnly) }
       return
     }
     if (!beginCapture(quiet = false)) return
-    viewModelScope.launch { performCapture(requestPermission, fromWatch = false) }
+    viewModelScope.launch { performCapture(requestPermission, fromWatch = false, lookOnly = lookOnly) }
   }
 
   /**
@@ -410,10 +416,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   private suspend fun performCapture(
       requestPermission: suspend (Permission) -> PermissionStatus,
       fromWatch: Boolean,
+      lookOnly: Boolean = false,
   ): Boolean? {
     val startedAt = SystemClock.elapsedRealtime()
     try {
-      runCapture(requestPermission, startedAt, fromWatch)
+      runCapture(requestPermission, startedAt, fromWatch, lookOnly)
       return true
     } catch (e: CancellationException) {
       throw e
@@ -496,6 +503,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       requestPermission: suspend (Permission) -> PermissionStatus,
       startedAt: Long,
       fromWatch: Boolean = false,
+      lookOnly: Boolean = false,
   ) {
     val state = _uiState.value
     check(state.sdkReady) { "The toolkit is not ready yet. Allow the Bluetooth permission first." }
@@ -628,6 +636,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       var stayOpen = false
       var lookStartedAt = startedAt
       var lastLookAt = 0L
+      // When the last photo was taken. Live view's wait between looks counts from here,
+      // not from when its check ended, so a check (often 20 to 40 s) is not added to it.
+      var lastPhotoAt = 0L
       look@ while (true) {
         if (looks > 0) {
           lookStartedAt = SystemClock.elapsedRealtime()
@@ -641,7 +652,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         var liveDecided = false
         if (liveWatch && _uiState.value.captureMode == CaptureMode.LIVE) {
           val notBefore =
-              if (looks > 1) lastLookAt + _uiState.value.watchEverySeconds * 1000L else 0L
+              if (looks > 1) maxOf(lastPhotoAt, 1L) + _uiState.value.watchEverySeconds * 1000L else 0L
           if (!holdForView(stream, firstError, notBefore)) return
           // The video already judged this view new; only readable video counts.
           liveDecided = pendingLive != null
@@ -663,6 +674,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         check(photoError == null) { photoError ?: "Photo capture failed." }
         val captured = photoData
         check(captured != null) { "Photo capture returned nothing." }
+        lastPhotoAt = SystemClock.elapsedRealtime()
         val bitmap = withContext(Dispatchers.Default) { decodePhoto(captured) }
         check(bitmap != null) { "The photo from the glasses could not be decoded." }
         photoLog("Photo is ${bitmap.width} by ${bitmap.height}.")
@@ -750,7 +762,14 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         // through the glasses now, with the camera session already over.
         val refSlug = pendingRefSlug
         val refKind = pendingRefKind
-        if (refSlug != null && refKind != null) {
+        if (lookOnly && !fromWatch) {
+          // The Desk's one photo while not watching: only the glasses' view for its yes
+          // or no look. No question is checked on it, so the Desk has it at once and the
+          // next look is never held up behind a check.
+          withContext(Dispatchers.IO) { client.postLookPhoto(jpegFile) }
+          withContext(Dispatchers.IO) { jpegFile.delete() }
+          photoLog("Sent the photo the Desk asked for.")
+        } else if (refSlug != null && refKind != null) {
           pendingRefSlug = null
           pendingRefKind = null
           val reply = withContext(Dispatchers.IO) { client.postPlantRef(jpegFile, refSlug, refKind) }
@@ -770,14 +789,28 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(questionsList = list) }
           }
         } else {
-          val result = withContext(Dispatchers.IO) { client.postCapture(jpegFile) }
+          // Live view keeps the session open while this photo is checked (30 s or
+          // more): a Desk look asked meanwhile is taken from the open stream at once,
+          // instead of after the check.
+          // The video is still open while this photo is checked: a look away made now
+          // counts (see lookedAwaySinceSent), measured against this photo's view.
+          if (stayOpen && pendingLive != null) lookedAwaySinceSent = false
+          val sideLook = if (stayOpen) viewModelScope.launch { watchDuringCheck(stream, client, pendingLive) } else null
+          val result =
+              try {
+                withContext(Dispatchers.IO) { client.postCapture(jpegFile) }
+              } finally {
+                sideLook?.cancelAndJoin()
+              }
           _uiState.update { it.copy(serverBytes = result.bytes) }
           if (signature != null) {
             // Only a view the laptop really received counts as seen.
             lastSentSignature = signature
             lastSentAt = SystemClock.elapsedRealtime()
             lastSentLive = pendingLive
-            lookedAwaySinceSent = false
+            // Held open, the video was read during the check and any look away since
+            // this photo is already in the flag; otherwise it starts over.
+            if (!stayOpen) lookedAwaySinceSent = false
           }
           if (fromWatch) {
             watchRecord("sent", fired = result.fired.size)
@@ -1077,6 +1110,90 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   // Photo decoding, copied from the CameraAccess sample (HEIC carries its orientation
   // in an EXIF tag that the plain decoder does not apply).
+  /**
+   * While watching's photo is being checked with the Live view session held open, take
+   * any photo the Desk asks for from the same open stream and send it as the glasses'
+   * view only (POST /watch/look/photo). Runs until cancelled; a photo under way always
+   * finishes first. A failure leaves the look pending, for the next look to take.
+   */
+  private suspend fun watchDuringCheck(
+      stream: com.meta.wearable.dat.camera.Stream,
+      client: LaptopClient,
+      sent: IntArray?,
+  ) = coroutineScope {
+    launch { deskLookDuringCheck(stream, client) }
+    if (sent != null) launch { lookAwayDuringCheck(stream, sent) }
+  }
+
+  /** Read the open video while a photo is checked, and note a look away: the glasses
+   * holding still on a view other than the one just sent. Live view then takes the
+   * next still view as new, even if it is that same view again. */
+  private suspend fun lookAwayDuringCheck(stream: com.meta.wearable.dat.camera.Stream, sent: IntArray) {
+    var previous: IntArray? = null
+    var steadySince = 0L
+    var lastLooked = 0L
+    stream.videoStream.collect { frame ->
+      val now = SystemClock.elapsedRealtime()
+      if (now - lastLooked < LIVE_LOOK_EVERY_MS) return@collect
+      lastLooked = now
+      val current = lumaSignature(frame) ?: return@collect
+      val before = previous
+      if (before == null || signatureDistance(before, current) > LIVE_STEADY_THRESHOLD) steadySince = now
+      previous = current
+      if (!lookedAwaySinceSent &&
+          signatureDistance(sent, current) >= SAME_VIEW_THRESHOLD &&
+          now - steadySince >= LIVE_STEADY_MS) {
+        lookedAwaySinceSent = true
+        photoLog("Live view: looked away while the last photo is checked.")
+      }
+    }
+  }
+
+  private suspend fun deskLookDuringCheck(
+      stream: com.meta.wearable.dat.camera.Stream,
+      client: LaptopClient,
+  ) {
+    while (true) {
+      delay(500L)
+      if (!lookPending() || watchStopAsked || heldCamera == null) continue
+      val took = withContext(NonCancellable) {
+        try {
+          var data: PhotoData? = null
+          var error: String? = null
+          // Bounded: a Stop that ends the held camera mid-photo must never leave this
+          // (and the upload waiting on it) hanging.
+          withTimeoutOrNull(STEP_TIMEOUT_MS) {
+            stream.capturePhoto().onSuccess { data = it }.onFailure { e, _ -> error = e.description }
+          } ?: throw IllegalStateException("the photo did not come within ${STEP_TIMEOUT_MS / 1000} s")
+          if (heldCamera == null || watchStopAsked) throw IllegalStateException("watching was stopped")
+          val captured = data ?: throw IllegalStateException(error ?: "no photo")
+          val bitmap =
+              withContext(Dispatchers.Default) { decodePhoto(captured) }
+                  ?: throw IllegalStateException("the photo could not be decoded")
+          val file =
+              withContext(Dispatchers.IO) {
+                val dir = File(getApplication<Application>().filesDir, "captures").apply { mkdirs() }
+                val f = File(dir, "look-${System.currentTimeMillis()}.jpg")
+                f.outputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out) }
+                f
+              }
+          try {
+            withContext(Dispatchers.IO) { client.postLookPhoto(file) }
+          } finally {
+            withContext(Dispatchers.IO) { file.delete() }
+          }
+          lookAsked = false
+          photoLog("Took the photo the Desk asked for while the last one is checked.")
+          true
+        } catch (e: Exception) {
+          photoLog("The photo the Desk asked for could not be taken yet: ${e.message ?: e}.")
+          false
+        }
+      }
+      if (!took) delay(2_000L)
+    }
+  }
+
   private fun decodePhoto(photo: PhotoData): Bitmap? =
       when (photo) {
         is PhotoData.Bitmap -> photo.bitmap
@@ -1646,7 +1763,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     if (state.laptopIp.isBlank()) return
     // While the phone is on the glasses' Wi-Fi the laptop may be out of reach. A live
     // hold still tries, so the Desk's Stop is heard; a failed try is only logged.
-    if (state.streamActive && !state.liveHolding) return
+    // A Live view session held open while its photo is checked can reach the laptop
+    // (that is why it was held), so check-ins go on then: a Desk look is heard at once.
+    if (state.streamActive && !state.liveHolding && heldSession == null) return
     if (state.deskStartPending && SystemClock.elapsedRealtime() - deskAskedAt > DESK_PENDING_MS) {
       _uiState.update { it.copy(deskStartPending = false) }
     }
@@ -1716,7 +1835,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     // The Desk has given up on a look this old (check-ins pause during a capture).
     if (SystemClock.elapsedRealtime() - deskLookAskedAt > LOOK_FRESH_MS) return
     photoLog("The Desk asked for a photo now.")
-    captureAndUpload(requestPermission)
+    captureAndUpload(requestPermission, lookOnly = true)
   }
 
   fun setWatchEverySeconds(seconds: Int) {

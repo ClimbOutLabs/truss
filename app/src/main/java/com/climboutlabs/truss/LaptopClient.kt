@@ -117,6 +117,13 @@ class LaptopClient(laptopIp: String) {
     return CaptureResult(json.getLong("bytes"), lines("fired"), lines("speak"))
   }
 
+  /** POST /watch/look/photo: a photo the Desk asked for, taken while another photo is
+   * still being checked. The laptop only keeps it as the glasses' latest view (for the
+   * Desk's yes or no look); no question is checked on it. */
+  fun postLookPhoto(jpeg: File) {
+    postMultipart("/watch/look/photo", "image", jpeg.name, "image/jpeg", jpeg.readBytes(), POLL_READ_TIMEOUT_MS)
+  }
+
   /** POST /plant/question with the question text. Returns the laptop's reply: the slug,
    * the state, and the next prompt to show the wearer. */
   fun plantQuestion(text: String): JSONObject =
@@ -161,9 +168,11 @@ class LaptopClient(laptopIp: String) {
     }
   }
 
-  /** POST /questions/retire: stop watching one question. Its files stay on the laptop. */
+  /** POST /questions/delete: remove one question for good. It is never checked again,
+   * its waiting alerts are never spoken, and it leaves the Desk's and the phone's lists.
+   * Its files stay on the laptop. */
   fun retireQuestion(slug: String) {
-    postJson("/questions/retire", JSONObject().put("slug", slug))
+    postJson("/questions/delete", JSONObject().put("slug", slug))
   }
 
   /** GET /answers: today's answers on the laptop's clock, newest first. */
