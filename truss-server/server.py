@@ -611,6 +611,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_feed()
         elif path == "/feed/audio":
             self.handle_feed_audio()
+        elif path == "/log":
+            self.handle_log()
         else:
             self.send_error(404, "Not Found")
 
@@ -693,6 +695,18 @@ class TrussHandler(BaseHTTPRequestHandler):
         except ValueError:
             after = 0
         self.send_json({"lines": FEED.since(after), "run": FEED.run})
+
+    def handle_log(self):
+        """The server log's latest tidy lines, newest last, for the
+        Desk's Log tab: GET /log?after=<id> returns the lines after that
+        id (at most 300). Read only; keys are blanked (see serverlog)."""
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            after = int(query.get("after", ["0"])[0])
+        except ValueError:
+            after = 0
+        recent = serverlog.RECENT
+        self.send_json({"lines": recent.since(after), "run": recent.run})
 
     def handle_feed_audio(self):
         """One spoken line's audio, exactly as the glasses played it."""

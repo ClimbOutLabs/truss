@@ -104,12 +104,54 @@ def tidy(line, keep_polls=False):
     return ("server", stripped)
 
 
+# Environment variables whose values are keys; never written out.
+SECRET_ENV = ("TRUSS_META_API_KEY", "TRUSS_API_KEY", "MODEL_API_KEY", "AMAN_TOKEN", "TRUSS_SAM_KEY")
+BEARER = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
+HIDDEN = "[key hidden]"
+
+
+def hide_keys(message, environ=None):
+    """The message with any key the server holds blanked out."""
+    env = os.environ if environ is None else environ
+    for name in SECRET_ENV:
+        value = (env.get(name) or "").strip()
+        if len(value) >= 8 and value in message:
+            message = message.replace(value, HIDDEN)
+    return BEARER.sub(lambda m: m.group(1) + HIDDEN, message)
+
+
+class Recent:
+    """The last few hundred tidy log lines, newest last, for the Desk's
+    Log tab. Each has an id counting up from 1; run changes on each
+    start so a page knows its ids no longer line up."""
+
+    def __init__(self, size=300):
+        self._items = deque(maxlen=size)
+        self._ids = itertools.count(1)
+        self.run = uuid.uuid4().hex
+        self._lock = threading.Lock()
+
+    def add(self, at, tag, text):
+        with self._lock:
+            self._items.append({"id": next(self._ids), "at": at, "tag": tag, "text": text})
+
+    def since(self, after=0, limit=300):
+        with self._lock:
+            fresh = [dict(i) for i in self._items if i["id"] > after]
+        return fresh[-limit:]
+
+
+# The lines GET /log serves; install() points the server's log at it.
+RECENT = Recent()
+
+
 class TidyLog:
     """A stream that takes what the server prints, tidies it line by
     line, and writes each kept line to the terminal and the log file."""
 
-    def __init__(self, console, path=None, keep_polls=None, clock=datetime.now):
+    def __init__(self, console, path=None, keep_polls=None, clock=datetime.now, recent=None):
         self.console = console
+        self.recent = recent
         self.path = Path(path) if path else None
         self.keep_polls = (
             os.environ.get("TRUSS_LOG_POLLS", "").strip() == "1"
@@ -167,8 +209,11 @@ class TidyLog:
         self._emit(*kept)
 
     def _emit(self, tag, message):
+        message = hide_keys(message)
         stamp = self.clock().strftime("%Y-%m-%d %H:%M:%S")
         out = f"{stamp} | {tag:<{TAG_WIDTH}} | {message}\n"
+        if self.recent is not None:
+            self.recent.add(stamp, tag, message)
         try:
             self.console.write(out)
             self.console.flush()
@@ -185,7 +230,7 @@ def install(log_dir):
     """Send the server's prints (and its tracebacks) through the tidy
     log, writing log_dir/server.log. Returns the log file's path."""
     path = Path(log_dir) / "server.log"
-    out = TidyLog(sys.stdout, path)
+    out = TidyLog(sys.stdout, path, recent=RECENT)
     sys.stdout = out
     sys.stderr = out
     return path

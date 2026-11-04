@@ -161,6 +161,11 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 .said .t{width:96px;flex:none;font-size:14.5px;font-weight:600;color:var(--ink)}
 .said .qt{font-weight:500;font-size:16px}
 .said.new .qt{font-weight:600}
+.logbar{display:flex;gap:18px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:14.5px}
+.log{font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:68vh;overflow:auto}
+.log div{display:flex;gap:12px;white-space:pre-wrap;word-break:break-word}
+.log .lt{flex:none;color:var(--muted)} .log .lg{flex:none;width:8ch;color:var(--muted)}
+.log .err{background:var(--error-soft);color:var(--on-error)}
 .playrow{display:flex;align-items:center;gap:12px;font-size:15px;cursor:pointer}
 .toggle{appearance:none;-webkit-appearance:none;width:44px;height:25px;border-radius:999px;background:var(--dash);position:relative;flex:none;cursor:pointer;margin:0;padding:0;border:0}
 .toggle::after{content:"";position:absolute;top:3px;left:3px;width:19px;height:19px;border-radius:50%;background:#fff}
@@ -193,7 +198,8 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
     <button class="tab" role="tab" aria-selected="false" data-tab="plant">Watch for me</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="guide">Watch me do this</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="answers">History</button>
-    <button class="tab end" role="tab" aria-selected="false" data-tab="settings">Settings</button>
+    <button class="tab end" role="tab" aria-selected="false" data-tab="log">Log</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="settings">Settings</button>
   </nav>
 
   <!-- Today: the day as a story: what needs attention, what was seen,
@@ -334,6 +340,18 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
   </div>
 
   <!-- Settings -->
+  <!-- Log: the server's tidy log, as tail -f shows it, newest first -->
+  <div id="tab-log" class="pane" hidden>
+    <section>
+      <div class="logbar">
+        <h2>Server log</h2>
+        <label><input type="checkbox" id="log-problems"> Only problems</label>
+        <label><input type="checkbox" id="log-pause"> Pause</label>
+      </div>
+      <div class="log" id="log-lines"><div class="lt">No lines yet.</div></div>
+    </section>
+  </div>
+
   <div id="tab-settings" class="pane" hidden>
     <div style="display:flex;flex-direction:column;gap:24px;max-width:560px">
       <section class="card">
@@ -440,7 +458,7 @@ let TAB = "today";
 function openTab(name) {
   TAB = name;
   document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === name)));
-  ["today", "live", "plant", "guide", "answers", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
+  ["today", "live", "plant", "guide", "answers", "log", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
   refresh();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => openTab(t.dataset.tab)));
@@ -1242,6 +1260,37 @@ $("l-play").addEventListener("change", () => {
 setInterval(loadFeed, 2000);
 setInterval(loadView, 3000);
 
+// ---- log --------------------------------------------------------------------
+// Polls the server's tidy log (GET /log) while the Log tab is open and
+// shows the latest lines, newest first.
+let LOG_AFTER = 0;
+let LOG_RUN = "";
+let LOG_LINES = [];
+function drawLog() {
+  const problems = $("log-problems").checked;
+  const lines = LOG_LINES.filter((l) => !problems || l.tag === "error" || / -> [45]\d\d$/.test(l.text)).reverse();
+  $("log-lines").innerHTML = lines.length
+    ? lines.map((l) => `<div class="${l.tag === "error" ? "err" : ""}"><span class="lt">${esc(l.at.slice(11))}</span><span class="lg">${esc(l.tag)}</span><span>${esc(l.text)}</span></div>`).join("")
+    : `<div class="lt">${problems ? "No problems logged." : "No lines yet."}</div>`;
+}
+async function loadLog() {
+  if (TAB !== "log" || $("log-pause").checked) return;
+  try {
+    const r = await getJSON(`/log?after=${LOG_AFTER}`);
+    if (r.run && LOG_RUN && r.run !== LOG_RUN) { LOG_AFTER = 0; LOG_LINES = []; }
+    if (r.run) LOG_RUN = r.run;
+    const fresh = r.lines || [];
+    if (fresh.length) {
+      LOG_AFTER = fresh[fresh.length - 1].id;
+      LOG_LINES = LOG_LINES.concat(fresh).slice(-300);
+    }
+    drawLog();
+  } catch (e) { /* the laptop is between restarts; the next poll tries again */ }
+}
+$("log-problems").addEventListener("change", drawLog);
+$("log-pause").addEventListener("change", loadLog);
+setInterval(loadLog, 2000);
+
 // ---- refresh --------------------------------------------------------------
 function refresh() {
   loadStatus();
@@ -1253,6 +1302,7 @@ function refresh() {
   if (TAB === "answers") loadAnswers();
   if (TAB === "settings") loadSettings();
   if (TAB === "live") { loadFeed(); loadView(); }
+  if (TAB === "log") loadLog();
 }
 syncForm();
 if (location.hash === "#live") TAB = "live";
