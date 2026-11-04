@@ -964,9 +964,22 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                         val differs = last != null && signatureDistance(last, current) >= SAME_VIEW_THRESHOLD
                         // A different view held still, not a head shake's blur.
                         if (differs && now - steadySince >= LIVE_STEADY_MS) lookedAwaySinceSent = true
-                        if (waiting) return@first false
+                        val sharpEnough =
+                            sharp * 100 >= bestSharp * LIVE_SHARP_PERCENT ||
+                                now - steadySince >= LIVE_SHARP_WAIT_MS
+                        if (waiting) {
+                          // A settled look at a different view ends the wait early,
+                          // because the wearer walked to something new; a subtle
+                          // change still waits for the beat.
+                          if (lookedAwaySinceSent && now - steadySince >= LIVE_SEND_STILL_MS && sharpEnough) {
+                            pendingLive = current
+                            lookNow = true
+                            return@first true
+                          }
+                          return@first false
+                        }
                         // A change counts. The same view is sent again only after a long
-                        // floor (2 minutes read as timed photos while the glasses lay still),
+                        // floor (10 minutes read as timed photos while the glasses lay still),
                         // so a question that came due, or a check promised after a miss,
                         // still gets a look at a view that never changes.
                         val changed =
@@ -978,9 +991,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                         // the sharpest since it held still: a small head shake blurs a
                         // frame without moving the grid much, so a blurred one waits for
                         // the next. After LIVE_SHARP_WAIT_MS a still view goes anyway.
-                        val sharpEnough =
-                            sharp * 100 >= bestSharp * LIVE_SHARP_PERCENT ||
-                                now - steadySince >= LIVE_SHARP_WAIT_MS
                         if (changed && now - steadySince >= LIVE_SEND_STILL_MS && sharpEnough) {
                           pendingLive = current
                           lookNow = true
