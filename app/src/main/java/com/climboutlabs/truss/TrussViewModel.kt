@@ -371,6 +371,17 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       viewModelScope.launch { if (freeCameraFromWatch()) captureAndUpload(requestPermission, lookOnly) }
       return
     }
+    if (!lookOnly && warmLookActive()) {
+      // A warm hold is keeping the glasses session open for a possible second Desk
+      // look. A photo or planting step asked for on the phone ends the hold and
+      // then takes its turn, instead of being turned away by the busy camera.
+      warmYield = true
+      viewModelScope.launch {
+        val freed = withTimeoutOrNull(15_000L) { uiState.first { !it.photoBusy } } != null
+        if (freed) captureAndUpload(requestPermission, lookOnly)
+      }
+      return
+    }
     if (!beginCapture(quiet = false)) return
     viewModelScope.launch { performCapture(requestPermission, fromWatch = false, lookOnly = lookOnly) }
   }
@@ -646,6 +657,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           photoLog("Live view: same session, next look.")
         }
         looks += 1
+        // Set below when this look is a Desk look whose session is kept open across
+        // its upload for the warm hold.
+        var deskLookKeptOpen = false
 
         // Live view: with the video open, wait for a view worth a look before the photo.
         // A later look in the same session waits a beat first, as the watch loop would.
@@ -734,6 +748,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           heldCamera = activeCamera
           heldSession = activeSession
           if (watchStopAsked) releaseHeldSession("watching was stopped")
+        } else if (lookOnly && !fromWatch && reachableBeforeLeave) {
+          // A Desk look while not watching, with the laptop reachable from here: the
+          // session stays open across the upload, so the warm hold after it can serve
+          // a second look from this session instead of a cold start.
+          deskLookKeptOpen = true
+          photoLog("The laptop is reachable with the session open, so the session stays open for now.")
         } else {
           // Step 4: leave. Stopping the camera and the session is the toolkit's disconnect;
           // there is no separate Wi-Fi leave call in 1.0.1.
@@ -769,6 +789,42 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           withContext(Dispatchers.IO) { client.postLookPhoto(jpegFile) }
           withContext(Dispatchers.IO) { jpegFile.delete() }
           photoLog("Sent the photo the Desk asked for.")
+          if (deskLookKeptOpen) {
+            // Hold this session open a little while: a second look asked for in the
+            // window (the other half of a yes and no pair) is taken from it at once,
+            // instead of paying the cold start again. The glasses' camera stays
+            // live while the session is held, which is the cost of the window.
+            heldCamera = activeCamera
+            heldSession = activeSession
+            warmYield = false
+            warmLookUntil = SystemClock.elapsedRealtime() + WARM_LOOK_MS
+            photoLog("Keeping the glasses session open for two minutes in case another look is asked for.")
+            var served = false
+            while (true) {
+              if (_uiState.value.deskLookPending &&
+                  SystemClock.elapsedRealtime() - deskLookAskedAt <= LOOK_FRESH_MS) {
+                _uiState.update { it.copy(deskLookPending = false) }
+                photoLog("Another look was asked for while the session is open.")
+                served = true
+                break
+              }
+              // The hold ends when the window runs out, when a phone-side step
+              // asked for the camera (warmYield), when the held session was ended
+              // from outside (a Stop ends it through releaseHeldSession, which
+              // clears heldSession), when the glasses went off, or when watching
+              // started and takes the camera over.
+              if (SystemClock.elapsedRealtime() >= warmLookUntil ||
+                  warmYield ||
+                  heldSession == null ||
+                  _uiState.value.glassesOff ||
+                  _uiState.value.watching) {
+                break
+              }
+              delay(500L)
+            }
+            warmLookUntil = 0L
+            if (served) continue@look
+          }
         } else if (refSlug != null && refKind != null) {
           pendingRefSlug = null
           pendingRefKind = null
@@ -1702,6 +1758,16 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   @Volatile private var heldCamera: com.meta.wearable.dat.camera.Camera? = null
   @Volatile private var heldSession: com.meta.wearable.dat.core.session.DeviceSession? = null
 
+  /** A Desk look taken while not watching holds its session open until this time,
+   * so a second look asked for within the window is taken from the open session.
+   * Zero when no warm hold is armed. */
+  @Volatile private var warmLookUntil = 0L
+  /** Set when a phone-side photo or planting step needs the camera a warm hold is
+   * keeping, so the hold ends and frees it. */
+  @Volatile private var warmYield = false
+
+  private fun warmLookActive(): Boolean = SystemClock.elapsedRealtime() < warmLookUntil
+
   /** End a held Live view session at once. The capture's own stops and its finally
    * run later as well; stopping twice does nothing. */
   private fun releaseHeldSession(why: String) {
@@ -1843,6 +1909,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** Take the one photo the Desk asked for while the phone is not watching. Called by
    * the app screen, which holds the camera permission prompt. */
   fun takeDeskLook(requestPermission: suspend (Permission) -> PermissionStatus) {
+    // A warm session is already open and serves the pending look itself, so the
+    // flag is left in place for it; a fresh capture here would be turned away by
+    // the busy camera and the look would be lost.
+    if (warmLookActive()) return
     if (!_uiState.value.deskLookPending) return
     _uiState.update { it.copy(deskLookPending = false) }
     if (_uiState.value.watching) return
@@ -2204,6 +2274,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     // How long a Desk request for a photo now stays worth taking (the server's
     // LOOK_FRESH_SECONDS).
     private const val LOOK_FRESH_MS = 60_000L
+    // After a Desk look taken while not watching, the glasses session is held open
+    // this long in case a second look is asked for (the yes and no looks of a
+    // planting), so the second one skips the session's cold start.
+    private const val WARM_LOOK_MS = 120_000L
     // A Desk look older than this when the phone first hears of it, while not watching,
     // is not taken: the app was opened after the Desk asked.
     private const val LOOK_ACT_SECONDS = 20
