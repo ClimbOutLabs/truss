@@ -45,7 +45,7 @@ class SlowLoop:
 
 class DueStore:
     def due(self, now=None):
-        return [{"question": "Did I take my pills?"}]
+        return [{"question": "Did I take my pills?", "kind": "done"}]
 
     def redo_watch(self, now=None):
         return []
@@ -98,7 +98,7 @@ def run(loop, gate_fn, hold_on="1"):
 def test_gate_yes_answers_early():
     loop = SlowLoop(1.5)
     first, first_s, later, unknown = run(loop, lambda f, q: True)
-    check("gate yes: the phone hears hold-on first", first["speak"] == [holdon.HOLD_LINE])
+    check("gate yes: the phone hears hold-on first", first["speak"] == ["Hold on, let me check if you took your pills."])
     check("gate yes: before the full check is done", first_s < 1.2)
     check("gate yes: nothing fired in the early reply", first["fired"] == [])
     check("gate yes: the full answer follows", later == {"speak": ["You took your pills."], "fired": ["pills"]})
@@ -121,7 +121,41 @@ class QuietLoop:
 def test_hold_on_then_nothing_says_so():
     first, _, later, _ = run(QuietLoop(), lambda f, q: True)
     check("nothing found: the follow-up says so, never a state",
-          first["speak"] == [holdon.HOLD_LINE] and later["speak"] == [holdon.NOTHING_LINE])
+          first["speak"][0].startswith("Hold on") and later["speak"] == [holdon.NOTHING_LINE])
+
+
+class NoLoop:
+    def process_frame(self, path):
+        time.sleep(1.5)
+        return {"managed": True, "fired": [], "speak": [], "errors": 0, "seen": [
+            {"slug": "pills", "kind": "done", "verdict": "no",
+             "reason": "The Wednesday pills are still in the box."}]}
+
+
+def test_hold_on_then_no_says_what_it_saw():
+    _, _, later, _ = run(NoLoop(), lambda f, q: True)
+    check("a clear no: says what it saw",
+          later["speak"] == ["Not yet. The Wednesday pills are still in the box."])
+
+
+def test_lines():
+    check("line: a done question is named as its act",
+          holdon.hold_line([{"question": "Did I take my night pills?", "kind": "done"}])
+          == "Hold on, let me check if you took your night pills.")
+    check("line: a state question is asked back",
+          holdon.hold_line([{"question": "Is my stove off?", "kind": "state"}])
+          == "Hold on, let me check: is your stove off?")
+    check("line: several questions get the plain line",
+          holdon.hold_line([{"question": "a"}, {"question": "b"}]) == holdon.HOLD_LINE)
+    check("follow-up: cannot_tell is the couldn't-confirm line",
+          holdon.follow_up([{"verdict": "cannot_tell", "reason": "too dark", "kind": "done"}])
+          == [holdon.NOTHING_LINE])
+    check("follow-up: a failed check is the couldn't-confirm line",
+          holdon.follow_up([{"verdict": None, "reason": "no check was made", "kind": "done"}])
+          == [holdon.NOTHING_LINE])
+    check("follow-up: a state no is its reason only",
+          holdon.follow_up([{"verdict": "no", "reason": "A burner is lit.", "kind": "state"}])
+          == ["A burner is lit."])
 
 
 def test_full_check_first_wins():
@@ -174,6 +208,8 @@ if __name__ == "__main__":
     test_gate_yes_answers_early()
     test_gate_no_changes_nothing()
     test_hold_on_then_nothing_says_so()
+    test_hold_on_then_no_says_what_it_saw()
+    test_lines()
     test_full_check_first_wins()
     test_off_by_default()
     test_rest_and_uncollected()

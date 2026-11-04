@@ -8,7 +8,8 @@ Off unless TRUSS_HOLD_ON=1, and only for the phone app built with it
 When a photo arrives with questions due, the full check starts as
 always. Beside it, a quick gate asks Muse Spark one tiny question at
 minimal effort: is the thing one of these questions is about, or the
-act it asks about, clearly in view right now? If the gate says yes
+wearer doing something with it right now (a hand on it, opening it,
+taking from it)? The thing only sitting in view is a no. If the gate says yes
 before the full check is done, the capture is answered at once with
 "Hold on, let me check." and a pending id, so the wearer hears it and
 can lower their hand. The phone then fetches GET /capture/result?id=
@@ -30,10 +31,40 @@ import time
 import uuid
 
 import endpoint
+from checkloop import _spoken_question, done_act
 
 HOLD_LINE = "Hold on, let me check."
 # Said after a hold-on when the full check found nothing to say.
 NOTHING_LINE = "I couldn't confirm it that time."
+
+
+def hold_line(entries):
+    """The hold-on line, naming the question when one is due: "Hold
+    on, let me check if you took your pills." Several due, or a
+    question that does not read back, gets the plain line."""
+    if len(entries) != 1:
+        return HOLD_LINE
+    question = (entries[0].get("question") or "").strip()
+    act = done_act(question) if entries[0].get("kind") == "done" else None
+    if act:
+        return f"Hold on, let me check if you {act}."
+    if not question:
+        return HOLD_LINE
+    spoken = _spoken_question({"question": question})
+    return f"Hold on, let me check: {spoken[0].lower()}{spoken[1:]}"
+
+
+def follow_up(seen):
+    """What to say after a hold-on when the full check fired nothing:
+    what it saw on a clear no ("Not yet." first for a done question),
+    or NOTHING_LINE when it could not tell. Never an all-clear: a
+    yes always fires through the loop's own line."""
+    lines = []
+    for item in seen or []:
+        reason = (item.get("reason") or "").strip()
+        if item.get("verdict") == "no" and reason:
+            lines.append(f"Not yet. {reason}" if item.get("kind") == "done" else reason)
+    return [" ".join(lines)] if lines else [NOTHING_LINE]
 # How long the gate may take before it is no longer worth waiting for.
 GATE_LIMIT_S = 8.0
 # After a hold-on is spoken, the next one waits this long, so a hand
@@ -55,9 +86,11 @@ GATE_SCHEMA = {
 GATE_SYSTEM = (
     "You look at a photo from smart glasses the wearer has on, at home. "
     "You are given one or more questions the wearer asked to be watched. "
-    "Do not answer them. Say only whether the thing one of them is about, "
-    "or the act it asks about, is clearly in view in this photo, close "
-    "enough to check right now: in_view true or false."
+    "Do not answer them. Say only whether the wearer is doing something "
+    "with the thing one of them is about, right now: a hand on it or "
+    "reaching into it, holding it, opening it, turning it, or the act "
+    "the question asks about under way. The thing only sitting in view, "
+    "with no hand on it, is false: in_view true or false."
 )
 
 
@@ -97,11 +130,11 @@ class Pending:
         # guide clears.
         self._late = []
         self._items = {}
-        self._last_hold = 0.0
+        self._last_hold = None
 
     def may_hold(self):
         with self._lock:
-            return time.monotonic() - self._last_hold >= HOLD_REST_S
+            return self._last_hold is None or time.monotonic() - self._last_hold >= HOLD_REST_S
 
     def held(self):
         with self._lock:

@@ -472,6 +472,9 @@ class CheckLoop:
         fired = []
         refusable = None
         errors = 0
+        # What each due question's check found, for a caller that told
+        # the wearer to hold on (see holdon.py).
+        seen = []
         if not due:
             print("  check: no question is due on this frame (each waits for its gap)", flush=True)
         batched, batch_started = self._batch(frame_path, due)
@@ -494,6 +497,13 @@ class CheckLoop:
                 _print_check(entry, None, f"check failed: {e}", started)
             else:
                 _print_check(entry, verdict, _reason_text(result), started)
+            seen.append({
+                "slug": entry.get("slug"),
+                "question": entry.get("question"),
+                "kind": entry.get("kind"),
+                "verdict": verdict if not result.get("failure") else None,
+                "reason": _reason_text(result),
+            })
             if (
                 entry.get("kind") == "done"
                 and verdict in ("yes", "no", "cannot_tell")
@@ -717,6 +727,7 @@ class CheckLoop:
             "evidence": str(evidence) if evidence else None,
             "outline": str(outline) if outline else None,
             "errors": errors,
+            "seen": seen,
         }
 
     def _batch(self, frame_path, due):

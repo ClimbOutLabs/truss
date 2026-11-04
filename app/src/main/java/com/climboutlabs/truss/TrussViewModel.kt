@@ -906,6 +906,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { activeSession.stop() }
                 _uiState.update { it.copy(streamActive = false) }
                 stayOpen = false
+                // Live view picks up again right after speaking, not a whole beat later.
+                resumeAfterSpeaking = true
                 photoLog("Left the glasses session to speak.")
               }
               val spoken = speakViaGlasses(lines)
@@ -1738,7 +1740,16 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** Wakes the watch loop's wait early, for example when the app comes back to the front. */
   private val watchNudge = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
+  /** Set when a Live view session was left only to speak an answer: the next look
+   * starts after a short pause instead of waiting out the whole beat. */
+  @Volatile private var resumeAfterSpeaking = false
+
   private suspend fun waitForBeat() {
+    if (resumeAfterSpeaking) {
+      resumeAfterSpeaking = false
+      delay(1_000L)
+      return
+    }
     // A photo the Desk asked for does not wait out the beat while the glasses are there;
     // a short pause still keeps the loop from spinning. While they are away the usual
     // beat stands, so a look does not open a session every second (and re-ask the

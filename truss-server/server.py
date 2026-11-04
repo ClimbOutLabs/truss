@@ -1690,10 +1690,10 @@ class TrussHandler(BaseHTTPRequestHandler):
         ):
             try:
                 now = CLOCK()
-                questions = [e["question"] for e in STORE.due(now=now)]
-                questions += [e["question"] for e in STORE.redo_watch(now=now)]
+                gated = list(STORE.due(now=now)) + list(STORE.redo_watch(now=now))
             except Exception:
-                questions = []
+                gated = []
+            questions = [e["question"] for e in gated]
         if not questions:
             return _run_loop(filepath)
         either = threading.Event()
@@ -1707,7 +1707,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         def quick():
             started = time.monotonic()
             yes = holdon.gate(filepath, questions)
-            print(f"  gate: {'yes' if yes else 'no'} ({time.monotonic() - started:.1f} s)", flush=True)
+            print(f"gate: {'yes' if yes else 'no'} ({time.monotonic() - started:.1f} s)", flush=True)
             box["gate"] = yes
             either.set()
 
@@ -1723,7 +1723,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             return box["result"]
         pid = HOLD.open()
         HOLD.held()
-        early = dict(response, speak=[holdon.HOLD_LINE], fired=[], pending=pid)
+        early = dict(response, speak=[holdon.hold_line(gated)], fired=[], pending=pid)
         data = json.dumps(early).encode()
         try:
             self.send_response(200)
@@ -1745,7 +1745,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             # The wearer was told to hold on, so silence would leave
             # them waiting: a check that found nothing to say says so,
             # without claiming anything about the state.
-            "speak": speak or [holdon.NOTHING_LINE],
+            "speak": speak or holdon.follow_up(result.get("seen") if managed else None),
             "fired": result.get("fired", []) if managed else [],
         })
         if managed:
