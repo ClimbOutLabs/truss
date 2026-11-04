@@ -156,7 +156,7 @@ MODIFIER_WORDS = {
 
 # Room for Glimmer to think before it answers; a reply cut off at the
 # limit is retried by endpoint.py with twice this, never parsed.
-MAX_TOKENS = 2048
+MAX_TOKENS = 16384
 MIN_PROMPTS = 2
 MAX_PROMPTS = 3
 MAX_LOOK_CHARS = 400

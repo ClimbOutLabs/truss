@@ -35,7 +35,7 @@ MAX_TASK_CHARS = 200
 # Room for Muse Spark's thinking as well as the answer. At 2048 its
 # thinking used up the room, the reply was cut off, and the retry was
 # cut off too, so no steps were written.
-MAX_TOKENS = 8192
+MAX_TOKENS = 16384
 
 TASK_SCHEMA = {
     "type": "object",
