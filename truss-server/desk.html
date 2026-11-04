@@ -786,7 +786,7 @@ function syncForm() {
   $("w-interval").hidden = when !== "interval";
   $("w-nightly").hidden = when !== "nightly";
   $("w-window").hidden = when !== "window";
-  const done = document.querySelector("input[name=kind]:checked").value === "done";
+  const done = document.querySelector("input[name=kind]:checked")?.value === "done";
   if (done) $("p-safety").checked = true;
   $("look-at-field").hidden = !done;
 }
@@ -1086,13 +1086,21 @@ async function saveSettings(body, msgId, okText) {
     return true;
   } catch (e) { showMsg(msgId, e.message, true); return false; }
 }
-async function testSettings(what, msgId) {
+async function testSettings(what, msgId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "Asking…"; }
   showMsg(msgId, "Asking Muse Spark one short question…");
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 30000);
   try {
-    const r = await postJSON("/settings/test", {what});
+    const r = await postJSON("/settings/test", {what}, ctl.signal);
     showMsg(msgId, `${r.text} (${r.seconds} seconds)`, !r.ok);
     $("s-meta-state").innerHTML = r.ok ? `<span class="okt">Ready, answered in ${esc(r.seconds)} seconds</span>` : `<span class="badt">Not answering</span>`;
-  } catch (e) { showMsg(msgId, e.message, true); }
+  } catch (e) {
+    showMsg(msgId, ctl.signal.aborted ? "Muse Spark did not answer within 30 seconds. Check this Mac's network, then try again." : e.message, true);
+  } finally {
+    clearTimeout(timer);
+    if (btn) { btn.disabled = false; btn.textContent = "Test"; }
+  }
 }
 document.querySelectorAll("input[name=checker]").forEach((r) => r.addEventListener("change", () =>
   saveSettings({checker: r.value}, "s-checker-msg", "Checks now go to Muse Spark.")));
@@ -1101,7 +1109,7 @@ $("s-meta-save").addEventListener("click", async () => {
   if (!key) { showMsg("s-meta-msg", "Paste the key first.", true); return; }
   if (await saveSettings({meta_key: key}, "s-meta-msg", "Saved. Checks use it from now on.")) $("s-meta-key").value = "";
 });
-$("s-meta-test").addEventListener("click", () => testSettings("meta", "s-meta-msg"));
+$("s-meta-test").addEventListener("click", (ev) => testSettings("meta", "s-meta-msg", ev.currentTarget));
 $("s-meta-clear").addEventListener("click", async (ev) => {
   const b = ev.currentTarget;
   if (b.dataset.armed !== "1") {
