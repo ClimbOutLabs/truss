@@ -33,13 +33,13 @@ are involved, all on the same Wi-Fi network:
   through them.
 - **The computer**: runs the Truss server and the Truss Desk, a web page
   where you plant questions and watch what Truss sees. macOS, Windows or
-  Linux (see the notes for each below).
+  Linux.
 
 ### 1. What you need
 
 | | |
 |---|---|
-| Python 3.9 or newer | The server is Python standard library only: nothing to `pip install`. |
+| Python 3.10 or newer | The server is Python standard library only: nothing to `pip install`. On Linux, also `espeak-ng` for Mannie's voice. |
 | A Meta Model API key | From the Meta Model API console. Checks go to Muse Spark 1.3. |
 | Android Studio (Narwhal or newer) with JDK 17 and Android SDK 36 | To build the app. The Meta Wearables toolkit (`com.meta.wearable:mwdat-core` and `mwdat-camera` 1.0.1) comes from Maven Central by itself; there is nothing to download by hand. |
 | The Meta AI app on the phone, with the glasses paired | And **Developer Mode** turned on for the glasses in the Meta AI app's settings. |
@@ -73,25 +73,40 @@ natural voice, add a Premium or Enhanced English voice once in System
 Settings > Accessibility > Spoken Content > System voice > Manage Voices,
 then restart the server; its start-up banner names the voice it uses.
 
-<!-- WINDOWS-LINUX: filled from the "Make the server run on Windows" work -->
-**Windows** (PowerShell)
+**Windows** (PowerShell, Python 3.10 or newer from python.org)
 
 ```powershell
 cd truss-server
 py server.py
 ```
 
+Mannie's voice uses Windows' built-in speech engine; there is nothing to
+install. `TRUSS_VOICE` can name an installed voice, such as
+`"Microsoft Zira Desktop"`. Windows voices sound flatter than the Mac's
+Premium ones. The server switches itself to UTF-8 mode;
+`py -X utf8 server.py` also works. In PowerShell, settings are set with
+`$env:NAME = "value"`, not `export`.
+
 **Linux**
 
 ```bash
+sudo apt install espeak-ng      # Mannie's voice; TRUSS_VOICE picks an espeak voice
 cd truss-server
 python3 server.py
 ```
 
-_Windows and Linux notes: pending; see the pull request._
+On Windows and Linux the server uses the address of the network adapter
+that routes to your network (on macOS, the Wi-Fi address). If it picks
+the wrong one, such as a VPN, Docker, WSL or Ethernet instead of Wi-Fi,
+set `TRUSS_HOST` to this computer's Wi-Fi IP (or `0.0.0.0` for every
+adapter) and restart. With no speech engine installed the server still
+runs and logs each line Mannie would say, but nothing is spoken in the
+glasses. Windows support has been tested on Linux and with simulated
+Windows calls, not yet on a real Windows machine.
 
-On any system, the first start may raise a firewall prompt: allow
-Python on private networks, or the phone cannot reach the server.
+On any system, the first start may raise a firewall prompt (on Windows,
+Windows Defender Firewall): allow Python on private networks, or the
+phone cannot reach port 8792.
 
 ### 4. Give the server your Meta key
 
@@ -117,7 +132,7 @@ never printed and never logged.
   $env:TRUSS_META_API_KEY = "<your key>"            # Windows PowerShell
   ```
 
-  On a Mac you can keep it in the keychain instead of typing it:
+  On a Mac only, you can keep it in the keychain instead of typing it:
   `export TRUSS_META_API_KEY="$(security find-generic-password -s truss-meta -w)"`.
 
 To check the route: the Desk's **Test** button makes one words-only
@@ -223,7 +238,8 @@ needed for a first run beyond the Meta key.
 | `TRUSS_EVIDENCE_OUTLINE` / `TRUSS_SAM_URL` | off / `http://127.0.0.1:8090` | Outline the object in kept evidence photos with SAM 3.1. |
 | `TRUSS_REFUSALS` | `1` | Mannie says when it cannot see the deciding detail ("I can't see the knobs from here"). `0` keeps every cannot-tell silent. |
 | `TRUSS_BATCH_CHECKS` | `1` | All questions due on a photo in one call. `0` asks each separately. |
-| `TRUSS_VOICE` / `TRUSS_VOICE_RATE` | best installed / system | Mannie's voice by name, and words per minute. |
+| `TRUSS_HOST` | found by itself | The address to listen on, when the server picks the wrong network adapter. `0.0.0.0` listens on all. |
+| `TRUSS_VOICE` / `TRUSS_VOICE_RATE` | best installed / system | Mannie's voice by name (a macOS, Windows or espeak voice), and words per minute (macOS and Linux). |
 | `TRUSS_SETTINGS` | `~/.truss/settings.json` | Where the Desk saves its settings. |
 | `TRUSS_PLANT_MINUTES` / `TRUSS_BEDTIME_AFTER` | `15` / `20:00` | For quick live tests only; leave unset otherwise. |
 
@@ -233,7 +249,9 @@ The full list, and how each part works, is in
 ### If something does not work
 
 - **The phone cannot reach the computer.** Both must be on the same Wi-Fi
-  network, and the computer's firewall must allow Python on it. Open
+  network, and the computer's firewall must allow Python on it. If the
+  address the server printed is not this computer's Wi-Fi address, set
+  `TRUSS_HOST`. Open
   `http://<address>:8792/` in the phone's browser: it should answer.
 - **Mannie never speaks.** Run `python3 truss-server/preflight.py` with
   the server running and the app open: it checks the clock, the model
@@ -315,7 +333,7 @@ stove.
              ◄────── │ capture, diff,   │ ◄──── │ question store (files)   │ ◄──── │ OpenAI-compatible API    │
   speaker            │ speak, alerts    │       │ check loop, done windows │       ├──────────────────────────┤
                      └──────────────────┘       │ alerts, evidence, log    │ ────► │ SAM 3.1 service          │
-                                                │ text to speech (macOS)   │       │ (evidence outline)       │
+                                                │ local text to speech     │       │ (evidence outline)       │
                                                 └──────────────────────────┘       └──────────────────────────┘
 ```
 
@@ -353,8 +371,9 @@ stove.
   the object by those phrases and save a copy of the evidence photo with
   the object outlined. It runs in the background and can never delay or
   stop a spoken answer.
-- **Voice out.** Mannie's lines are spoken by the Mac's built-in text to
-  speech (`say`) and played through the phone to the glasses. There is no
+- **Voice out.** Mannie's lines are spoken by the computer's own text to
+  speech (`say` on macOS, the built-in engine on Windows, espeak-ng on
+  Linux) and played through the phone to the glasses. There is no
   speech to text: nothing the wearer says is recorded.
 
 ### Where your data goes
