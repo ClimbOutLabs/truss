@@ -211,8 +211,10 @@ def earlier_tonight(entry, now=None):
     slug = entry.get("slug")
     if not slug:
         return []
+    # The last three are enough for a timeline; more only gives the
+    # model more to weigh on every check.
     return serverlog.check_history(
-        LOG_DIR / "server.log", slug, (now or CLOCK()).date()
+        LOG_DIR / "server.log", slug, (now or CLOCK()).date(), limit=3
     )
 
 

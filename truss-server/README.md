@@ -153,6 +153,7 @@ Muse Spark 1.3 over the Meta Model API:
 | `TRUSS_META_BASE_URL` | `https://api.meta.ai/v1` | must be https |
 | `TRUSS_META_MODEL` | `muse-spark-1.3` | never the contributor tier |
 | `TRUSS_META_TIMEOUT_S` | `120` (the whole call, retry included) | |
+| `TRUSS_META_REASONING_EFFORT` | `low` (how hard Muse Spark thinks on a check: minimal, low, medium, high, xhigh; `default` leaves it to the model) | |
 
 The endpoint below is then a fallback only when `TRUSS_BASE_URL` is set
 explicitly, so Glimmer need not run at all, and only while it lists a

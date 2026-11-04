@@ -198,6 +198,7 @@ def env(**values):
         "TRUSS_BASE_URL", "TRUSS_MODEL", "TRUSS_API_KEY", "TRUSS_TIMEOUT_S",
         "MODEL_API_KEY", "TRUSS_CHECKER", "TRUSS_CHECK_MODE", "TRUSS_MAX_TOKENS",
         "TRUSS_META_API_KEY", "TRUSS_META_BASE_URL", "TRUSS_META_MODEL", "TRUSS_META_TIMEOUT_S",
+        "TRUSS_META_REASONING_EFFORT",
     ]
     saved = {k: os.environ.get(k) for k in names}
     for k in names:
@@ -678,6 +679,34 @@ def test_meta_answers_first():
     check("meta first: nothing to report", lines == [])
 
 
+def test_meta_check_asks_for_low_effort():
+    with StubModel([YES]) as spark, StubModel([YES]) as glimmer, \
+            env(TRUSS_BASE_URL=glimmer.base), meta_at(spark):
+        verdict.check(FRAME, "Is the front door locked?")
+    check("effort: a Muse Spark check asks for low effort",
+          spark.requests[0]["body"].get("reasoning_effort") == "low")
+    with StubModel([YES]) as spark, env(TRUSS_META_REASONING_EFFORT="default"), meta_at(spark):
+        verdict.check(FRAME, "Is the front door locked?")
+    check("effort: default leaves it to the model",
+          "reasoning_effort" not in spark.requests[0]["body"])
+    with StubModel([YES]) as spark, env(TRUSS_META_REASONING_EFFORT="medium"), meta_at(spark):
+        verdict.check(FRAME, "Is the front door locked?")
+    check("effort: the setting is used",
+          spark.requests[0]["body"].get("reasoning_effort") == "medium")
+    with StubModel([YES]) as spark, env(), meta_at(spark):
+        endpoint.ask_json("s", [endpoint.text_part("q")], {"type": "object"}, "x")
+    check("effort: a non-check call keeps the model's own level",
+          "reasoning_effort" not in spark.requests[0]["body"])
+    with StubModel([400, YES]) as spark, env(), meta_at(spark):
+        result = verdict.check(FRAME, "Is the front door locked?")
+    check("effort: a 400 is asked again without it, and answers",
+          result["verdict"] == "yes" and "reasoning_effort" not in spark.requests[1]["body"])
+    with StubModel([YES]) as glimmer, env(TRUSS_BASE_URL=glimmer.base):
+        verdict.check(FRAME, "Is the front door locked?")
+    check("effort: never sent to Glimmer",
+          "reasoning_effort" not in glimmer.requests[0]["body"])
+
+
 def test_meta_failure_falls_back_and_rests():
     with StubModel([500]) as spark, StubModel([YES]) as glimmer, \
             env(TRUSS_BASE_URL=glimmer.base), meta_at(spark) as lines:
@@ -954,6 +983,7 @@ if __name__ == "__main__":
     test_unknown_model_is_logged_as_unknown()
     test_meta_config_from_env()
     test_meta_answers_first()
+    test_meta_check_asks_for_low_effort()
     test_meta_failure_falls_back_and_rests()
     test_meta_bad_reply_falls_back_without_rest()
     test_meta_without_fallback()
