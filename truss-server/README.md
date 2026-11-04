@@ -70,10 +70,10 @@ Four tabs, one job each:
 
 - **Today**: the whole day in one list, by time. Each planted question
   shows when it is checked and how it stands in a word (Watching,
-  Needs looks, Missed, Yes). Sample steps not yet planted (morning
+  Needs its photos, Not seen, Yes). Sample steps not yet planted (morning
   pills, lights off after lunch, the bedtime round, night pills) sit in
   the same list, one click from planting. A question still waiting for
-  its looks (the bedtime round plants without them) takes them right
+  its photos (the bedtime round plants without them) takes them right
   there. A missed-window alert shows as a banner until the phone has
   spoken it; only the phone clears an alert.
 - **Plant**: the question in the wearer's words, the kind, when to
@@ -458,7 +458,7 @@ see at the Tuesday PM compartment right now: the compartment still
 holds a pill."): an empty compartment is not proof the pills were
 taken, so the wearer hears what is there and decides. The frame is
 kept as evidence.
-The Desk and the app show it with an "After the window" chip. A cannot_tell, or a yes or
+The Desk and the app show it with a "Looked later" chip. A cannot_tell, or a yes or
 no with no description behind it, is silent, and the check waits for
 the next frame, with no gap between checks. The check and its spoken
 line name the look-at phrase for the missed day, so a check owed for
