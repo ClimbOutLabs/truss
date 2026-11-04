@@ -1726,16 +1726,21 @@ class TrussHandler(BaseHTTPRequestHandler):
 
         def quick():
             started = time.monotonic()
-            picked = holdon.gate(filepath, questions)
-            handled = {gated[i].get("slug") for i in picked}
+            hands, near = holdon.gate(filepath, questions)
+            handled = {gated[i].get("slug") for i in hands}
+            close = {gated[i].get("slug") for i in near}
             print(
-                f"gate: {', '.join(sorted(str(h) for h in handled)) if handled else 'no'} "
+                f"gate: {', '.join(sorted(str(h) for h in close)) if close else 'no'}"
+                f"{' (hand on ' + ', '.join(sorted(str(h) for h in handled)) + ')' if handled else ''} "
                 f"({time.monotonic() - started:.1f} s)",
                 flush=True,
             )
+            # Only a hand on it stands in for the return check: a glance
+            # must never spend the once-only reminder.
             box["handled"] = handled
-            # A hold-on only for a due question that is really checked.
-            box["gate"] = bool(handled & {e.get("slug") for e in due_now})
+            # A hold-on, for a glance or a hand, only for a due question
+            # that is really checked.
+            box["gate"] = bool(close & {e.get("slug") for e in due_now})
             gate_done.set()
             either.set()
 
@@ -1781,8 +1786,8 @@ class TrussHandler(BaseHTTPRequestHandler):
         handled question gets the hold-on line and is checked on this
         frame, its gap waived, and the answer follows as usual."""
         started = time.monotonic()
-        picked = holdon.gate(filepath, [e["question"] for e in waiting])
-        force = {waiting[i].get("slug") for i in picked}
+        _, near = holdon.gate(filepath, [e["question"] for e in waiting])
+        force = {waiting[i].get("slug") for i in near}
         print(
             f"gate: {', '.join(sorted(str(f) for f in force)) if force else 'no'} "
             f"({time.monotonic() - started:.1f} s, before its gap)",

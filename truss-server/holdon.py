@@ -85,21 +85,24 @@ RESULT_WAIT_S = 280.0
 
 GATE_SCHEMA = {
     "type": "object",
-    "properties": {"handling": {"type": "array", "items": {"type": "integer"}}},
-    "required": ["handling"],
+    "properties": {
+        "handling": {"type": "array", "items": {"type": "integer"}},
+        "near": {"type": "array", "items": {"type": "integer"}},
+    },
+    "required": ["handling", "near"],
     "additionalProperties": False,
 }
 
 GATE_SYSTEM = (
     "You look at a photo from smart glasses the wearer has on, at home. "
     "You are given one or more questions the wearer asked to be watched. "
-    "Do not answer them. Say only whether the wearer is at the thing one "
-    "of them is about, right now: a hand on it, reaching for it, holding "
-    "or opening it, or the thing close up in front of them, within arm's "
-    "reach and taking up a good part of the photo, as when they look "
-    "straight at it. The thing small or far off in the background does "
-    "not count. Reply with the numbers of the questions whose thing the "
-    "wearer is at, or an empty list."
+    "Do not answer them. For each, say two things. handling: the wearer "
+    "has a hand on the thing it is about right now, reaching into it, "
+    "holding, opening or turning it. near: the thing is close up in front "
+    "of them, within arm's reach and taking up a good part of the photo, "
+    "as when they look straight at it. The thing small or far off in the "
+    "background is neither. Reply with the question numbers for each, "
+    "or empty lists."
 )
 
 
@@ -113,10 +116,11 @@ def gate_effort():
 
 
 def gate(frame_path, questions):
-    """The positions (from 0) of the questions whose thing the quick
-    look says the wearer is handling right now; empty on a no or any
-    failure. Each question gets its own answer, so handling the stove
-    never counts for the pills. Never raises."""
+    """(handling, near): the positions (from 0) of the questions whose
+    thing the wearer has a hand on right now, and of those whose thing
+    is close up in front of them (handled or not). Both empty on any
+    failure. Each question gets its own answer, so the stove never
+    counts for the pills. Never raises."""
     try:
         lines = "\n".join(f"{n}. {q}" for n, q in enumerate(questions, start=1))
         content = [
@@ -126,12 +130,17 @@ def gate(frame_path, questions):
         reply = endpoint.ask_json(
             GATE_SYSTEM, content, GATE_SCHEMA, "gate", max_tokens=2048, effort=gate_effort()
         )
-        return {
-            n - 1 for n in reply.get("handling", [])
-            if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(questions)
-        }
+
+        def picked(key):
+            return {
+                n - 1 for n in reply.get(key, [])
+                if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(questions)
+            }
+
+        handling = picked("handling")
+        return handling, handling | picked("near")
     except Exception:
-        return set()
+        return set(), set()
 
 
 class Pending:
