@@ -549,12 +549,16 @@ async function loadStatus() {
 }
 // The model that answers the checks, by its plain name, from the
 // server's status: never a name the server did not report.
+// While Muse Spark is resting after a failure the fallback answers, so
+// the fallback is named then.
 function brainName() {
-  const m = String((STATUS && STATUS.checker === "endpoint" && STATUS.model) || "").toLowerCase();
+  if (!STATUS || STATUS.checker !== "endpoint") return "";
+  const id = String((STATUS.meta_resting ? STATUS.fallback_model : STATUS.model) || "");
+  const m = id.toLowerCase();
   if (!m) return "";
   if (m.startsWith("muse-spark")) return "Muse Spark";
   if (m.includes("glimmer")) return "Muse Glimmer";
-  return STATUS.model;
+  return id;
 }
 function renderBrain() {
   const name = brainName();
@@ -925,7 +929,7 @@ async function loadMemory() {
   const counts = ["yes", "no", "cannot_tell"].map((v) => [v, r.checks.filter((c) => (MEM_WORD[c.verdict] ? c.verdict : "cannot_tell") === v).length]).filter(([, k]) => k);
   $("mem-sum").textContent = (n
     ? `${n} check${n === 1 ? "" : "s"} today: ${counts.map(([v, k]) => `${k} ${MEM_WORD[v][0].toLowerCase()}`).join(", ")}. `
-    : "") + `Every time Truss looked, what it decided and why, oldest first${who ? `. Each photo judged by ${who}` : ""}.`;
+    : "") + `Every time Truss looked, what it decided and why, oldest first${who ? `. Truss checks with ${who}` : ""}.`;
   if (!n) { $("memory").innerHTML = `<div class="empty">No checks yet today for this question.</div>`; return; }
   // Seconds only where two checks share a minute, so close checks
   // still read apart.
