@@ -33,6 +33,7 @@ import os
 import re
 import sys
 import threading
+import uuid
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -196,6 +197,9 @@ class Feed:
     def __init__(self, size=40, clock=datetime.now):
         self._items = deque(maxlen=size)
         self._ids = itertools.count(1)
+        # A new token each time the server starts, so a page holding an
+        # id from before a restart knows its ids no longer line up.
+        self.run = uuid.uuid4().hex
         self._lock = threading.Lock()
         self.clock = clock
 

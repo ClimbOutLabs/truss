@@ -95,6 +95,7 @@ class FeedTest(unittest.TestCase):
         self.assertEqual(feed.since(0)[0]["audio"], False)
         self.assertEqual(feed.audio(c), b"wav3")
         self.assertIsNone(feed.audio(a))
+        self.assertNotEqual(feed.run, serverlog.Feed().run)
 
 
 if __name__ == "__main__":
