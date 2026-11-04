@@ -93,12 +93,13 @@ GATE_SCHEMA = {
 GATE_SYSTEM = (
     "You look at a photo from smart glasses the wearer has on, at home. "
     "You are given one or more questions the wearer asked to be watched. "
-    "Do not answer them. Say only whether the wearer is doing something "
-    "with the thing one of them is about, right now: a hand on it or "
-    "reaching into it, holding it, opening it, turning it, or the act "
-    "the question asks about under way. The thing only sitting in view, "
-    "with no hand on it, does not count. Reply with the numbers of the "
-    "questions whose thing is being handled, or an empty list."
+    "Do not answer them. Say only whether the wearer is at the thing one "
+    "of them is about, right now: a hand on it, reaching for it, holding "
+    "or opening it, or the thing close up in front of them, within arm's "
+    "reach and taking up a good part of the photo, as when they look "
+    "straight at it. The thing small or far off in the background does "
+    "not count. Reply with the numbers of the questions whose thing the "
+    "wearer is at, or an empty list."
 )
 
 
