@@ -107,7 +107,7 @@ def _spoken_question(entry):
 # each thing was found the way it was, and the checker's reason, so
 # she hears what was seen rather than a bare yes. The redo reminder
 # names the witnessed time and says it was seen, because "I saw you"
-# is what lets her stop fretting.
+# is what lets the wearer stop fretting.
 SPOKEN_TEMPLATES = {
     "state": "{question} Yes, as of {time}. {reason}",
     "state_bare": "{question} Yes, as of {time}.",
@@ -494,10 +494,13 @@ class CheckLoop:
             if (
                 entry.get("kind") == "done"
                 and verdict in ("yes", "no", "cannot_tell")
+                and not result.get("failure")
                 and self.checks is not None
             ):
                 # This question was really watched on this frame. A
-                # failed check was not, and is never counted.
+                # failed check was not, and is never counted: the
+                # checker reports an outage as cannot_tell with a
+                # failure kind, and that frame was never looked at.
                 try:
                     self.checks.record(entry["slug"], when=now)
                 except Exception:
