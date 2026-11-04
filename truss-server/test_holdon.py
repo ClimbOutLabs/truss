@@ -153,9 +153,9 @@ def test_lines():
     check("follow-up: a failed check is the couldn't-confirm line",
           holdon.follow_up([{"verdict": None, "reason": "no check was made", "kind": "done"}])
           == [holdon.NOTHING_LINE])
-    check("follow-up: a state no is its reason only",
-          holdon.follow_up([{"verdict": "no", "reason": "A burner is lit.", "kind": "state"}])
-          == ["A burner is lit."])
+    check("follow-up: a state no is never read back (it can be an all-clear)",
+          holdon.follow_up([{"verdict": "no", "reason": "All the knobs point to off.", "kind": "state"}])
+          == [holdon.NOTHING_LINE])
 
 
 def test_full_check_first_wins():

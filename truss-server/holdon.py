@@ -56,14 +56,18 @@ def hold_line(entries):
 
 def follow_up(seen):
     """What to say after a hold-on when the full check fired nothing:
-    what it saw on a clear no ("Not yet." first for a done question),
-    or NOTHING_LINE when it could not tell. Never an all-clear: a
+    what it saw on a done question's clear no ("Not yet. ..."), or
+    NOTHING_LINE for anything else. Never an all-clear: a
     yes always fires through the loop's own line."""
     lines = []
     for item in seen or []:
         reason = (item.get("reason") or "").strip()
-        if item.get("verdict") == "no" and reason:
-            lines.append(f"Not yet. {reason}" if item.get("kind") == "done" else reason)
+        # Only a done question's no is read back ("not done yet"). A
+        # state question's no can be the all-clear itself ("Is the
+        # stove left on?" no: "All the knobs point to off"), which is
+        # never spoken from here.
+        if item.get("verdict") == "no" and reason and item.get("kind") == "done":
+            lines.append(f"Not yet. {reason}")
     return [" ".join(lines)] if lines else [NOTHING_LINE]
 # How long the gate may take before it is no longer worth waiting for.
 GATE_LIMIT_S = 8.0
