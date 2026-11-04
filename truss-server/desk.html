@@ -185,11 +185,39 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 .day{font-size:19.5px;font-weight:700}
 .daypick{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:14.5px}
 [hidden]{display:none!important}
-.checking{font-size:14px;color:var(--muted);margin:-8px 0 16px}
 /* truss memory */
 .qpill{font:inherit;font-size:14.5px;font-weight:600;border-radius:999px;padding:8px 16px;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink)}
 .qpill[aria-pressed="true"]{background:var(--ink);color:var(--ground);border-color:var(--ink)}
 .qpill:focus-visible{outline:2px solid var(--muted);outline-offset:2px}
+.mrow{display:flex;gap:18px;align-items:center;padding:16px 10px;border-bottom:1px solid var(--line)}
+.mtime{width:96px;flex:none;font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.verdict{flex:none;min-width:96px;text-align:center;font-size:15px;font-weight:700;border-radius:999px;padding:6px 14px;background:var(--sage);color:var(--ink)}
+.verdict.yes{background:var(--sky);color:var(--on-sky)}
+.verdict.no{background:var(--apricot);color:var(--on-apricot)}
+.mreason{flex:1;min-width:0;font-size:18px;font-weight:600;line-height:1.4}
+.mrow.cannot_tell .mreason{color:var(--muted);font-weight:500}
+.mrow a{flex:none;display:block}
+.mrow img{width:168px;height:120px;object-fit:cover;border-radius:12px;background:var(--sage);display:block}
+@media (max-width:640px){.mrow{flex-wrap:wrap}.mrow img{width:100%;height:auto;aspect-ratio:4/3}.mrow a{width:100%}}
+/* who answers the checks, named where a viewer can see it */
+.brain{display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:600;color:var(--on-sky);background:var(--sky);border-radius:999px;padding:4px 12px;margin-left:10px;vertical-align:2px;opacity:1}
+/* a check in progress, the moment the demo turns on */
+.checking{display:flex;align-items:center;gap:10px;font-size:15.5px;font-weight:600;color:var(--on-sky);background:var(--sky);border-radius:12px;padding:10px 16px;margin:-8px 0 0}
+#l-checking{margin:0}
+.pulse{width:9px;height:9px;border-radius:50%;background:var(--on-sky);flex:none;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion: reduce){.pulse{animation:none}}
+/* live view: the view and what Truss said, side by side */
+.livegrid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
+@media (max-width:860px){.livegrid{grid-template-columns:1fr}}
+.livecol{display:flex;flex-direction:column;gap:14px}
+.said.new{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;flex-direction:column;gap:6px}
+.said.new .t{width:auto;color:var(--muted);font-size:14px}
+.said.new .qt{font-size:21px;line-height:1.4;font-weight:600}
+/* film mode (/desk?film): only what the demo shows, a little larger */
+body.film .tab[data-tab="guide"],body.film .tab[data-tab="answers"],body.film .tab[data-tab="log"],body.film .tab[data-tab="settings"],
+body.film .pilldel,body.film .pillstop,body.film #plant-test{display:none!important}
+body.film .wrap{zoom:1.3}
 </style>
 </head>
 <body>
@@ -201,7 +229,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
       <button class="btn2" id="phone-go">Start watching</button>
     </div>
   </header>
-  <p class="tagline">Trust the Truss. Your witness for your life.</p>
+  <p class="tagline">Trust the Truss. Your witness for your life.<span class="brain" id="brain" hidden></span></p>
   <p class="checking" id="checking" hidden></p>
 
   <nav role="tablist">
@@ -233,16 +261,27 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
   <!-- Live: what the glasses see and say, for everyone else in the room -->
   <div id="tab-live" class="pane" hidden>
     <section>
-      <h2>What the glasses see now</h2>
-      <div class="viewwrap">
-        <img id="l-view" class="view" hidden alt="The glasses' latest view">
-        <span class="viewnote" id="l-view-note">No view from the glasses yet. Start watching on the phone.</span>
+      <div class="livegrid">
+        <div class="livecol">
+          <h2>What the glasses see now</h2>
+          <div class="viewwrap">
+            <img id="l-view" class="view" hidden alt="The glasses' latest view">
+            <span class="viewnote" id="l-view-note">No view from the glasses yet. Start watching on the phone.</span>
+          </div>
+        </div>
+        <div class="livecol">
+          <h2>What Truss said</h2>
+          <p class="checking" id="l-checking" hidden></p>
+          <div id="l-said"></div>
+          <label class="playrow"><input type="checkbox" id="l-play" class="toggle"><span>Play what the voice in the glasses says, out loud on this computer, as it is said.</span></label>
+        </div>
       </div>
-      <h2>Photos as they arrive</h2>
-      <div id="l-caps" class="capstrip"><div class="empty">No photos yet. When the glasses take a photo, it shows here the moment it lands.</div></div>
-      <h2>What Truss has seen</h2>
-      <div id="l-said"></div>
-      <label class="playrow"><input type="checkbox" id="l-play" class="toggle"><span>Play what the voice in the glasses says, out loud on this computer, as it is said.</span></label>
+      <!-- Shown only while it has photos: a checked photo leaves the
+           captures folder, so during a check this strip is often empty. -->
+      <div id="l-caps-wrap" class="livecol" hidden>
+        <h2>Photos as they arrive</h2>
+        <div id="l-caps" class="capstrip"></div>
+      </div>
     </section>
   </div>
 
@@ -305,7 +344,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
       </div>
     </form>
 
-    <details style="margin-top:28px">
+    <details id="plant-test" style="margin-top:28px">
       <summary>Test with a saved photo</summary>
       <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
         <p class="note" style="margin:0">Sends a saved photo just as the glasses would, and it counts as a real sighting: a question it answers stays answered for today. So the test is off while a question is being watched where a wrong answer would do harm, or where the question is whether something was done.</p>
@@ -377,9 +416,8 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
   <!-- Truss Memory: every check of one question today, oldest first -->
   <div id="tab-memory" class="pane" hidden>
     <section>
-      <h2>Truss Memory</h2>
       <div class="row" id="mem-qs"></div>
-      <div class="day" id="mem-q"></div>
+      <p class="intro"><span id="mem-q"></span><span class="soft" id="mem-sum"></span></p>
       <div id="memory"></div>
     </section>
   </div>
@@ -428,6 +466,10 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+// Film mode (/desk?film): the tabs and buttons a demo video does not
+// show are hidden and the page is a little larger. Nothing else changes.
+const FILM = new URLSearchParams(location.search).has("film");
+if (FILM) document.body.classList.add("film");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // The server's errors come back as an HTML page whose message is the
@@ -504,6 +546,7 @@ function openTab(name) {
   TAB = name;
   document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === name)));
   ["today", "live", "plant", "guide", "answers", "memory", "log", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
+  if (STATUS) renderChecking();
   refresh();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => openTab(t.dataset.tab)));
@@ -521,7 +564,26 @@ async function loadStatus() {
     STATUS = {unreachable: true};
   }
   renderBanners();
+  renderBrain();
   renderChecking();
+}
+// The model that answers the checks, by its plain name, from the
+// server's status: never a name the server did not report.
+// While Muse Spark is resting after a failure the fallback answers, so
+// the fallback is named then.
+function brainName() {
+  if (!STATUS || STATUS.checker !== "endpoint") return "";
+  const id = String((STATUS.meta_resting ? STATUS.fallback_model : STATUS.model) || "");
+  const m = id.toLowerCase();
+  if (!m) return "";
+  if (m.startsWith("muse-spark")) return "Muse Spark";
+  if (m.includes("glimmer")) return "Muse Glimmer";
+  return id;
+}
+function renderBrain() {
+  const name = brainName();
+  $("brain").hidden = !name;
+  $("brain").textContent = name ? `Sees with ${name}` : "";
 }
 
 // A check can take most of a minute; say so, so the page never looks
@@ -529,8 +591,21 @@ async function loadStatus() {
 let WAS_CHECKING = false;
 function renderChecking() {
   const c = STATUS && STATUS.checking;
-  $("checking").hidden = !c;
-  if (c) $("checking").textContent = `Checking a photo: \u201c${c.question}\u201d (${c.seconds} seconds so far)`;
+  // On Live View the line sits above what Truss said, where the eye
+  // already is; elsewhere it sits under the header.
+  $("checking").hidden = !c || TAB === "live";
+  $("l-checking").hidden = !c;
+  if (c) {
+    const who = brainName();
+    // The second-dose watch asks its own longer question; say it in
+    // the wearer's words instead.
+    const redo = "Is the wearer at the same place as this question again, about to do it again: ";
+    const q = String(c.question || "");
+    const what = q.startsWith(redo) ? `\u201c${q.slice(redo.length)}\u201d, in case it is done twice` : `\u201c${q}\u201d`;
+    const html = `<span class="pulse"></span><span>${who ? `${esc(who)} is checking` : "Checking"} a photo for ${esc(what)} \u00b7 ${esc(c.seconds)} s</span>`;
+    $("checking").innerHTML = html;
+    $("l-checking").innerHTML = html;
+  }
   if (WAS_CHECKING && !c) { loadQuestions(); if (TAB === "answers") loadAnswers(); if (TAB === "memory") loadMemory(); }
   WAS_CHECKING = !!c;
 }
@@ -607,7 +682,10 @@ function renderSummary(live) {
   if (needs) soft.push(`${needs} still need${needs === 1 ? "s" : ""} ${needs === 1 ? "its" : "their"} photos.`);
   if (!watching && !needs) soft.push("Nothing else needs you.");
   el.hidden = false;
-  el.innerHTML = `Today so far, Truss has seen ${seen} of the ${live.length} thing${live.length === 1 ? "" : "s"} it is minding.<span class="soft">${soft.join(" ")}</span>`;
+  const head = live.length === 1
+    ? (seen ? "Today so far, Truss has seen the one thing it is minding." : "Truss is minding one thing today and has not seen it yet.")
+    : `Today so far, Truss has seen ${seen} of the ${live.length} things it is minding.`;
+  el.innerHTML = `${head}<span class="soft">${soft.join(" ")}</span>`;
 }
 
 function renderDay() {
@@ -634,7 +712,7 @@ function renderDay() {
     const qs = groups.get(g).slice().sort((a, b) => minutesOf((a.pattern && a.pattern.after) || "") - minutesOf((b.pattern && b.pattern.after) || ""));
     parts.push(`<p class="group">${g}</p><div class="cards">${qs.map((q) => questionCard(q)).join("")}</div>`);
   });
-  SAMPLE.forEach((s, i) => {
+  if (!FILM) SAMPLE.forEach((s, i) => {
     if (s.texts.every((t) => byText.has(norm(t)))) return;
     parts.push({sample: true, html:
       `<div class="card"><div class="cq">${esc(s.name)}</div><div class="csub">${esc(s.hint)}</div><div class="cfoot" style="justify-content:flex-end"><button class="startbtn" data-step="${i}">Start</button></div></div>`});
@@ -643,7 +721,7 @@ function renderDay() {
   const groupHtml = parts.filter((p) => typeof p === "string");
   $("day").innerHTML = (groupHtml.join("") +
     (sampleCards.length ? `<p class="group">Ideas to try</p><div class="cards">${sampleCards.map((p) => p.html).join("")}</div>` : "")) ||
-    `<div class="empty">Nothing is watched yet.</div>`;
+    `<div class="empty">${live.length ? "Nothing else is being watched right now." : "Nothing is watched yet."}</div>`;
   $("count").textContent = live.length ? `${live.length} question${live.length === 1 ? "" : "s"}` : "";
   $("stopped").innerHTML = stopped.length
     ? `<details style="margin-top:12px"><summary class="note" style="font-weight:500">${stopped.length} stopped questions</summary>${stopped.map((q) => lineRow(q)).join("")}</details>`
@@ -837,6 +915,7 @@ let MEM_SHOWN = "";
 function paintMemoryPills() {
   const standing = QUESTIONS.filter((q) => q.state !== "retired");
   if (!standing.some((q) => q.slug === MEM_SLUG)) MEM_SLUG = standing.length ? standing[0].slug : "";
+  $("mem-qs").hidden = standing.length < 2;
   $("mem-qs").innerHTML = standing.map((q) => `<button class="qpill" data-mem="${esc(q.slug)}" aria-pressed="${String(q.slug === MEM_SLUG)}">${esc(q.question)}</button>`).join("");
 }
 $("mem-qs").addEventListener("click", (ev) => {
@@ -862,16 +941,27 @@ async function loadMemory() {
   try {
     r = await getJSON(`/memory?slug=${encodeURIComponent(MEM_SLUG)}`);
   } catch (e) { $("memory").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
-  const shown = `${MEM_SLUG}|${JSON.stringify(r.checks)}`;
+  const who = brainName();
+  const shown = `${MEM_SLUG}|${who}|${JSON.stringify(r.checks)}`;
   if (shown === MEM_SHOWN) return;
   MEM_SHOWN = shown;
-  if (!r.checks.length) { $("memory").innerHTML = `<div class="empty">No checks yet today for this question.</div>`; return; }
-  $("memory").innerHTML = r.checks.map((c) => {
-    const [word, cls] = MEM_WORD[c.verdict] || MEM_WORD.cannot_tell;
-    const img = c.evidence
-      ? `<a href="/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(c.evidence)}" target="_blank" rel="noopener"><img loading="lazy" alt="Evidence photo" src="/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(c.evidence)}"></a>`
-      : `<div class="ph"></div>`;
-    return `<div class="event"><span class="etime">${esc(clock(c.time.slice(0, 5)))}</span>${img}<div class="emain"><div class="eq">${esc(c.reason || word)}</div></div><span class="${cls}">${esc(word)}</span></div>`;
+  const n = r.checks.length;
+  const counts = ["yes", "no", "cannot_tell"].map((v) => [v, r.checks.filter((c) => (MEM_WORD[c.verdict] ? c.verdict : "cannot_tell") === v).length]).filter(([, k]) => k);
+  $("mem-sum").textContent = (n
+    ? `${n} check${n === 1 ? "" : "s"} today: ${counts.map(([v, k]) => `${k} ${MEM_WORD[v][0].toLowerCase()}`).join(", ")}. `
+    : "") + `Every time Truss looked, what it decided and why, oldest first${who ? `. Truss checks with ${who}` : ""}.`;
+  if (!n) { $("memory").innerHTML = `<div class="empty">No checks yet today for this question.</div>`; return; }
+  // Seconds only where two checks share a minute, so close checks
+  // still read apart.
+  const hm = (c) => c.time.slice(0, 5);
+  $("memory").innerHTML = r.checks.map((c, i) => {
+    const v = MEM_WORD[c.verdict] ? c.verdict : "cannot_tell";
+    const word = MEM_WORD[v][0];
+    const twin = (i > 0 && hm(r.checks[i - 1]) === hm(c)) || (i + 1 < n && hm(r.checks[i + 1]) === hm(c));
+    const t = twin ? clock(hm(c)).replace(/(:\d\d)/, `$1:${c.time.slice(6, 8)}`) : clock(hm(c));
+    const src = c.evidence ? `/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(c.evidence)}` : "";
+    const img = src ? `<a href="${src}" target="_blank" rel="noopener"><img loading="lazy" alt="Evidence photo" src="${src}"></a>` : "";
+    return `<div class="mrow ${v}"><span class="mtime">${esc(t)}</span><span class="verdict ${v}">${esc(word)}</span><div class="mreason">${esc(c.reason || word)}</div>${img}</div>`;
   }).join("");
 }
 setInterval(() => { if (TAB === "memory") loadMemory(); }, 2000);
@@ -1037,7 +1127,7 @@ $("plant").addEventListener("submit", async (ev) => {
       if (LOOKS[k]) state = (await postImage(`/plant/ref?slug=${encodeURIComponent(r.slug)}&kind=${k}`, LOOKS[k])).state;
     }
     if (state === "planting") state = (await postJSON("/plant/finish", {slug: r.slug})).state;
-    showMsg("p-msg", `Started: ${text}.${watchHint()}`);
+    showMsg("p-msg", `Done. Truss will watch for \u201c${text}\u201d.${watchHint()}`);
     $("p-text").value = "";
     $("p-look").value = "";
     clearLooks();
@@ -1161,6 +1251,9 @@ $("phone-go").addEventListener("click", async () => {
   setTimeout(() => { $("phone-go").disabled = false; loadPhone(); }, 3000);
 });
 setInterval(() => { loadPhone(); loadStatus(); }, 4000);
+// On Live View a check is the moment people are watching for: look a
+// little more often, so the line appears and its seconds tick.
+setInterval(() => { if (TAB === "live" && !document.hidden) loadStatus(); }, 1500);
 
 // ---- settings -----------------------------------------------------------------
 // Keys go to the server and are never shown again: the page only learns
@@ -1377,7 +1470,7 @@ function playNext() {
   audio.play().catch(done);
 }
 function drawFeed() {
-  const lines = FEED_LINES.slice().reverse();
+  const lines = FEED_LINES.slice().reverse().slice(0, 6);
   $("l-said").innerHTML = lines.length
     ? lines.map((l, i) => `<div class="said${i === 0 ? " new" : ""}"><span class="t">${esc(new Date(l.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}))}</span><span class="qt">${esc(l.text)}</span></div>`).join("")
     : `<div class="empty">Nothing said yet. Lines appear here the moment the glasses speak them.</div>`;
@@ -1433,8 +1526,6 @@ async function loadCaptures() {
     const strip = $("l-caps");
     const fresh = list.filter((c) => !CAP_SEEN.has(c.name));
     if (fresh.length) {
-      const empty = strip.querySelector(".empty");
-      if (empty) empty.remove();
       // fresh is newest first: add in reverse so the newest lands in front.
       for (const c of fresh.slice().reverse()) {
         CAP_SEEN.add(c.name);
@@ -1442,6 +1533,9 @@ async function loadCaptures() {
         fig.className = "cap";
         fig.dataset.name = c.name;
         fig.innerHTML = `<img alt="A photo the glasses took" src="/captures/photo?name=${encodeURIComponent(c.name)}"><span class="ct">${esc(new Date(c.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}))}</span>`;
+        // A photo the check loop has already moved away is dropped, not
+        // shown as a broken image.
+        fig.querySelector("img").addEventListener("error", () => { fig.remove(); $("l-caps-wrap").hidden = !strip.children.length; });
         strip.prepend(fig);
       }
       if (!CAP_FIRST) CAP_NEWEST = fresh[0].name;
@@ -1459,6 +1553,7 @@ async function loadCaptures() {
       });
     }
     CAP_FIRST = false;
+    $("l-caps-wrap").hidden = !strip.children.length;
   } catch (e) { /* the laptop is between restarts; the next poll tries again */ }
 }
 // Ticking the box is the tap a browser needs before it plays sound, so
