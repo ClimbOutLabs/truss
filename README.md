@@ -233,7 +233,7 @@ needed for a first run beyond the Meta key.
 | `TRUSS_META_REASONING_EFFORT` | `low` | How hard Muse Spark thinks on an ordinary check: `minimal`, `low`, `medium`, `high`, `xhigh`, or `default` to leave it to the model. Lower is faster. |
 | `TRUSS_META_SAFETY_REASONING_EFFORT` | `medium` | The same, for a question marked extra careful (the stove, the pills). |
 | `TRUSS_META_TIMEOUT_S` | `120` | Longest wait for one Muse Spark call. |
-| `TRUSS_HOLD_ON` | off | `1` lets Mannie say "Hold on, let me check something." within a couple of seconds when you reach for or look closely at the thing a question is about, then give the full answer. Needs an app built from the same commit. |
+| `TRUSS_HOLD_ON` | off | `1` lets Mannie say "Hold on, let me check something." within a couple of seconds when you reach for or look closely at the thing a question is about, then give the full answer. A "did I…" question already seen done is then reminded every time the thing is in shot again, not once per window. Needs an app built from the same commit. |
 | `TRUSS_BASE_URL` | unset | The local fallback, Glimmer under `llama-server` (step 8). |
 | `TRUSS_EVIDENCE_OUTLINE` / `TRUSS_SAM_URL` | off / `http://127.0.0.1:8090` | Outline the object in kept evidence photos with SAM 3.1. |
 | `TRUSS_REFUSALS` | `1` | Mannie says when it cannot see the deciding detail ("I can't see the knobs from here"). `0` keeps every cannot-tell silent. |
@@ -288,7 +288,9 @@ plant the questions for them.
   question has a time window, such as 9 to 10 PM. The first time the glasses
   see the yes-look inside the window, Truss keeps that one photo and its
   time as the witness. If the wearer comes back to the organizer later in the
-  window, Mannie says once that it is already done, and when. If the window
+  window, Mannie says it is already done, and when ("Just so you know, you
+  already took them at 9:12. I saw you."): once per window by default, or
+  every time it is in shot again with `TRUSS_HOLD_ON=1`. If the window
   closes with no witness, an alert is raised that survives restarts and
   clears only when the phone confirms it was spoken.
 
