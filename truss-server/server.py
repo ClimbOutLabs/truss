@@ -6,6 +6,7 @@ Handles photo uploads and text-to-speech for the Truss app.
 
 import json
 import math
+import socket
 import os
 import re
 import subprocess
@@ -22,6 +23,7 @@ from alerts import AlertStore, desk_banner, sweep_missed
 import aman_check
 from coverage import CheckLog
 import endpoint
+import holdon
 import sam_client
 import verdict
 import voice
@@ -479,6 +481,19 @@ def guide_said(alert_id):
     return False
 
 
+HOLD = holdon.Pending(lambda lines: guide_say(lines))
+
+
+def _run_loop(filepath):
+    """LOOP.process_frame, never raising: a loop failure must never
+    break the capture itself."""
+    try:
+        return LOOP.process_frame(filepath)
+    except Exception as e:
+        print(f"POST /capture -> loop failed, frame kept: {e}")
+        return {"managed": False, "fired": [], "speak": [], "errors": 1}
+
+
 def guide_waiting():
     with GUIDE_SAY_LOCK:
         return [dict(item) for item in GUIDE_SAY]
@@ -693,6 +708,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_feed_audio()
         elif path == "/log":
             self.handle_log()
+        elif path == "/capture/result":
+            self.handle_capture_result()
         else:
             self.send_error(404, "Not Found")
 
@@ -1622,11 +1639,11 @@ class TrussHandler(BaseHTTPRequestHandler):
             # as evidence or delete it; when none are standing, the
             # frame stays exactly as day 1 left it. A loop failure must
             # never break the capture itself.
-            try:
-                loop_result = LOOP.process_frame(filepath)
-            except Exception as e:
-                print(f"POST /capture -> loop failed, frame kept: {e}")
-                loop_result = {"managed": False, "fired": [], "speak": []}
+            loop_result = self._loop_with_hold_on(filepath, response, filename, file_size)
+            if loop_result is None:
+                # Answered early with "Hold on"; the full answer waits
+                # for GET /capture/result.
+                return
             if loop_result["managed"]:
                 response["fired"] = loop_result["fired"]
                 response["speak"] = loop_result["speak"]
@@ -1649,6 +1666,95 @@ class TrussHandler(BaseHTTPRequestHandler):
             print(f"POST /capture -> ERROR: {e}")
             self.send_error(500, str(e))
     
+    def _loop_with_hold_on(self, filepath, response, filename, file_size):
+        """The check loop on this frame. With TRUSS_HOLD_ON=1 and
+        questions due, a quick gate runs beside it (see holdon.py): a
+        gate yes before the full check is done answers the phone at
+        once with the hold-on line and a pending id, and returns None
+        once the full check has finished and its result is waiting.
+        Otherwise the loop's result, exactly as before."""
+        questions = []
+        if (
+            holdon.enabled()
+            and self.headers.get("Origin") is None
+            and endpoint.meta_on()
+            and HOLD.may_hold()
+        ):
+            try:
+                now = CLOCK()
+                questions = [e["question"] for e in STORE.due(now=now)]
+                questions += [e["question"] for e in STORE.redo_watch(now=now)]
+            except Exception:
+                questions = []
+        if not questions:
+            return _run_loop(filepath)
+        either = threading.Event()
+        box = {}
+
+        def full():
+            box["result"] = _run_loop(filepath)
+            box["full"] = True
+            either.set()
+
+        def quick():
+            started = time.monotonic()
+            yes = holdon.gate(filepath, questions)
+            print(f"  gate: {'yes' if yes else 'no'} ({time.monotonic() - started:.1f} s)", flush=True)
+            box["gate"] = yes
+            either.set()
+
+        worker = threading.Thread(target=full, daemon=True)
+        worker.start()
+        threading.Thread(target=quick, daemon=True).start()
+        limit = time.monotonic() + holdon.GATE_LIMIT_S
+        while not box.get("full") and "gate" not in box and time.monotonic() < limit:
+            either.wait(0.05)
+            either.clear()
+        if box.get("full") or not box.get("gate"):
+            worker.join()
+            return box["result"]
+        pid = HOLD.open()
+        HOLD.held()
+        early = dict(response, speak=[holdon.HOLD_LINE], fired=[], pending=pid)
+        data = json.dumps(early).encode()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            self.wfile.flush()
+            self.connection.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+        print(f"POST /capture -> saved {filename} ({file_size} bytes)")
+        print(f"POST /capture -> hold-on spoken, answer {pid} follows")
+        worker.join()
+        result = box["result"]
+        managed = result.get("managed")
+        speak = result.get("speak", []) if managed else []
+        HOLD.finish(pid, {
+            # The wearer was told to hold on, so silence would leave
+            # them waiting: a check that found nothing to say says so,
+            # without claiming anything about the state.
+            "speak": speak or [holdon.NOTHING_LINE],
+            "fired": result.get("fired", []) if managed else [],
+        })
+        if managed:
+            print(f"POST /capture -> loop: fired={result['fired']} errors={result['errors']} (answer {pid})")
+        return None
+
+    def handle_capture_result(self):
+        """GET /capture/result?id=: the full answer for a capture that
+        was answered early with the hold-on line. Waits for it."""
+        pid = (parse_qs(urlparse(self.path).query).get("id") or [""])[0]
+        result = HOLD.take(pid)
+        if result is None:
+            self.send_error(404, "No answer with that id.")
+            return
+        self.send_json(result)
+        print(f"GET /capture/result -> {pid}: speak={len(result['speak'])}")
+
     def handle_tts(self):
         """Handle text-to-speech."""
         try:

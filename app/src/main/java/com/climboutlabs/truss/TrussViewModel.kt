@@ -881,29 +881,49 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(watchSent = it.watchSent + 1) }
           }
           photoLog("Uploaded. The laptop says it received ${result.bytes} bytes.")
-          if (result.speak.isNotEmpty()) {
-            val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
-            _uiState.update {
-              it.copy(
-                  spokenLines = result.speak,
-                  lastSpoken = result.speak,
-                  lastSpokenAt = at,
-                  lastSpokenPhoto = bitmap,
-                  lastSpokenAloud = null,
-              )
+          // The laptop may answer early with "Hold on, let me check" (TRUSS_HOLD_ON on the
+          // laptop): that line is spoken first, then the full answer is fetched and spoken
+          // the same way, still inside this look, so nothing else takes the glasses between.
+          var answer = result
+          while (true) {
+            if (answer.speak.isNotEmpty()) {
+              val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
+              val lines = answer.speak
+              _uiState.update {
+                it.copy(
+                    spokenLines = lines,
+                    lastSpoken = lines,
+                    lastSpokenAt = at,
+                    lastSpokenPhoto = bitmap,
+                    lastSpokenAloud = null,
+                )
+              }
+              lines.forEach { line -> photoLog("Mannie says: $line") }
+              if (stayOpen) {
+                // Bluetooth audio and a camera session are never held together, so the
+                // session ends here, and the watch loop opens a new one for the next look.
+                runCatching { activeCamera.stop() }
+                runCatching { activeSession.stop() }
+                _uiState.update { it.copy(streamActive = false) }
+                stayOpen = false
+                photoLog("Left the glasses session to speak.")
+              }
+              val spoken = speakViaGlasses(lines)
+              _uiState.update { it.copy(lastSpokenAloud = spoken) }
             }
-            result.speak.forEach { line -> photoLog("Mannie says: $line") }
-            if (stayOpen) {
-              // Bluetooth audio and a camera session are never held together, so the
-              // session ends here, and the watch loop opens a new one for the next look.
-              runCatching { activeCamera.stop() }
-              runCatching { activeSession.stop() }
-              _uiState.update { it.copy(streamActive = false) }
-              stayOpen = false
-              photoLog("Left the glasses session to speak.")
-            }
-            val spoken = speakViaGlasses(result.speak)
-            _uiState.update { it.copy(lastSpokenAloud = spoken) }
+            val pendingId = answer.pending ?: break
+            photoLog("The laptop is still checking; waiting for its answer.")
+            answer =
+                try {
+                  withContext(Dispatchers.IO) { client.getCaptureResult(pendingId) }
+                } catch (e: CancellationException) {
+                  throw e
+                } catch (e: Exception) {
+                  // The laptop puts an answer nobody fetched in its alert queue, so it is
+                  // still heard on a later alert poll.
+                  photoLog("The answer could not be fetched: ${e.message ?: e.toString()}")
+                  break
+                }
           }
         }
         photoLog("Done in ${SystemClock.elapsedRealtime() - lookStartedAt} ms.")
