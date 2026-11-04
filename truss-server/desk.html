@@ -261,6 +261,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
             <button type="button" class="btn2" data-take="yes">Take yes with the glasses</button>
             <button type="button" class="btn2" data-take="no">Take no with the glasses</button>
           </div>
+          <div class="msg" id="p-look-msg" hidden></div>
           <div class="ssub">Look at the thing as it is when the answer is yes, press Take yes, then the same for no. The glasses send a view every few seconds while the phone is watching. Pills, the stove, and anything where a wrong answer would do harm need both photos.</div>
         </div>
       </div>
@@ -811,7 +812,7 @@ const LOOKS = {yes: null, no: null};
 function setLook(kind, file) {
   if (!file) return;
   if (!/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
-    showMsg("p-msg", "Looks must be JPEG photos. In Photos, use File > Export as JPEG.", true);
+    showMsg("p-look-msg", "Looks must be JPEG photos. In Photos, use File > Export as JPEG.", true);
     return;
   }
   LOOKS[kind] = file;
@@ -860,7 +861,13 @@ async function glassesView(onWait) {
     const waited = (Date.now() - pressed) / 1000;
     if (r.ok) {
       const ago = Number(r.headers.get("X-Seconds-Ago") || "999");
-      if (ago < waited) {
+      // A view that arrived after the press is the look. The wearer sets
+      // the scene first and presses second, though, so the phone may have
+      // sent that very view a few seconds before the press, and then no
+      // newer view is coming: the phone sends a view when it changes.
+      // After a short grace for a newer view, take the newest fresh one;
+      // its preview shows in the drop box, so a wrong grab is visible.
+      if (ago < waited || (waited >= 10 && ago <= 30)) {
         const blob = await r.blob();
         return {file: new File([blob], `glasses-${Date.now()}.jpg`, {type: "image/jpeg"}), ago: ago.toFixed(0)};
       }
@@ -883,12 +890,12 @@ document.querySelectorAll("[data-take]").forEach((b) => b.addEventListener("clic
   const kind = b.dataset.take;
   b.disabled = true;
   try {
-    const view = await glassesView((text) => showMsg("p-msg", text));
+    const view = await glassesView((text) => showMsg("p-look-msg", text));
     const other = LOOKS[kind === "yes" ? "no" : "yes"];
     if (await sameBytes(view.file, other)) throw new Error(`That view is the same photo as the ${kind === "yes" ? "no" : "yes"} look. Change what the glasses see, then take it again.`);
     setLook(kind, view.file);
-    showMsg("p-msg", `Took the ${kind} look from the glasses' view ${view.ago} seconds ago.`);
-  } catch (e) { showMsg("p-msg", e.message, true); }
+    showMsg("p-look-msg", `Took the ${kind} look from the glasses' view ${view.ago} seconds ago.`);
+  } catch (e) { showMsg("p-look-msg", e.message, true); }
   b.disabled = false;
 }));
 
