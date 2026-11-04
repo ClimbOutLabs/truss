@@ -233,7 +233,7 @@ needed for a first run beyond the Meta key.
 | `TRUSS_META_REASONING_EFFORT` | `low` | How hard Muse Spark thinks on an ordinary check: `minimal`, `low`, `medium`, `high`, `xhigh`, or `default` to leave it to the model. Lower is faster. |
 | `TRUSS_META_SAFETY_REASONING_EFFORT` | `medium` | The same, for a question marked extra careful (the stove, the pills). |
 | `TRUSS_META_TIMEOUT_S` | `120` | Longest wait for one Muse Spark call. |
-| `TRUSS_HOLD_ON` | off | `1` lets Mannie say "Hold on, let me check." within a couple of seconds when the thing is in view, then give the full answer. Needs an app built from the same commit. |
+| `TRUSS_HOLD_ON` | off | `1` lets Mannie say "Hold on, let me check something." within a couple of seconds when you reach for or look closely at the thing a question is about, then give the full answer. Needs an app built from the same commit. |
 | `TRUSS_BASE_URL` | unset | The local fallback, Glimmer under `llama-server` (step 8). |
 | `TRUSS_EVIDENCE_OUTLINE` / `TRUSS_SAM_URL` | off / `http://127.0.0.1:8090` | Outline the object in kept evidence photos with SAM 3.1. |
 | `TRUSS_REFUSALS` | `1` | Mannie says when it cannot see the deciding detail ("I can't see the knobs from here"). `0` keeps every cannot-tell silent. |
