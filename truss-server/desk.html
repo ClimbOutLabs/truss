@@ -185,6 +185,10 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 .daypick{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:14.5px}
 [hidden]{display:none!important}
 .checking{font-size:14px;color:var(--muted);margin:-8px 0 16px}
+/* truss memory */
+.qpill{font:inherit;font-size:14.5px;font-weight:600;border-radius:999px;padding:8px 16px;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+.qpill[aria-pressed="true"]{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.qpill:focus-visible{outline:2px solid var(--muted);outline-offset:2px}
 </style>
 </head>
 <body>
@@ -205,6 +209,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
     <button class="tab" role="tab" aria-selected="false" data-tab="plant">Watch for me</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="guide">Watch me do this</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="answers">History</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="memory">Truss Memory</button>
     <button class="tab end" role="tab" aria-selected="false" data-tab="log">Log</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="settings">Settings</button>
   </nav>
@@ -349,6 +354,16 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
     </section>
   </div>
 
+  <!-- Truss Memory: every check of one question today, oldest first -->
+  <div id="tab-memory" class="pane" hidden>
+    <section>
+      <h2>Truss Memory</h2>
+      <div class="row" id="mem-qs"></div>
+      <div class="day" id="mem-q"></div>
+      <div id="memory"></div>
+    </section>
+  </div>
+
   <!-- Settings -->
   <!-- Log: the server's tidy log, as tail -f shows it, newest first -->
   <div id="tab-log" class="pane" hidden>
@@ -468,7 +483,7 @@ let TAB = "today";
 function openTab(name) {
   TAB = name;
   document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.tab === name)));
-  ["today", "live", "plant", "guide", "answers", "log", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
+  ["today", "live", "plant", "guide", "answers", "memory", "log", "settings"].forEach((n) => { $(`tab-${n}`).hidden = n !== name; });
   refresh();
 }
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => openTab(t.dataset.tab)));
@@ -496,7 +511,7 @@ function renderChecking() {
   const c = STATUS && STATUS.checking;
   $("checking").hidden = !c;
   if (c) $("checking").textContent = `Checking a photo: \u201c${c.question}\u201d (${c.seconds} seconds so far)`;
-  if (WAS_CHECKING && !c) { loadQuestions(); if (TAB === "answers") loadAnswers(); }
+  if (WAS_CHECKING && !c) { loadQuestions(); if (TAB === "answers") loadAnswers(); if (TAB === "memory") loadMemory(); }
   WAS_CHECKING = !!c;
 }
 
@@ -788,6 +803,58 @@ async function loadAnswers() {
   } catch (e) { $("answers").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
 }
 $("day-pick").addEventListener("change", loadAnswers);
+
+// ---- truss memory -----------------------------------------------------------
+// Every check of one question today, oldest first, read back from the
+// server's own log by GET /memory: the checks that stayed silent are
+// here too, not only the ones that were spoken. While the tab is open
+// the timeline reloads every couple of seconds, so a check that lands
+// shows up on its own.
+const MEM_WORD = {yes: ["Yes", "chip slate"], no: ["No", "chip clay"], cannot_tell: ["Can't tell", "chip"]};
+let MEM_SLUG = "";
+let MEM_SIG = "";
+let MEM_SHOWN = "";
+function paintMemoryPills() {
+  const standing = QUESTIONS.filter((q) => q.state !== "retired");
+  if (!standing.some((q) => q.slug === MEM_SLUG)) MEM_SLUG = standing.length ? standing[0].slug : "";
+  $("mem-qs").innerHTML = standing.map((q) => `<button class="qpill" data-mem="${esc(q.slug)}" aria-pressed="${String(q.slug === MEM_SLUG)}">${esc(q.question)}</button>`).join("");
+}
+$("mem-qs").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-mem]");
+  if (!b || b.dataset.mem === MEM_SLUG) return;
+  MEM_SLUG = b.dataset.mem;
+  MEM_SHOWN = "";
+  paintMemoryPills();
+  loadMemory();
+});
+async function loadMemory() {
+  const standing = QUESTIONS.filter((q) => q.state !== "retired");
+  const sig = standing.map((q) => q.slug).join("|");
+  if (sig !== MEM_SIG) { MEM_SIG = sig; paintMemoryPills(); }
+  const q = standing.find((x) => x.slug === MEM_SLUG);
+  if (!q) {
+    $("mem-q").textContent = "";
+    $("memory").innerHTML = `<div class="empty">Nothing is watched yet.</div>`;
+    return;
+  }
+  $("mem-q").textContent = q.question;
+  let r;
+  try {
+    r = await getJSON(`/memory?slug=${encodeURIComponent(MEM_SLUG)}`);
+  } catch (e) { $("memory").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+  const shown = `${MEM_SLUG}|${JSON.stringify(r.checks)}`;
+  if (shown === MEM_SHOWN) return;
+  MEM_SHOWN = shown;
+  if (!r.checks.length) { $("memory").innerHTML = `<div class="empty">No checks yet today for this question.</div>`; return; }
+  $("memory").innerHTML = r.checks.map((c) => {
+    const [word, cls] = MEM_WORD[c.verdict] || MEM_WORD.cannot_tell;
+    const img = c.evidence
+      ? `<a href="/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(c.evidence)}" target="_blank" rel="noopener"><img loading="lazy" alt="Evidence photo" src="/evidence?day=${encodeURIComponent(r.day)}&name=${encodeURIComponent(c.evidence)}"></a>`
+      : `<div class="ph"></div>`;
+    return `<div class="event"><span class="etime">${esc(clock(c.time.slice(0, 5)))}</span>${img}<div class="emain"><div class="eq">${esc(c.reason || word)}</div></div><span class="${cls}">${esc(word)}</span></div>`;
+  }).join("");
+}
+setInterval(() => { if (TAB === "memory") loadMemory(); }, 2000);
 
 // ---- planting -------------------------------------------------------------
 function whenValue() { return $("p-when").value; }
@@ -1369,6 +1436,7 @@ function refresh() {
   loadSeen();
   if (TAB === "guide") loadGuide();
   if (TAB === "answers") loadAnswers();
+  if (TAB === "memory") loadMemory();
   if (TAB === "settings") loadSettings();
   if (TAB === "live") { loadFeed(); loadView(); }
   if (TAB === "log") loadLog();
