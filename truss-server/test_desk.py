@@ -180,6 +180,22 @@ def test_status_shows_a_check_in_flight():
         httpd.shutdown()
 
 
+def test_memory_tab():
+    """The Desk carries a Truss Memory tab fed by GET /memory, the
+    same endpoint the phone app reads its timeline from."""
+    httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/desk") as resp:
+            body = resp.read().decode()
+    finally:
+        httpd.shutdown()
+    check("the served page has a Truss Memory tab", 'data-tab="memory">Truss Memory<' in body)
+    check("the tab has its own pane", 'id="tab-memory"' in body)
+    check("the page calls /memory for the timeline", "/memory?slug=" in body)
+
+
 def test_log_tab():
     """GET /log serves the tidy log's latest lines after an id."""
     import json
@@ -207,5 +223,6 @@ if __name__ == "__main__":
     test_latest_view()
     test_replay_is_not_the_glasses_view()
     test_status_shows_a_check_in_flight()
+    test_memory_tab()
     test_log_tab()
     print("ALL PASS")
