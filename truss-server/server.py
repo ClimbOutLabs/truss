@@ -94,6 +94,18 @@ def live_alerts():
 # The day folders the check loop keeps answers and evidence in.
 LOG_DIR = Path(__file__).parent / "log"
 DESK_PAGE = Path(__file__).parent / "desk.html"
+
+# The Desk's tab icon. Browsers ask for /favicon.ico on every page
+# load; with no route each ask landed in the log as a 404 and an error
+# line, burying the real lines. One small steel square with a T, in
+# the Desk's own palette, served with a long cache so browsers ask
+# once and then stop.
+FAVICON_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    b'<rect width="64" height="64" rx="12" fill="#34495E"/>'
+    b'<path d="M18 20h28v8H36v22h-8V28H18z" fill="#F6F6F4"/>'
+    b"</svg>"
+)
 CHECKS = CheckLog(LOG_DIR)
 
 
@@ -643,6 +655,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             print(f"GET / -> 200 OK")
         elif path == "/desk":
             self.handle_desk()
+        elif path == "/favicon.ico":
+            self.handle_favicon()
         elif path == "/questions":
             self.handle_questions()
         elif path == "/alerts":
@@ -843,6 +857,17 @@ class TrussHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(page)
         print("GET /desk -> 200 OK")
+
+    def handle_favicon(self):
+        """The Desk's tab icon: GET /favicon.ico. Served from memory,
+        cached for a day, so the browser asks once instead of logging
+        a 404 on every page load."""
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Content-Length", str(len(FAVICON_SVG)))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        self.wfile.write(FAVICON_SVG)
 
     def handle_questions(self):
         """List the standing questions and their states."""
