@@ -481,7 +481,7 @@ def guide_said(alert_id):
     return False
 
 
-HOLD = holdon.Pending(lambda lines: guide_say(lines))
+HOLD = holdon.Pending()
 
 
 def _run_loop(filepath):
@@ -1057,6 +1057,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 item["headline"], item["note"] = banner
             alerts.append(item)
         alerts += guide_waiting()
+        alerts += HOLD.waiting()
         self.send_json({"alerts": alerts})
 
     def _json_body(self):
@@ -1169,6 +1170,13 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Body must be JSON with an alert id")
             return
         alert_id = data.get("id") if isinstance(data, dict) else None
+        if isinstance(alert_id, str) and alert_id.startswith("hold-"):
+            if not HOLD.said(alert_id):
+                self.send_error(404, "No pending alert with that id.")
+                return
+            self.send_json({"acked": alert_id})
+            print(f"POST /alerts/ack -> {alert_id}")
+            return
         if isinstance(alert_id, str) and alert_id.startswith("guide-"):
             if not guide_said(alert_id):
                 self.send_error(404, "No pending alert with that id.")

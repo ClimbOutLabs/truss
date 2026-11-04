@@ -20,7 +20,8 @@ gate failure, a gate no, or a gate slower than the full check changes
 nothing. The full check runs exactly as before, under the same lock.
 
 A result the phone never collects is not lost: after COLLECT_S
-seconds its lines go to the spoken-alert queue the phone polls.
+seconds its lines are offered on GET /alerts, which the phone polls,
+until it acks them.
 """
 
 import os
@@ -89,10 +90,12 @@ def gate(frame_path, questions):
 class Pending:
     """Full-check results waiting for the phone, by id."""
 
-    def __init__(self, say_later):
-        # say_later(lines) queues lines for the phone's alert poll.
-        self._say_later = say_later
+    def __init__(self):
         self._lock = threading.Lock()
+        # Answers nobody fetched, offered on GET /alerts until the phone
+        # acks them. Kept apart from the guide's queue, which a new
+        # guide clears.
+        self._late = []
         self._items = {}
         self._last_hold = 0.0
 
@@ -141,7 +144,24 @@ class Pending:
             if item is None or item["taken"]:
                 return
             item["taken"] = True
-        lines = (item["result"] or {}).get("speak") or []
+        # The "couldn't confirm" line only follows a hold-on heard just
+        # now; on a later alert poll it would mean nothing.
+        lines = [l for l in (item["result"] or {}).get("speak") or [] if l != NOTHING_LINE]
         if lines:
             print(f"  hold-on: answer {pid} was not collected; it goes to the alert queue.", flush=True)
-            self._say_later(lines)
+            with self._lock:
+                self._late.append({"id": f"hold-{pid}", "line": " ".join(lines)})
+
+    def waiting(self):
+        """Uncollected answers, for GET /alerts."""
+        with self._lock:
+            return [dict(item) for item in self._late]
+
+    def said(self, alert_id):
+        """Clear one spoken uncollected answer. True when it was waiting."""
+        with self._lock:
+            for i, item in enumerate(self._late):
+                if item["id"] == alert_id:
+                    del self._late[i]
+                    return True
+        return False

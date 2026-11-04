@@ -66,7 +66,7 @@ def run(loop, gate_fn, hold_on="1"):
     holdon.gate = gate_fn
     S.endpoint.meta_on = lambda: True
     S.run_sweep = lambda: None
-    S.HOLD = holdon.Pending(lambda lines: None)
+    S.HOLD = holdon.Pending()
     S.GUIDE["session"] = None
     os.environ["TRUSS_HOLD_ON"] = hold_on
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), S.TrussHandler)
@@ -138,8 +138,7 @@ def test_off_by_default():
 
 
 def test_rest_and_uncollected():
-    said = []
-    p = holdon.Pending(said.append)
+    p = holdon.Pending()
     check("pending: may hold at first", p.may_hold())
     p.held()
     check("pending: rests after a hold-on", not p.may_hold())
@@ -148,11 +147,18 @@ def test_rest_and_uncollected():
     try:
         pid = p.open()
         p.finish(pid, {"speak": ["line"], "fired": []})
+        quiet = p.open()
+        p.finish(quiet, {"speak": [holdon.NOTHING_LINE], "fired": []})
         time.sleep(0.4)
     finally:
         holdon.COLLECT_S = saved
-    check("pending: an uncollected answer goes to the alert queue", said == [["line"]])
+    waiting = p.waiting()
+    check("pending: an uncollected answer is offered as an alert",
+          waiting == [{"id": f"hold-{pid}", "line": "line"}])
+    check("pending: the couldn't-confirm line is never offered later", len(waiting) == 1)
     check("pending: and is not given out twice", p.take(pid, wait_s=0.1) is None)
+    check("pending: an ack clears it", p.said(f"hold-{pid}") and p.waiting() == [])
+    check("pending: a new guide cannot clear it (own queue)", not hasattr(p, "_say_later"))
 
 
 def test_gate_failure_is_no():
