@@ -9,6 +9,7 @@ import math
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -36,29 +37,38 @@ from plant_compile import Compiler, compile_folder, needs_compile
 from questions import QuestionStore, SafetyLooksNeeded
 import settings
 import serverlog
+import lan
 
 # Run as the server, everything printed from here on also goes, tidied,
 # to log/server.log (see serverlog.py), so a run can be followed with
 # tail -f from another window.
+# On Windows, files are read and written in the system's code page
+# unless Python runs in UTF-8 mode, and a reason or question with a
+# character outside it (an arrow, an accent, a curly quote) would fail
+# to save. Run the server again in UTF-8 mode, in this same window, so
+# every file it keeps is UTF-8 as on a Mac. Nothing changes elsewhere.
+if __name__ == "__main__" and os.name == "nt" and not sys.flags.utf8_mode:
+    _child = subprocess.Popen([sys.executable, "-X", "utf8", *sys.argv])
+    while True:
+        try:
+            sys.exit(_child.wait())
+        except KeyboardInterrupt:
+            pass  # Ctrl+C reaches the child too; wait for it to stop
+
 if __name__ == "__main__":
     serverlog.install(Path(__file__).parent / "log")
 
 # The lines Truss spoke through the glasses, for the Desk's Live tab.
 FEED = serverlog.Feed()
 
-# Get the Wi-Fi interface address
+# The address to bind: the Wi-Fi (en0) address on a Mac, the LAN
+# address elsewhere, or TRUSS_HOST when set (see lan.py).
 def get_wifi_address():
-    try:
-        result = subprocess.run(
-            ["ipconfig", "getifaddr", "en0"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        print("Warning: Could not get en0 address, falling back to 0.0.0.0")
-        return "0.0.0.0"
+    addr = lan.lan_address()
+    if addr:
+        return addr
+    print("Warning: Could not find this computer's LAN address, falling back to 0.0.0.0 (set TRUSS_HOST to choose one)")
+    return "0.0.0.0"
 
 # Ensure captures directory exists
 CAPTURES_DIR = Path(__file__).parent / "captures"
@@ -1661,51 +1671,26 @@ class TrussHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "No text provided")
                 return
             
-            # Generate speech with macOS 'say' command
-            with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as tmp_aiff:
-                aiff_path = tmp_aiff.name
-            
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
-                wav_path = tmp_wav.name
-            
-            try:
-                # Generate AIFF with 'say', in the most natural voice
-                # installed (see voice.py). Should that voice fail, the
-                # line is still spoken in the system default.
-                try:
-                    subprocess.run(
-                        voice.say_command(text, aiff_path), check=True, timeout=20
-                    )
-                except Exception:
-                    subprocess.run(["say", "-o", aiff_path, text], check=True, timeout=20)
-                
-                # Convert to 16-bit WAV with afconvert. 24 kHz keeps the
-                # voice's warmth; 16 kHz made it sound like a phone line.
-                subprocess.run(
-                    ["afconvert", "-f", "WAVE", "-d", "LEI16@24000", aiff_path, wav_path],
-                    check=True,
-                    timeout=10
-                )
-                
-                # Read WAV file
-                with open(wav_path, "rb") as f:
-                    wav_data = f.read()
-                
-                self.send_response(200)
-                self.send_header("Content-Type", "audio/wav")
-                self.send_header("Content-Length", str(len(wav_data)))
-                self.end_headers()
-                self.wfile.write(wav_data)
-                
-                FEED.add(text, wav_data)
-                print(f"POST /tts -> {text}")
-            
-            finally:
-                if os.path.exists(aiff_path):
-                    os.unlink(aiff_path)
-                if os.path.exists(wav_path):
-                    os.unlink(wav_path)
-        
+            # Speech is made on this computer (see voice.py): macOS
+            # `say`, Windows' own speech through PowerShell, or espeak
+            # on Linux. With none of them, the line is printed and the
+            # phone is told there is no audio.
+            wav_data = voice.speak_wav(text)
+            if wav_data is None:
+                print(f"POST /tts -> no speech on this computer, line was: {text}")
+                FEED.add(text)
+                self.send_error(503, "No text-to-speech on this computer; " + voice.describe())
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(wav_data)))
+            self.end_headers()
+            self.wfile.write(wav_data)
+
+            FEED.add(text, wav_data)
+            print(f"POST /tts -> {text}")
+
         except Exception as e:
             print(f"POST /tts -> ERROR: {e}")
             self.send_error(500, str(e))
@@ -1760,7 +1745,7 @@ def main():
     compile_waiting()
     server = ThreadingHTTPServer((host, port), TrussHandler)
     print(f"\nTruss server starting on {host}:{port}")
-    print(f"Truss Desk (plant questions from this Mac): http://{host}:{port}/desk")
+    print(f"Truss Desk (plant questions from this computer): http://{host}:{port}/desk")
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")
     print(f"Server log: {(LOG_DIR / 'server.log').absolute()} (tail -f it from another window)")
     print(f"Live (what the glasses say, for others to hear): http://{host}:{port}/desk#live")
