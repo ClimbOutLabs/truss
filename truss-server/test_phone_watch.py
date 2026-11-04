@@ -82,15 +82,30 @@ def test_store():
     check("an unknown mode and a non-bool off are dropped", p["mode"] is None and p["off"] is False)
 
 
-def test_start_is_fresh_for_a_minute_only():
-    # A phone that opens the app later must not start on an old start.
+def test_start_stays_actionable_while_unmet():
+    # An ask the phone has not met stays worth acting on past the
+    # fresh minute, up to the cap: check-ins can be blocked for
+    # minutes (the phone on the glasses' Wi-Fi, the app asleep), and
+    # an ask first seen when old was dropped for good. Past the cap
+    # it ages out, so a phone that opens the app much later never
+    # starts on an old start.
     check("a start is worth acting on for a minute", phone_watch.FRESH_SECONDS == 60)
     clock = Clock()
     desk = phone_watch.WatchDesk(clock)
     desk.ask(True)
     clock.now += timedelta(seconds=phone_watch.FRESH_SECONDS + 1)
-    reply = desk.report({}, "x")
-    check("an old start comes back older than fresh_seconds", reply["request"]["age_seconds"] > reply["fresh_seconds"])
+    reply = desk.report({"watching": False}, "x")
+    check("an unmet start past a minute is still actionable", reply["request"]["age_seconds"] <= reply["fresh_seconds"])
+    clock.now += timedelta(seconds=phone_watch.ACT_CAP_SECONDS)
+    reply = desk.report({"watching": False}, "x")
+    check("an unmet start past the cap ages out", reply["request"]["age_seconds"] > reply["fresh_seconds"])
+    # A met ask needs no widening: the phone is already watching.
+    clock2 = Clock()
+    desk2 = phone_watch.WatchDesk(clock2)
+    desk2.ask(True)
+    clock2.now += timedelta(seconds=120)
+    reply = desk2.report({"watching": True}, "x")
+    check("a met start keeps the plain fresh minute", reply["fresh_seconds"] == phone_watch.FRESH_SECONDS and reply["request"]["age_seconds"] > reply["fresh_seconds"])
 
 
 def test_look():
@@ -150,7 +165,7 @@ def test_http():
 
 if __name__ == "__main__":
     test_store()
-    test_start_is_fresh_for_a_minute_only()
+    test_start_stays_actionable_while_unmet()
     test_look()
     test_http()
     print("ALL PASS")
