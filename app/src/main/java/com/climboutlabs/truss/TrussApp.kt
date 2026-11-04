@@ -105,6 +105,7 @@ fun TrussApp(
 ) {
   val state by viewModel.uiState.collectAsState()
   var tab by rememberSaveable { mutableIntStateOf(0) }
+  var memoryOpen by rememberSaveable { mutableStateOf(false) }
   val destination = Destination.entries[tab]
 
   // The phone stays awake while watching: the photo loop runs in the app.
@@ -178,11 +179,22 @@ fun TrussApp(
                   },
               )
           Destination.HISTORY ->
-              HistoryScreen(
-                  state = state,
-                  onDismissError = viewModel::clearError,
-                  onRefresh = viewModel::loadHistory,
-              )
+              if (memoryOpen) {
+                MemoryScreen(
+                    state = state,
+                    onDismissError = viewModel::clearError,
+                    onBack = { memoryOpen = false },
+                    onSelectQuestion = { slug -> viewModel.loadMemory(slug) },
+                    onRefresh = { viewModel.loadMemory() },
+                )
+              } else {
+                HistoryScreen(
+                    state = state,
+                    onDismissError = viewModel::clearError,
+                    onRefresh = viewModel::loadHistory,
+                    onOpenMemory = { memoryOpen = true },
+                )
+              }
           Destination.SETTINGS ->
               SettingsScreen(
                   state = state,
@@ -1235,7 +1247,12 @@ private fun QuestionsScreenPreview() {
 // MARK: - History
 
 @Composable
-private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRefresh: () -> Unit) {
+private fun HistoryScreen(
+    state: TrussUiState,
+    onDismissError: () -> Unit,
+    onRefresh: () -> Unit,
+    onOpenMemory: () -> Unit,
+) {
   LaunchedEffect(Unit) { onRefresh() }
   val day = state.historyDay?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
   val title = if (day == null || day == LocalDate.now()) "Today" else day.format(DateTimeFormatter.ofPattern("EEEE", Locale.US))
@@ -1256,6 +1273,28 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
         Spacer(Modifier.width(6.dp))
         Text("Refresh", style = MaterialTheme.typography.labelMedium)
       }
+    }
+    Row(
+        modifier =
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(Truss.card)
+                .border(1.dp, Truss.line, RoundedCornerShape(24.dp))
+                .clickable { onOpenMemory() }
+                .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+      IconTile(TrussIcons.Eye, Truss.sage, Truss.ink, size = 40.dp, shape = RoundedCornerShape(12.dp))
+      Column(Modifier.weight(1f)) {
+        Text("Truss Memory", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Every check Truss made today, with what it saw each time.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Truss.muted,
+        )
+      }
+      Icon(TrussIcons.Chevron, contentDescription = "Open Truss Memory", tint = Truss.muted)
     }
     if (state.history.isNotEmpty()) {
       Text(
@@ -1410,7 +1449,219 @@ private fun HistoryScreenPreview() {
                       previewPhoto(android.graphics.Color.rgb(206, 210, 198), android.graphics.Color.rgb(120, 124, 108)),
               ),
       )
-  TrussTheme { HistoryScreen(state, onDismissError = {}, onRefresh = {}) }
+  TrussTheme { HistoryScreen(state, onDismissError = {}, onRefresh = {}, onOpenMemory = {}) }
+}
+
+/**
+ * Truss Memory: one question's checks today, in time order, each with its
+ * verdict and the reason the checker wrote, and the evidence photo when the
+ * server kept one. History keeps the answers; this keeps the looking,
+ * including the checks that came back no or could not tell, which are silent
+ * everywhere else. Reached from the top of History.
+ */
+@Composable
+private fun MemoryScreen(
+    state: TrussUiState,
+    onDismissError: () -> Unit,
+    onBack: () -> Unit,
+    onSelectQuestion: (String) -> Unit,
+    onRefresh: () -> Unit,
+) {
+  LaunchedEffect(Unit) { onRefresh() }
+  ScreenBody {
+    state.lastError?.let { ErrorBanner(it, onDismissError) }
+    Row(
+        modifier = Modifier.clip(Pill).clickable { onBack() }.padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+      Icon(
+          TrussIcons.Chevron,
+          contentDescription = null,
+          tint = Truss.muted,
+          modifier = Modifier.size(18.dp).rotate(180f),
+      )
+      Text("History", style = MaterialTheme.typography.labelLarge, color = Truss.muted)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Box(Modifier.weight(1f)) {
+        ScreenTitle("Truss Memory", "Every check of this question today, with what Truss saw each time.")
+      }
+      TextButton(
+          onClick = onRefresh,
+          enabled = !state.memoryBusy,
+          modifier = Modifier.height(48.dp).clip(CircleShape).background(Truss.card),
+      ) {
+        Icon(TrussIcons.Refresh, contentDescription = null, tint = Truss.ink, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("Refresh", style = MaterialTheme.typography.labelMedium)
+      }
+    }
+    if (state.questionsList.size > 1) {
+      state.questionsList.forEach { item ->
+        val chosen = item.slug == state.memorySlug
+        Row(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(if (chosen) Truss.apricot else Truss.card)
+                    .border(1.dp, Truss.line, RoundedCornerShape(24.dp))
+                    .clickable { onSelectQuestion(item.slug) }
+                    .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+          IconTile(
+              topicIcon(item.question),
+              if (chosen) Truss.card else Truss.sage,
+              if (chosen) Truss.onApricot else Truss.muted,
+              size = 40.dp,
+              shape = RoundedCornerShape(12.dp),
+          )
+          Text(
+              item.question,
+              style = MaterialTheme.typography.titleMedium,
+              color = Truss.ink,
+              modifier = Modifier.weight(1f),
+          )
+          if (chosen) Chip("Showing", Truss.card, Truss.onApricot)
+        }
+      }
+    }
+    if (state.memoryQuestion.isNotBlank()) {
+      Text(
+          state.memoryQuestion,
+          style = MaterialTheme.typography.titleLarge,
+          modifier = Modifier.padding(horizontal = 4.dp),
+      )
+    }
+    if (state.memoryBusy && state.memory.isEmpty()) {
+      Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(6.dp)) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = Truss.forest)
+        Spacer(Modifier.width(12.dp))
+        Text("Loading the checks", style = MaterialTheme.typography.bodyMedium)
+      }
+    }
+    if (!state.memoryBusy && state.memory.isEmpty()) {
+      Surface {
+        Text(
+            "No checks yet today. When Truss checks this question, each check " +
+                "and what it saw will be kept here.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Truss.muted,
+        )
+      }
+    }
+    state.memory.forEach { item ->
+      // Keyed by the check itself, so an open photo stays with its own row when the list reloads.
+      key(state.memoryDay, item) {
+        val (label, bg, fg) =
+            when (item.verdict) {
+              "yes" -> Triple("Yes", Truss.lime, Truss.onLime)
+              "no" -> Triple("No", Truss.apricot, Truss.onApricot)
+              else -> Triple("Can't tell", Truss.sage, Truss.ink)
+            }
+        val photo = item.evidence?.let { state.historyPhotos["${state.memoryDay}/$it"] }
+        Row(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Truss.card)
+                    .border(1.dp, Truss.line, RoundedCornerShape(24.dp))
+                    .padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+          if (photo != null) {
+            var open by remember { mutableStateOf(false) }
+            Photo(
+                photo,
+                "Evidence photo for ${state.memoryQuestion}. Tap to open.",
+                Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).clickable { open = true },
+            )
+            if (open) {
+              PhotoViewer(photo, item.reason.ifBlank { state.memoryQuestion }, onClose = { open = false })
+            }
+          } else {
+            IconTile(
+                topicIcon(state.memoryQuestion),
+                Truss.sage,
+                Truss.muted,
+                size = 84.dp,
+                shape = RoundedCornerShape(16.dp),
+            )
+          }
+          Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Text(clock12(item.time) ?: "", style = MaterialTheme.typography.labelMedium, color = Truss.muted)
+              Chip(label, bg, fg)
+            }
+            Text(
+                item.reason.ifBlank { "No reason was recorded for this check." },
+                style = MaterialTheme.typography.titleMedium,
+                color = if (item.verdict == "cannot_tell") Truss.muted else Truss.ink,
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * The Truss Memory screen filled in, for design checks without the glasses or
+ * the laptop: the night pills timeline from a real evening, two checks that
+ * saw the pill still there, one that could not read the frame, and the check
+ * that saw it taken, with its photo.
+ */
+@Preview(showBackground = true, widthDp = 400, heightDp = 980)
+@Composable
+private fun MemoryScreenPreview() {
+  val day = LocalDate.now().toString()
+  val state =
+      TrussUiState(
+          questionsList = previewQuestions(),
+          memorySlug = "night-pills",
+          memoryQuestion = "Did I take my night pills?",
+          memoryDay = day,
+          memory =
+              listOf(
+                  MemoryItem(
+                      "21:40:02",
+                      "no",
+                      "A red pill is visible in the Tue compartment of the pill organizer.",
+                      null,
+                  ),
+                  MemoryItem(
+                      "21:47:31",
+                      "cannot_tell",
+                      "The Tue PM compartment interior is cropped out at the bottom of the photo so emptiness versus a pill cannot be read.",
+                      null,
+                  ),
+                  MemoryItem(
+                      "21:52:14",
+                      "no",
+                      "The Tue PM compartment in the bottom row clearly contains a red pill, showing the night dose was not taken.",
+                      null,
+                  ),
+                  MemoryItem(
+                      "22:05:40",
+                      "yes",
+                      "The Tue PM compartment is empty, and its pill is gone.",
+                      "pills-gone.jpg",
+                  ),
+              ),
+          historyPhotos =
+              mapOf(
+                  "$day/pills-gone.jpg" to
+                      previewPhoto(android.graphics.Color.rgb(216, 198, 180), android.graphics.Color.rgb(141, 106, 84)),
+              ),
+      )
+  TrussTheme {
+    MemoryScreen(state, onDismissError = {}, onBack = {}, onSelectQuestion = {}, onRefresh = {})
+  }
 }
 
 // MARK: - Settings and diagnostics

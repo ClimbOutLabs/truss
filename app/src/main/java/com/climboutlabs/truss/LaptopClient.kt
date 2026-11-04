@@ -44,6 +44,21 @@ data class AnswerItem(
 /** One day's answers, newest first. */
 data class DayAnswers(val day: String, val answers: List<AnswerItem>)
 
+/** One check of a question as GET /memory reports it: the clock time the
+ * check finished, the verdict in the server's words ("yes", "no" or
+ * "cannot_tell"), the reason the checker wrote, and the evidence photo's
+ * name when the server kept one (for GET /evidence). */
+data class MemoryItem(
+    val time: String,
+    val verdict: String,
+    val reason: String,
+    val evidence: String?,
+)
+
+/** One question's checks for a day, in time order: every check, not only
+ * the ones that fired. */
+data class QuestionMemory(val day: String, val question: String, val checks: List<MemoryItem>)
+
 /** One missed-window alert as GET /alerts reports it: an id and the line to
  * speak. The alert stays on the laptop until ackAlert confirms it was spoken. */
 data class MissAlert(val id: String, val line: String)
@@ -210,6 +225,27 @@ class LaptopClient(laptopIp: String) {
     } finally {
       connection.disconnect()
     }
+  }
+
+  /** GET /memory: one question's checks today, in time order. Unlike
+   * /answers, this is every check the laptop logged for the question,
+   * including the ones that came back no or could not tell and were
+   * silent everywhere else. */
+  fun getMemory(slug: String): QuestionMemory {
+    val query = "?slug=" + URLEncoder.encode(slug, "UTF-8")
+    val json = JSONObject(getJson("/memory$query"))
+    val array = json.getJSONArray("checks")
+    val items =
+        List(array.length()) { i ->
+          val item = array.getJSONObject(i)
+          MemoryItem(
+              time = item.getString("time"),
+              verdict = item.optString("verdict", "cannot_tell"),
+              reason = item.optString("reason", ""),
+              evidence = item.optNullableString("evidence"),
+          )
+        }
+    return QuestionMemory(json.getString("day"), json.optString("question", ""), items)
   }
 
   /** A JSON string field, or null when it is missing or JSON null. */
