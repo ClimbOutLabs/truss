@@ -24,7 +24,15 @@ A request carries a fresh random id. The phone acts on an id it has not
 acted on before, once, so pressing Stop on the phone after the Desk
 asked for watching is not overruled on the next check-in, and a server
 restart cannot make an old id look new. A request older than
-FRESH_SECONDS is not acted on by a phone that only now opens the app.
+FRESH_SECONDS is not acted on, so a phone that only opens the app
+later never starts watching by itself on an old start: the phone
+checks in every few seconds while the app is open, so a minute is
+plenty for a start pressed now.
+
+Only the Desk's own Start and Stop buttons leave a request. Planting
+a question or taking a look never starts watching on its own; a look
+taken while the phone is not watching is one photo (POST /watch/look),
+and watching stays off.
 
 Everything here is in memory: a restart forgets the request, which is
 the safe side (the phone just keeps doing what it does).
@@ -34,8 +42,8 @@ import threading
 import uuid
 from datetime import datetime
 
-# How long a Desk request stays worth acting on.
-FRESH_SECONDS = 600
+# How long a Desk start or stop stays worth acting on.
+FRESH_SECONDS = 60
 # How long a Desk look request stays worth acting on.
 LOOK_FRESH_SECONDS = 60
 # A phone not heard from for this long is shown as not reachable.

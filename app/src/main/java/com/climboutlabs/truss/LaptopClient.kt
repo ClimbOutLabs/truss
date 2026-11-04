@@ -55,7 +55,12 @@ data class WatchRequest(val id: String, val on: Boolean, val ageSeconds: Int)
 /** What a watch check-in returns: the Desk's latest request, or null, how old a
  * request may be and still be acted on, and the id of a fresh Desk request for one
  * photo now (POST /watch/look), or null. */
-data class WatchCheckIn(val request: WatchRequest?, val freshSeconds: Int, val lookId: String? = null)
+data class WatchCheckIn(
+    val request: WatchRequest?,
+    val freshSeconds: Int,
+    val lookId: String? = null,
+    val lookAgeSeconds: Int = 0,
+)
 class LaptopClient(laptopIp: String) {
 
   private val base: String
@@ -244,8 +249,9 @@ class LaptopClient(laptopIp: String) {
         item?.let {
           WatchRequest(id = it.getString("id"), on = it.getBoolean("on"), ageSeconds = it.optInt("age_seconds", 0))
         }
-    val lookId = reply.optJSONObject("look")?.optString("id")?.takeIf { it.isNotEmpty() }
-    return WatchCheckIn(request, reply.optInt("fresh_seconds", 600), lookId)
+    val look = reply.optJSONObject("look")
+    val lookId = look?.optString("id")?.takeIf { it.isNotEmpty() }
+    return WatchCheckIn(request, reply.optInt("fresh_seconds", 60), lookId, look?.optInt("age_seconds", 0) ?: 0)
   }
 
   /** POST /tts with a JSON body. Returns the WAV bytes the server sends back. */

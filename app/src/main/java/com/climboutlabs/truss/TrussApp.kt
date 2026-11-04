@@ -121,6 +121,12 @@ fun TrussApp(
   LaunchedEffect(deskCanStart) {
     if (deskCanStart) viewModel.startWatching(onRequestWearablesPermission)
   }
+  // The Desk asked for one photo while the phone is not watching: take it, and only it.
+  val deskCanLook =
+      state.deskLookPending && !state.watching && state.glassesReady && !state.busy
+  LaunchedEffect(deskCanLook) {
+    if (deskCanLook) viewModel.takeDeskLook(onRequestWearablesPermission)
+  }
 
   TrussTheme {
     Scaffold(

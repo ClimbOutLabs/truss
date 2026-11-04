@@ -54,6 +54,16 @@ def test_page_calls_only_real_endpoints():
     check(f"every call has a route (missing: {sorted(missing)})", not missing)
 
 
+def test_only_the_buttons_start_watching():
+    # Planting, taking a look or starting a guide must never start the
+    # phone's watching on its own: that start was picked up minutes later
+    # (on app start, or after a Stop) and looked like watching arming by itself.
+    page = (Path(__file__).parent / "desk.html").read_text()
+    calls = re.findall(r"askPhone\(([^)]*)\)", page)
+    check(f"askPhone is called only by the Start/Stop button ({calls})", calls == ["on", "start"])
+    check("nothing else posts a start", page.count('postJSON("/watch", ') == 1)
+
+
 def test_latest_view():
     import urllib.error
     server_module.LATEST.update({"bytes": None, "at": None})
@@ -173,6 +183,7 @@ def test_status_shows_a_check_in_flight():
 if __name__ == "__main__":
     test_desk_is_served()
     test_page_calls_only_real_endpoints()
+    test_only_the_buttons_start_watching()
     test_latest_view()
     test_replay_is_not_the_glasses_view()
     test_status_shows_a_check_in_flight()
