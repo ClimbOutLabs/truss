@@ -2369,7 +2369,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val LIVE_STEADY_MS = 1_000L
     // Live view sends a new view only once it has held still this long: you stopped to
     // look at something. A pause while walking is shorter and sends nothing.
-    private const val LIVE_SEND_STILL_MS = 3_000L
+    private const val LIVE_SEND_STILL_MS = 1_000L
     // Live view sends an unchanged view again only after this long.
     private const val LIVE_SAME_VIEW_FLOOR_MS = 600_000L
     private const val LIVE_HOLD_MAX_MS = 180_000L

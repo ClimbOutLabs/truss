@@ -251,11 +251,12 @@ ZERO_USAGE = {"spark_input_tokens": 0, "spark_output_tokens": 0, "sam_images": 0
 # needs room after the thinking. Live, Muse Spark ran past 2048 on a pill
 # check (cut off at 29.7 s), and its retry then ran out of time, so the
 # check made no answer at all. On 2026-11-03 it ran past 4096 too (cut
-# off at 53 s, then out of time at 90 s); 8192 leaves room the first
-# time, so the slow retry is rare. A reply
+# off at 53 s, then out of time at 90 s), and 8192 still left the slow
+# retry in play, so on 2026-11-04 the ceiling went to 16384 to give a
+# long think room to finish the first time. A reply
 # that still runs out is retried once with twice the room (see
 # endpoint.ask_json) and is never read as an answer.
-DEFAULT_MAX_TOKENS = 8192
+DEFAULT_MAX_TOKENS = 16384
 
 
 def max_tokens():

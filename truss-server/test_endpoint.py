@@ -822,7 +822,7 @@ def test_default_max_tokens_has_room_to_think():
         verdict.check(FRAME, "Is the front door locked?", config=cfg(stub))
         with env(TRUSS_MAX_TOKENS="3000"):
             verdict.check(FRAME, "Is the front door locked?", config=cfg(stub))
-    check("max tokens: 8192 by default", stub.body(0)["max_tokens"] == 8192)
+    check("max tokens: 16384 by default", stub.body(0)["max_tokens"] == 16384)
     check("max tokens: TRUSS_MAX_TOKENS read", stub.body(1)["max_tokens"] == 3000)
 
 
