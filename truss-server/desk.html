@@ -161,6 +161,12 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 .said .t{width:96px;flex:none;font-size:14.5px;font-weight:600;color:var(--ink)}
 .said .qt{font-weight:500;font-size:16px}
 .said.new .qt{font-weight:600}
+.capstrip{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px}
+.cap{flex:none;width:134px}
+.cap img{width:134px;height:98px;object-fit:cover;border-radius:10px;background:var(--sage);display:block}
+.cap .ct{display:block;font-size:13px;color:var(--muted);margin-top:5px;font-variant-numeric:tabular-nums}
+.cap.new img{outline:2px solid var(--ok);outline-offset:2px}
+.cap .just{font-size:12px;font-weight:700;color:var(--ok);margin-left:6px}
 .logbar{display:flex;gap:18px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:14.5px}
 .log{font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:68vh;overflow:auto}
 .log div{display:flex;gap:12px;white-space:pre-wrap;word-break:break-word}
@@ -225,6 +231,8 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
         <img id="l-view" class="view" hidden alt="The glasses' latest view">
         <span class="viewnote" id="l-view-note">No view from the glasses yet. Start watching on the phone.</span>
       </div>
+      <h2>Photos as they arrive</h2>
+      <div id="l-caps" class="capstrip"><div class="empty">No photos yet. When the glasses take a photo, it shows here the moment it lands.</div></div>
       <h2>What Truss has seen</h2>
       <div id="l-said"></div>
       <label class="playrow"><input type="checkbox" id="l-play" class="toggle"><span>Play what the voice in the glasses says, out loud on this computer, as it is said.</span></label>
@@ -1267,6 +1275,49 @@ async function loadView() {
     $("l-view-note").textContent = `The glasses' view, ${ago.toFixed(0)} seconds ago.`;
   } catch (e) { /* tried again in a moment */ }
 }
+// Polls the newest photos the phone sent (GET /captures), so a person
+// watching the Desk sees the moment a photo lands. Each photo is added
+// once, when it first appears; the newest arrival is marked "Just now"
+// until the next one lands.
+const CAP_SEEN = new Set();
+let CAP_FIRST = true;
+let CAP_NEWEST = "";
+async function loadCaptures() {
+  if (TAB !== "live") return;
+  try {
+    const r = await getJSON("/captures");
+    const list = r.captures || [];
+    const strip = $("l-caps");
+    const fresh = list.filter((c) => !CAP_SEEN.has(c.name));
+    if (fresh.length) {
+      const empty = strip.querySelector(".empty");
+      if (empty) empty.remove();
+      // fresh is newest first: add in reverse so the newest lands in front.
+      for (const c of fresh.slice().reverse()) {
+        CAP_SEEN.add(c.name);
+        const fig = document.createElement("div");
+        fig.className = "cap";
+        fig.dataset.name = c.name;
+        fig.innerHTML = `<img alt="A photo the glasses took" src="/captures/photo?name=${encodeURIComponent(c.name)}"><span class="ct">${esc(new Date(c.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}))}</span>`;
+        strip.prepend(fig);
+      }
+      if (!CAP_FIRST) CAP_NEWEST = fresh[0].name;
+      while (strip.children.length > 12) strip.lastElementChild.remove();
+      strip.querySelectorAll(".just").forEach((el) => el.remove());
+      strip.querySelectorAll(".cap").forEach((el) => {
+        const isNew = el.dataset.name === CAP_NEWEST;
+        el.classList.toggle("new", isNew);
+        if (isNew) {
+          const tag = document.createElement("span");
+          tag.className = "just";
+          tag.textContent = "Just now";
+          el.querySelector(".ct").appendChild(tag);
+        }
+      });
+    }
+    CAP_FIRST = false;
+  } catch (e) { /* the laptop is between restarts; the next poll tries again */ }
+}
 // Ticking the box is the tap a browser needs before it plays sound, so
 // the latest line is played once then, as a sound check.
 $("l-play").addEventListener("change", () => {
@@ -1275,6 +1326,7 @@ $("l-play").addEventListener("change", () => {
 });
 setInterval(loadFeed, 2000);
 setInterval(loadView, 3000);
+setInterval(loadCaptures, 2000);
 
 // ---- log --------------------------------------------------------------------
 // Polls the server's tidy log (GET /log) while the Log tab is open and
