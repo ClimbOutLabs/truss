@@ -810,8 +810,10 @@ class QuestionStore:
 
     # -- the check loop's view ---------------------------------------------
 
-    def due(self, now=None):
-        """Standing questions whose pattern says a check is due now."""
+    def due(self, now=None, ignore_gap=False):
+        """Standing questions whose pattern says a check is due now.
+        ignore_gap counts a question waiting only for its gap between
+        checks as due (see claim_due's force)."""
         with self._lock:
             now = now or datetime.now()
             out = []
@@ -823,7 +825,7 @@ class QuestionStore:
                 if kind == "interval":
                     last = entry["last_checked_at"] or entry["planted_at"]
                     last_dt = datetime.fromisoformat(last)
-                    if _gap_passed(now, last_dt, pattern["minutes"] * 60):
+                    if ignore_gap or _gap_passed(now, last_dt, pattern["minutes"] * 60):
                         out.append(entry)
                 elif kind == "nightly":
                     after = time.fromisoformat(pattern.get("after", "20:00"))
@@ -835,7 +837,7 @@ class QuestionStore:
                     last = entry["last_checked_at"]
                     if last:
                         gap = pattern.get("minutes", 15) * 60
-                        if not _gap_passed(now, datetime.fromisoformat(last), gap):
+                        if not ignore_gap and not _gap_passed(now, datetime.fromisoformat(last), gap):
                             continue
                     out.append(entry)
                 elif kind == "window":
@@ -861,7 +863,7 @@ class QuestionStore:
                             last_dt = datetime.fromisoformat(last)
                         except ValueError:
                             last_dt = None
-                        if last_dt is not None and not _gap_passed(
+                        if not ignore_gap and last_dt is not None and not _gap_passed(
                             now, last_dt, _gap_seconds(pattern)
                         ):
                             continue
@@ -903,7 +905,7 @@ class QuestionStore:
 
     # -- checks in flight ---------------------------------------------------
 
-    def claim_due(self, now=None):
+    def claim_due(self, now=None, force=()):
         """due(), with every due done question claimed in the same
         locked step. Reading what is due and claiming it can then
         never be split by a sweep: a sweep either runs first, when
@@ -911,6 +913,15 @@ class QuestionStore:
         finds the claim. Release with end_checks()."""
         with self._lock:
             due = self.due(now=now)
+            if force:
+                # Questions the hold-on gate saw being handled are
+                # checked now, even inside their gap; never one whose
+                # window is shut or that is already answered today.
+                have = {e["slug"] for e in due}
+                due += [
+                    e for e in self.due(now=now, ignore_gap=True)
+                    if e["slug"] in force and e["slug"] not in have
+                ]
             self._in_flight.update(
                 e["slug"] for e in due if e.get("kind") == "done"
             )
@@ -1006,7 +1017,7 @@ class QuestionStore:
             watch["redo_spoken"] = True
             self._write_watch(slug, watch)
 
-    def redo_watch(self, now=None):
+    def redo_watch(self, now=None, include_spoken=False):
         """Done questions holding a witness from today whose redo
         reminder has not been spoken yet. These are no longer checked
         as ordinary questions; the loop offers them frames under a
@@ -1023,7 +1034,9 @@ class QuestionStore:
             now = now or datetime.now()
             out = []
             for entry in self.list():
-                if entry["kind"] != "done" or entry["redo_spoken"]:
+                if entry["kind"] != "done":
+                    continue
+                if entry["redo_spoken"] and not include_spoken:
                     continue
                 if entry["state"] != "standing":
                     continue

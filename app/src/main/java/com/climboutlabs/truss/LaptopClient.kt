@@ -15,7 +15,14 @@ import org.json.JSONObject
 /** What the laptop answers to a capture: its byte count, the standing questions the
  * photo fired, and the lines Mannie should speak, in order. Empty lists when no
  * question fired. */
-data class CaptureResult(val bytes: Long, val fired: List<String>, val speak: List<String>)
+data class CaptureResult(
+    val bytes: Long,
+    val fired: List<String>,
+    val speak: List<String>,
+    /** Set when the laptop answered early ("Hold on, let me check"): the id to fetch
+     * the full answer with, from getCaptureResult. */
+    val pending: String? = null,
+)
 
 /** One standing question as GET /questions reports it. answeredAt is the laptop's
  * local time of its last firing, or null. */
@@ -129,7 +136,22 @@ class LaptopClient(laptopIp: String) {
       val array = json.optJSONArray(key) ?: return emptyList()
       return List(array.length()) { i -> array.getString(i) }
     }
-    return CaptureResult(json.getLong("bytes"), lines("fired"), lines("speak"))
+    val pending = json.optString("pending", "").takeIf { it.isNotBlank() }
+    return CaptureResult(json.getLong("bytes"), lines("fired"), lines("speak"), pending)
+  }
+
+  /** GET /capture/result: the full answer for a capture the laptop answered early with
+   * its hold-on line. Waits as long as a capture would. */
+  fun getCaptureResult(id: String): CaptureResult {
+    val json =
+        JSONObject(
+            getJson(
+                "/capture/result?id=" + URLEncoder.encode(id, "UTF-8"), CAPTURE_READ_TIMEOUT_MS))
+    fun lines(key: String): List<String> {
+      val array = json.optJSONArray(key) ?: return emptyList()
+      return List(array.length()) { i -> array.getString(i) }
+    }
+    return CaptureResult(0L, lines("fired"), lines("speak"))
   }
 
   /** POST /watch/look/photo: a photo the Desk asked for, taken while another photo is

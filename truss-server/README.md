@@ -155,6 +155,8 @@ Muse Spark 1.3 over the Meta Model API:
 | `TRUSS_META_TIMEOUT_S` | `120` (the whole call, retry included) | |
 | `TRUSS_META_REASONING_EFFORT` | `low` (how hard Muse Spark thinks on a check: minimal, low, medium, high, xhigh; `default` leaves it to the model) | |
 | `TRUSS_META_SAFETY_REASONING_EFFORT` | `medium` (the same, for a safety check such as the stove or the pills) | |
+| `TRUSS_HOLD_ON` | off (`1` turns on the quick gate: "Hold on, let me check." spoken before the full answer; needs the app built with it, see holdon.py) | |
+| `TRUSS_GATE_EFFORT` | `minimal` (how hard the quick gate thinks) | |
 
 The endpoint below is then a fallback only when `TRUSS_BASE_URL` is set
 explicitly, so Glimmer need not run at all, and only while it lists a

@@ -881,29 +881,51 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(watchSent = it.watchSent + 1) }
           }
           photoLog("Uploaded. The laptop says it received ${result.bytes} bytes.")
-          if (result.speak.isNotEmpty()) {
-            val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
-            _uiState.update {
-              it.copy(
-                  spokenLines = result.speak,
-                  lastSpoken = result.speak,
-                  lastSpokenAt = at,
-                  lastSpokenPhoto = bitmap,
-                  lastSpokenAloud = null,
-              )
+          // The laptop may answer early with "Hold on, let me check" (TRUSS_HOLD_ON on the
+          // laptop): that line is spoken first, then the full answer is fetched and spoken
+          // the same way, still inside this look, so nothing else takes the glasses between.
+          var answer = result
+          while (true) {
+            if (answer.speak.isNotEmpty()) {
+              val at = SimpleDateFormat("HH:mm", Locale.US).format(Date())
+              val lines = answer.speak
+              _uiState.update {
+                it.copy(
+                    spokenLines = lines,
+                    lastSpoken = lines,
+                    lastSpokenAt = at,
+                    lastSpokenPhoto = bitmap,
+                    lastSpokenAloud = null,
+                )
+              }
+              lines.forEach { line -> photoLog("Mannie says: $line") }
+              if (stayOpen) {
+                // Bluetooth audio and a camera session are never held together, so the
+                // session ends here, and the watch loop opens a new one for the next look.
+                runCatching { activeCamera.stop() }
+                runCatching { activeSession.stop() }
+                _uiState.update { it.copy(streamActive = false) }
+                stayOpen = false
+                // Live view picks up again right after speaking, not a whole beat later.
+                resumeAfterSpeaking = true
+                photoLog("Left the glasses session to speak.")
+              }
+              val spoken = speakViaGlasses(lines)
+              _uiState.update { it.copy(lastSpokenAloud = spoken) }
             }
-            result.speak.forEach { line -> photoLog("Mannie says: $line") }
-            if (stayOpen) {
-              // Bluetooth audio and a camera session are never held together, so the
-              // session ends here, and the watch loop opens a new one for the next look.
-              runCatching { activeCamera.stop() }
-              runCatching { activeSession.stop() }
-              _uiState.update { it.copy(streamActive = false) }
-              stayOpen = false
-              photoLog("Left the glasses session to speak.")
-            }
-            val spoken = speakViaGlasses(result.speak)
-            _uiState.update { it.copy(lastSpokenAloud = spoken) }
+            val pendingId = answer.pending ?: break
+            photoLog("The laptop is still checking; waiting for its answer.")
+            answer =
+                try {
+                  withContext(Dispatchers.IO) { client.getCaptureResult(pendingId) }
+                } catch (e: CancellationException) {
+                  throw e
+                } catch (e: Exception) {
+                  // The laptop puts an answer nobody fetched in its alert queue, so it is
+                  // still heard on a later alert poll.
+                  photoLog("The answer could not be fetched: ${e.message ?: e.toString()}")
+                  break
+                }
           }
         }
         photoLog("Done in ${SystemClock.elapsedRealtime() - lookStartedAt} ms.")
@@ -1718,7 +1740,16 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   /** Wakes the watch loop's wait early, for example when the app comes back to the front. */
   private val watchNudge = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
+  /** Set when a Live view session was left only to speak an answer: the next look
+   * starts after a short pause instead of waiting out the whole beat. */
+  @Volatile private var resumeAfterSpeaking = false
+
   private suspend fun waitForBeat() {
+    if (resumeAfterSpeaking) {
+      resumeAfterSpeaking = false
+      delay(1_000L)
+      return
+    }
     // A photo the Desk asked for does not wait out the beat while the glasses are there;
     // a short pause still keeps the loop from spinning. While they are away the usual
     // beat stands, so a look does not open a session every second (and re-ask the

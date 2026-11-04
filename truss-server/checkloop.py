@@ -48,6 +48,7 @@ with scripted verdicts, and so the real checker (eval/checker.py) can
 be wired in without the loop knowing anything about models or keys.
 """
 
+import os
 import re
 import shutil
 import time
@@ -408,6 +409,11 @@ def _refusable(entry, result):
     )
 
 
+# A reminder repeated (the gate saw the thing in shot again) waits
+# this long after the last one; 0 by default, so every reach hears it.
+REDO_REPEAT_S = float(os.environ.get("TRUSS_REDO_REPEAT_S") or 0)
+
+
 class CheckLoop:
     def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None,
                  checks=None, outline_fn=None, presence_fn=None,
@@ -430,6 +436,9 @@ class CheckLoop:
         self._refused = {}
         # When each question's thing was last checked and not in view.
         self._absent = {}
+        # When each question's redo reminder was last spoken, so a
+        # repeat (a hand on it again, via the gate) never nags.
+        self._redo_said = {}
         # The check log (a coverage.CheckLog). Without one, no check
         # is counted as watching, and alerts claim nothing was watched.
         self.checks = checks
@@ -441,15 +450,30 @@ class CheckLoop:
         # will be written, or None; see sam_client.EvidenceOutliner.
         self.outline_fn = outline_fn
 
-    def process_frame(self, frame_path):
+    def process_frame(self, frame_path, return_hint=None, force=None):
+        """return_hint(slug), when given, is the hold-on gate's word on
+        whether the wearer is handling this question's thing right now
+        (see holdon.py): True stands in for the return check's yes, so
+        a wearer reaching for the pills again hears the reminder at
+        once. Anything else asks the return check as always. force is
+        a set of slugs the gate saw being handled: checked on this frame
+        even inside their gap (see QuestionStore.claim_due)."""
         frame_path = Path(frame_path)
         try:
             standing = [e for e in self.store.list() if e["state"] == "standing"]
-            watch = self.store.redo_watch(now=self.now_fn())
+            if return_hint is not None:
+                # With the gate, a question reminded already stays
+                # watched: a hand on it again repeats the reminder.
+                watch = self.store.redo_watch(now=self.now_fn(), include_spoken=True)
+            else:
+                watch = self.store.redo_watch(now=self.now_fn())
             owed = self.store.miss_check_watch(now=self.now_fn())
             # Claimed last, so nothing after it in this block can fail
             # and leak the claim.
-            due = self.store.claim_due(now=self.now_fn()) if standing else []
+            if force:
+                due = self.store.claim_due(now=self.now_fn(), force=force) if standing else []
+            else:
+                due = self.store.claim_due(now=self.now_fn()) if standing else []
         except Exception:
             # A broken question file must never break capturing. Fall
             # back to day 1 behavior: keep the frame, manage nothing.
@@ -463,15 +487,18 @@ class CheckLoop:
         # the answer is still on its way.
         claimed = [e["slug"] for e in due if e.get("kind") == "done"]
         try:
-            return self._check_frame(frame_path, due, watch, owed)
+            return self._check_frame(frame_path, due, watch, owed, return_hint)
         finally:
             self.store.end_checks(claimed)
 
-    def _check_frame(self, frame_path, due, watch, owed):
+    def _check_frame(self, frame_path, due, watch, owed, return_hint=None):
         now = self.now_fn()
         fired = []
         refusable = None
         errors = 0
+        # What each due question's check found, for a caller that told
+        # the wearer to hold on (see holdon.py).
+        checked = []
         if not due:
             print("  check: no question is due on this frame (each waits for its gap)", flush=True)
         batched, batch_started = self._batch(frame_path, due)
@@ -494,6 +521,13 @@ class CheckLoop:
                 _print_check(entry, None, f"check failed: {e}", started)
             else:
                 _print_check(entry, verdict, _reason_text(result), started)
+            checked.append({
+                "slug": entry.get("slug"),
+                "question": entry.get("question"),
+                "kind": entry.get("kind"),
+                "verdict": verdict if not result.get("failure") else None,
+                "reason": _reason_text(result),
+            })
             if (
                 entry.get("kind") == "done"
                 and verdict in ("yes", "no", "cannot_tell")
@@ -535,14 +569,39 @@ class CheckLoop:
                 continue
             prompt_entry = dict(entry)
             prompt_entry["question"] = return_prompt(entry)
+            started = time.monotonic()
             try:
-                result = self.check_fn(frame_path, prompt_entry)
+                hinted = return_hint is not None and return_hint(entry["slug"]) is True
+            except Exception:
+                hinted = False
+            if entry.get("redo_spoken"):
+                # Reminded already: said again only for a hand on it,
+                # and not within REDO_REPEAT_S of the last time.
+                said = self._redo_said.get(entry["slug"])
+                if not hinted or (said is not None and time.monotonic() - said < REDO_REPEAT_S):
+                    continue
+            try:
+                if hinted:
+                    result = {"verdict": "yes", "reason": "The hold-on gate saw the wearer handling it."}
+                else:
+                    result = self.check_fn(frame_path, prompt_entry)
                 if not isinstance(result, dict):
                     raise TypeError("check returned no verdict")
                 verdict = result.get("verdict")
             except Exception:
                 result, verdict = {}, None
                 errors += 1
+            # Not a "check <slug>:" line: a return check is not an
+            # answer to the question, and the check history (earlier
+            # results carried as context) must never read it as one.
+            try:
+                print(
+                    f"return check {entry.get('slug')}: {verdict or 'no verdict'} "
+                    f"({time.monotonic() - started:.1f} s) {' '.join(_reason_text(result).split())}"[:400],
+                    flush=True,
+                )
+            except Exception:
+                pass
             try:
                 # The return check is recorded like any other check,
                 # so the store's gap before the next one survives a
@@ -662,6 +721,7 @@ class CheckLoop:
                     # risk being spoken twice.
                     errors += 1
                 else:
+                    self._redo_said[entry["slug"]] = time.monotonic()
                     text = redo_text(witness, entry, next_at)
                     speak.append(text)
                     if self.speak_fn is not None:
@@ -717,6 +777,7 @@ class CheckLoop:
             "evidence": str(evidence) if evidence else None,
             "outline": str(outline) if outline else None,
             "errors": errors,
+            "checked": checked,
         }
 
     def _batch(self, frame_path, due):

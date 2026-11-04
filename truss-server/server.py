@@ -6,6 +6,7 @@ Handles photo uploads and text-to-speech for the Truss app.
 
 import json
 import math
+import socket
 import os
 import re
 import subprocess
@@ -22,6 +23,7 @@ from alerts import AlertStore, desk_banner, sweep_missed
 import aman_check
 from coverage import CheckLog
 import endpoint
+import holdon
 import sam_client
 import verdict
 import voice
@@ -479,6 +481,23 @@ def guide_said(alert_id):
     return False
 
 
+HOLD = holdon.Pending()
+
+
+def _run_loop(filepath, return_hint=None, force=None):
+    """LOOP.process_frame, never raising: a loop failure must never
+    break the capture itself."""
+    try:
+        if force:
+            return LOOP.process_frame(filepath, force=force)
+        if return_hint is None:
+            return LOOP.process_frame(filepath)
+        return LOOP.process_frame(filepath, return_hint=return_hint)
+    except Exception as e:
+        print(f"POST /capture -> loop failed, frame kept: {e}")
+        return {"managed": False, "fired": [], "speak": [], "errors": 1}
+
+
 def guide_waiting():
     with GUIDE_SAY_LOCK:
         return [dict(item) for item in GUIDE_SAY]
@@ -693,6 +712,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_feed_audio()
         elif path == "/log":
             self.handle_log()
+        elif path == "/capture/result":
+            self.handle_capture_result()
         else:
             self.send_error(404, "Not Found")
 
@@ -1040,6 +1061,7 @@ class TrussHandler(BaseHTTPRequestHandler):
                 item["headline"], item["note"] = banner
             alerts.append(item)
         alerts += guide_waiting()
+        alerts += HOLD.waiting()
         self.send_json({"alerts": alerts})
 
     def _json_body(self):
@@ -1152,6 +1174,13 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Body must be JSON with an alert id")
             return
         alert_id = data.get("id") if isinstance(data, dict) else None
+        if isinstance(alert_id, str) and alert_id.startswith("hold-"):
+            if not HOLD.said(alert_id):
+                self.send_error(404, "No pending alert with that id.")
+                return
+            self.send_json({"acked": alert_id})
+            print(f"POST /alerts/ack -> {alert_id}")
+            return
         if isinstance(alert_id, str) and alert_id.startswith("guide-"):
             if not guide_said(alert_id):
                 self.send_error(404, "No pending alert with that id.")
@@ -1622,11 +1651,11 @@ class TrussHandler(BaseHTTPRequestHandler):
             # as evidence or delete it; when none are standing, the
             # frame stays exactly as day 1 left it. A loop failure must
             # never break the capture itself.
-            try:
-                loop_result = LOOP.process_frame(filepath)
-            except Exception as e:
-                print(f"POST /capture -> loop failed, frame kept: {e}")
-                loop_result = {"managed": False, "fired": [], "speak": []}
+            loop_result = self._loop_with_hold_on(filepath, response, filename, file_size)
+            if loop_result is None:
+                # Answered early with "Hold on"; the full answer waits
+                # for GET /capture/result.
+                return
             if loop_result["managed"]:
                 response["fired"] = loop_result["fired"]
                 response["speak"] = loop_result["speak"]
@@ -1649,6 +1678,170 @@ class TrussHandler(BaseHTTPRequestHandler):
             print(f"POST /capture -> ERROR: {e}")
             self.send_error(500, str(e))
     
+    def _loop_with_hold_on(self, filepath, response, filename, file_size):
+        """The check loop on this frame. With TRUSS_HOLD_ON=1 and
+        questions due, a quick gate runs beside it (see holdon.py): a
+        gate yes before the full check is done answers the phone at
+        once with the hold-on line and a pending id, and returns None
+        once the full check has finished and its result is waiting.
+        Otherwise the loop's result, exactly as before."""
+        questions = []
+        if (
+            holdon.enabled()
+            and self.headers.get("Origin") is None
+            and endpoint.meta_on()
+        ):
+            try:
+                now = CLOCK()
+                due_now = list(STORE.due(now=now))
+                # Reminded already counts too: a hand on the thing again
+                # repeats the reminder (see CheckLoop's REDO_REPEAT_S).
+                watched = list(STORE.redo_watch(now=now, include_spoken=True))
+                waiting = [] if (due_now or watched) else list(STORE.due(now=now, ignore_gap=True))
+            except Exception:
+                due_now, watched, waiting = [], [], []
+            if waiting:
+                # Nothing is due, only waiting out its gap: the gate
+                # runs first, and a question it sees being handled is
+                # checked on this frame anyway, after a hold-on.
+                return self._gate_then_check(filepath, response, filename, file_size, waiting)
+            gated = due_now + watched
+            questions = [e["question"] for e in gated]
+        if not questions:
+            return _run_loop(filepath)
+        either = threading.Event()
+        gate_done = threading.Event()
+        box = {}
+
+        def hint(slug):
+            # A question already seen done today: the gate seeing this
+            # question's own thing in shot again is the return check's
+            # yes, and the reminder is said again every time. Another
+            # question's thing never counts.
+            gate_done.wait(holdon.GATE_LIMIT_S)
+            return slug in box.get("close", set())
+
+        def full():
+            box["result"] = _run_loop(filepath, hint if watched else None)
+            box["full"] = True
+            either.set()
+
+        def quick():
+            started = time.monotonic()
+            hands, near = holdon.gate(filepath, questions)
+            handled = {gated[i].get("slug") for i in hands}
+            close = {gated[i].get("slug") for i in near}
+            print(
+                f"gate: {', '.join(sorted(str(h) for h in close)) if close else 'no'}"
+                f"{' (hand on ' + ', '.join(sorted(str(h) for h in handled)) + ')' if handled else ''} "
+                f"({time.monotonic() - started:.1f} s)",
+                flush=True,
+            )
+            box["close"] = close
+            # A hold-on whenever a question's thing is in shot.
+            box["gate"] = bool(close & {e.get("slug") for e in due_now + watched})
+            gate_done.set()
+            either.set()
+
+        worker = threading.Thread(target=full, daemon=True)
+        worker.start()
+        threading.Thread(target=quick, daemon=True).start()
+        limit = time.monotonic() + holdon.GATE_LIMIT_S
+        while not box.get("full") and "gate" not in box and time.monotonic() < limit:
+            either.wait(0.05)
+            either.clear()
+        if box.get("full"):
+            # The loop finished first (a reminder needs no model call):
+            # the hold-on still leads when the thing is in shot, in the
+            # same reply.
+            gate_done.wait(max(0.0, limit - time.monotonic()))
+            result = box["result"]
+            if box.get("gate") and HOLD.may_hold() and result.get("managed"):
+                HOLD.held()
+                print("POST /capture -> hold-on spoken with the answer")
+                return dict(result, speak=[holdon.HOLD_LINE] + holdon.follow_up(
+                    result.get("checked"), fired=result.get("fired", []),
+                    speak=result.get("speak", []), now=CLOCK(),
+                ))
+            return result
+        if not box.get("gate") or not HOLD.may_hold():
+            worker.join()
+            return box["result"]
+        pid = HOLD.open()
+        HOLD.held()
+        self._send_early(response, pid)
+        print(f"POST /capture -> saved {filename} ({file_size} bytes)")
+        print(f"POST /capture -> hold-on spoken, answer {pid} follows")
+        worker.join()
+        self._finish_pending(pid, box["result"])
+        return None
+
+    def _send_early(self, response, pid):
+        early = dict(response, speak=[holdon.HOLD_LINE], fired=[], pending=pid)
+        data = json.dumps(early).encode()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            self.wfile.flush()
+            self.connection.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+    def _gate_then_check(self, filepath, response, filename, file_size, waiting):
+        """No question due, some waiting out their gap: ask the gate
+        first. Nothing handled is the ordinary loop on this frame. A
+        handled question gets the hold-on line and is checked on this
+        frame, its gap waived, and the answer follows as usual."""
+        started = time.monotonic()
+        _, near = holdon.gate(filepath, [e["question"] for e in waiting])
+        force = {waiting[i].get("slug") for i in near}
+        print(
+            f"gate: {', '.join(sorted(str(f) for f in force)) if force else 'no'} "
+            f"({time.monotonic() - started:.1f} s, before its gap)",
+            flush=True,
+        )
+        if not force or not HOLD.may_hold():
+            return _run_loop(filepath, force=force)
+        pid = HOLD.open()
+        HOLD.held()
+        self._send_early(response, pid)
+        print(f"POST /capture -> saved {filename} ({file_size} bytes)")
+        print(f"POST /capture -> hold-on spoken, answer {pid} follows (gap waived)")
+        result = _run_loop(filepath, force=force)
+        self._finish_pending(pid, result)
+        return None
+
+    def _finish_pending(self, pid, result):
+        managed = result.get("managed")
+        speak = result.get("speak", []) if managed else []
+        HOLD.finish(pid, {
+            # The wearer was told to hold on, so silence would leave
+            # them waiting: see holdon.follow_up for what is said.
+            "speak": holdon.follow_up(
+                result.get("checked") if managed else None,
+                fired=result.get("fired", []) if managed else [],
+                speak=speak,
+                now=CLOCK(),
+            ),
+            "fired": result.get("fired", []) if managed else [],
+        })
+        if managed:
+            print(f"POST /capture -> loop: fired={result['fired']} errors={result['errors']} (answer {pid})")
+
+    def handle_capture_result(self):
+        """GET /capture/result?id=: the full answer for a capture that
+        was answered early with the hold-on line. Waits for it."""
+        pid = (parse_qs(urlparse(self.path).query).get("id") or [""])[0]
+        result = HOLD.take(pid)
+        if result is None:
+            self.send_error(404, "No answer with that id.")
+            return
+        self.send_json(result)
+        print(f"GET /capture/result -> {pid}: speak={len(result['speak'])}")
+
     def handle_tts(self):
         """Handle text-to-speech."""
         try:
