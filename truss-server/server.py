@@ -537,6 +537,44 @@ def latest_view():
     return data, age
 
 
+# The photos the phone sent (POST /capture), for the Desk's Live tab
+# strip. Only the names the capture handler itself writes are ever
+# listed or served, and a name is resolved inside the captures folder
+# before it is read, so nothing outside that folder can be reached.
+_CAPTURE_NAME = re.compile(r"capture_\d{8}_\d{6}_\d{6}\.jpg")
+CAPTURE_LIST_MAX = 12
+
+
+def recent_captures(limit=CAPTURE_LIST_MAX):
+    """The newest captures still in the captures folder, newest
+    first: [{"name", "at"}]. A frame the check loop moved into the
+    answer log or deleted is simply not listed."""
+    try:
+        names = [p.name for p in CAPTURES_DIR.iterdir() if _CAPTURE_NAME.fullmatch(p.name)]
+    except OSError:
+        return []
+    out = []
+    for name in sorted(names, reverse=True)[:limit]:
+        try:
+            at = datetime.strptime(name, "capture_%Y%m%d_%H%M%S_%f.jpg")
+        except ValueError:
+            continue
+        out.append({"name": name, "at": at.isoformat()})
+    return out
+
+
+def capture_path(name):
+    """The path of one capture, or None when the name is not a plain
+    capture name or no such file is in the captures folder."""
+    if not isinstance(name, str) or not _CAPTURE_NAME.fullmatch(name):
+        return None
+    root = CAPTURES_DIR.resolve()
+    path = (root / name).resolve()
+    if path.parent != root or not path.is_file():
+        return None
+    return path
+
+
 # The Desk's start and stop for the phone's watching (see phone_watch.py).
 WATCH = WatchDesk()
 
@@ -607,6 +645,10 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_json(settings_view())
         elif path == "/latest":
             self.handle_latest()
+        elif path == "/captures":
+            self.handle_captures()
+        elif path == "/captures/photo":
+            self.handle_capture_photo()
         elif path == "/feed":
             self.handle_feed()
         elif path == "/feed/audio":
@@ -739,6 +781,30 @@ class TrussHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Seconds-Ago", f"{age:.1f}")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def handle_captures(self):
+        """The newest photos the phone sent, newest first: GET
+        /captures. Names and times only; a photo itself is GET
+        /captures/photo."""
+        self.send_json({"captures": recent_captures()})
+
+    def handle_capture_photo(self):
+        """One photo the phone sent: GET /captures/photo?name=<file>.jpg.
+        Only a plain capture name inside the captures folder is ever
+        served."""
+        query = parse_qs(urlparse(self.path).query)
+        name = (query.get("name") or [""])[0]
+        path = capture_path(name)
+        if path is None:
+            self.send_error(404, "No such photo.")
+            return
+        data = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
