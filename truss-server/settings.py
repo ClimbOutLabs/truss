@@ -102,7 +102,8 @@ def _write_file(data):
         folder.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".settings-", dir=str(folder))
         try:
-            os.fchmod(fd, 0o600)
+            if hasattr(os, "fchmod"):  # not on Windows before Python 3.13
+                os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, sort_keys=True)
                 f.write("\n")

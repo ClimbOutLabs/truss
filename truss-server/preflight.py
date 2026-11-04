@@ -41,7 +41,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time as time_module
 import urllib.error
@@ -53,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import checkloop  # noqa: E402
 import endpoint  # noqa: E402
+import lan  # noqa: E402
 import verdict  # noqa: E402
 from bedtime import ROUND, SAFETY as ROUND_SAFETY  # noqa: E402
 from questions import QuestionStore  # noqa: E402
@@ -84,15 +84,9 @@ def _clock(t):
 
 
 def default_server():
-    """The address server.py binds: the Wi-Fi (en0) address on port
-    8792, or this machine when there is none."""
-    try:
-        out = subprocess.run(
-            ["ipconfig", "getifaddr", "en0"], capture_output=True, text=True, check=True
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        out = ""
-    return f"http://{out or '127.0.0.1'}:8792"
+    """The address server.py binds: its LAN address (see lan.py) on
+    port 8792, or this machine when there is none."""
+    return f"http://{lan.lan_address() or '127.0.0.1'}:8792"
 
 
 def get_json(url, timeout=5):
