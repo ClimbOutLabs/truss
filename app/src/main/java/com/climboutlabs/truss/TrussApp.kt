@@ -501,7 +501,7 @@ private fun lookFor(item: QuestionInfo): QuestionLook =
           )
       "planting" ->
           QuestionLook(
-              if (!item.hasRefYes) "Needs its yes look" else "Needs its no look",
+              if (!item.hasRefYes) "Needs its yes photo" else "Needs its no photo",
               Truss.apricot,
               Truss.onApricot,
               Truss.onApricotSoft,
@@ -1328,8 +1328,8 @@ private fun HistoryScreen(
         val (label, bg, fg) =
             when (item.kind) {
               "answer" -> Triple("Yes", Truss.lime, Truss.onLime)
-              "redo" -> Triple("Reminder", Truss.card, Truss.onApricot)
-              "state_check" -> Triple("After the window", Truss.card, Truss.onApricot)
+              "redo" -> Triple("Already seen", Truss.card, Truss.onApricot)
+              "state_check" -> Triple("Looked later", Truss.card, Truss.onApricot)
               "cannot_tell" -> Triple("Can't tell", Truss.sage, Truss.ink)
               else -> Triple("", Truss.sage, Truss.ink)
             }

@@ -225,7 +225,7 @@ body.film .wrap{zoom:1.3}
   <header>
     <h1>Truss Desk</h1>
     <div class="phone">
-      <span id="phone"><span class="dot"></span>Phone not heard from yet</span>
+      <span id="phone"><span class="dot"></span>Phone not connected yet</span>
       <button class="btn2" id="phone-go">Start watching</button>
     </div>
   </header>
@@ -234,7 +234,7 @@ body.film .wrap{zoom:1.3}
 
   <nav role="tablist">
     <button class="tab" role="tab" aria-selected="true" data-tab="today">Today</button>
-    <button class="tab" role="tab" aria-selected="false" data-tab="live">Live View</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="live">Live view</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="plant">Watch for me</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="guide">Watch me do this</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="answers">History</button>
@@ -266,14 +266,14 @@ body.film .wrap{zoom:1.3}
           <h2>What the glasses see now</h2>
           <div class="viewwrap">
             <img id="l-view" class="view" hidden alt="The glasses' latest view">
-            <span class="viewnote" id="l-view-note">No view from the glasses yet. Start watching on the phone.</span>
+            <span class="viewnote" id="l-view-note">No view from the glasses yet. Press Start watching.</span>
           </div>
         </div>
         <div class="livecol">
           <h2>What Truss said</h2>
           <p class="checking" id="l-checking" hidden></p>
           <div id="l-said"></div>
-          <label class="playrow"><input type="checkbox" id="l-play" class="toggle"><span>Play what the voice in the glasses says, out loud on this computer, as it is said.</span></label>
+          <label class="playrow"><input type="checkbox" id="l-play" class="toggle"><span>Play what the glasses say out loud on this computer, as they say it.</span></label>
         </div>
       </div>
       <!-- Shown only while it has photos: a checked photo leaves the
@@ -289,7 +289,7 @@ body.film .wrap{zoom:1.3}
        test folded away -->
   <div id="tab-plant" class="pane" hidden>
     <form id="plant" class="form" autocomplete="off">
-      <p class="intro">Ask once, and Truss minds it from then on.<span class="soft">Three short steps. Truss learns what yes and no look like in this home, from the wearer's own photos.</span></p>
+      <p class="intro">Ask once, and Truss minds it from then on.<span class="soft">Three short steps. Truss learns what yes and no look like in your home, from photos taken through the glasses.</span></p>
 
       <div class="step">
         <div class="shead"><span class="num">1</span><span class="stitle">Your question</span></div>
@@ -297,45 +297,46 @@ body.film .wrap{zoom:1.3}
           <input type="text" id="p-text" placeholder="Did I take my night pills?" required>
           <div class="ssub">Ask it the way you would say it out loud. Truss works out the rest from the words.</div>
           <div class="opts">
-            <label class="rowline"><input type="radio" name="kind" value="state" checked><span class="radio"></span><span>How things are now, like whether the stove is off</span></label>
+            <label class="rowline"><input type="radio" name="kind" value="state" checked><span class="radio"></span><span>Something to check, like whether the stove is off</span></label>
             <label class="rowline"><input type="radio" name="kind" value="done"><span class="radio"></span><span>Something I did, like taking pills or feeding the dog</span></label>
           </div>
         </div>
       </div>
 
       <div class="step">
-        <div class="shead"><span class="num">2</span><span class="stitle">Show what yes looks like</span></div>
+        <div class="shead"><span class="num">2</span><span class="stitle">Show Truss what yes and no look like</span></div>
         <div class="sbody">
-          <div class="ssub">Take the photo through the glasses, or drop one in here. This photo is the look Truss compares against.</div>
+          <div class="ssub">Take each photo through the glasses, or drop one in here. Truss compares every later photo against these two.</div>
           <div class="drops">
             <label class="drop" id="drop-yes"><span>Drop or choose<br>the <b>yes</b> photo</span><input type="file" accept="image/jpeg" id="f-yes"></label>
             <label class="drop" id="drop-no"><span>Drop or choose<br>the <b>no</b> photo</span><input type="file" accept="image/jpeg" id="f-no"></label>
           </div>
           <div class="drops">
-            <button type="button" class="btn2" data-take="yes">Take yes with the glasses</button>
-            <button type="button" class="btn2" data-take="no">Take no with the glasses</button>
+            <button type="button" class="btn2" data-take="yes">Take the yes photo with the glasses</button>
+            <button type="button" class="btn2" data-take="no">Take the no photo with the glasses</button>
           </div>
           <div class="msg" id="p-look-msg" hidden></div>
-          <div class="ssub">Look at the thing as it is when the answer is yes, press Take yes, then the same for no. The glasses send a view every few seconds while the phone is watching. Pills, the stove, and anything where a wrong answer would do harm need both photos.</div>
+          <div class="ssub">Look at the thing as it is when the answer is yes and press the yes button, then the same for no. Pills, the stove, and anything where a wrong answer would do harm need both photos.</div>
         </div>
       </div>
 
       <div class="step">
-        <div class="shead"><span class="num">3</span><span class="stitle">When should Truss watch for it?</span></div>
+        <div class="shead"><span class="num">3</span><span class="stitle">When should Truss look?</span></div>
         <div class="sbody">
           <div class="field"><span class="fl">When</span>
             <select id="p-when">
               <option value="interval">Every few minutes</option>
-              <option value="nightly">Until it is done</option>
-              <option value="window">Between two times</option>
+              <option value="nightly">From a time, until it is done</option>
+              <option value="window">During these hours</option>
             </select></div>
           <div class="row" id="w-interval"><input type="number" id="p-minutes" min="0" step="1" value="15" style="width:90px"><span class="note">minutes apart. Use 0 to check every photo.</span></div>
-          <div class="row" id="w-nightly" hidden><span class="note">from</span><input type="time" id="p-after-n" value="20:00" style="width:auto"><span class="note">until it answers</span></div>
+          <div class="row" id="w-nightly" hidden><span class="note">from</span><input type="time" id="p-after-n" value="20:00" style="width:auto"><span class="note">until Truss sees it done</span></div>
           <div class="row" id="w-window" hidden><input type="time" id="p-after" value="21:00" style="width:auto"><span class="note">to</span><input type="time" id="p-until" value="22:00" style="width:auto"></div>
+          <div class="note" id="w-window-note" hidden></div>
 
-          <label class="rowline"><input type="checkbox" id="p-safety"><span class="check"></span><span>A wrong answer would do harm, so be extra careful with this one</span></label>
+          <label class="rowline"><input type="checkbox" id="p-safety"><span class="check"></span><span>Be extra careful with this one: a wrong answer could do harm</span></label>
 
-          <label class="field" id="look-at-field" hidden><span class="fl">What to look at, if it is not seen</span>
+          <label class="field" id="look-at-field" hidden><span class="fl">Where to look if Truss has not seen it</span>
             <input type="text" id="p-look" placeholder="the {weekday} PM compartment"></label>
 
           <div><button class="btn" type="submit" id="p-go">Start watching for me</button></div>
@@ -347,7 +348,7 @@ body.film .wrap{zoom:1.3}
     <details id="plant-test" style="margin-top:28px">
       <summary>Test with a saved photo</summary>
       <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
-        <p class="note" style="margin:0">Sends a saved photo just as the glasses would, and it counts as a real sighting: a question it answers stays answered for today. So the test is off while a question is being watched where a wrong answer would do harm, or where the question is whether something was done.</p>
+        <p class="note" style="margin:0">Sends a saved photo just as the glasses would, and it counts for real: a question it answers stays answered for today. So the test is off while Truss is watching for something you did, or anything where a wrong answer could do harm.</p>
         <div class="row">
           <label class="btn2" style="flex:1;text-align:center">
             <span id="r-name">Choose photo…</span>
@@ -362,7 +363,7 @@ body.film .wrap{zoom:1.3}
 
   <!-- Watch me do this: a named job, walked step by step -->
   <div id="tab-guide" class="pane" hidden>
-    <p class="intro">A guided task, one step at a time.<span class="soft">Type the steps yourself, or name the job and let Truss write them. You see the steps first, and nothing is spoken until you press Start the guide. Then the glasses speak one step at a time and move on when a photo shows it is done. Truss never checks safety by eye: whether the stove is off, the pills are taken, or food is cooked through are questions to watch for instead, and a step like that is left out. For cooking, use a probe thermometer, and Truss reads the number on it.</span></p>
+    <p class="intro">A guided task, one step at a time.<span class="soft">Type the steps yourself, or name the job and let Truss write them. You see the steps first, and nothing is spoken until you press Start the guide. Then the glasses say one step at a time and move on when a photo shows it is done. Truss never judges safety by eye, so a step like "is the stove off" or "is the chicken cooked through" is left out: ask for those under Watch for me, and for cooking use a probe thermometer, which Truss can read.</span></p>
     <div id="g-form" style="display:flex;flex-direction:column;gap:14px;max-width:720px">
       <div class="seg" role="radiogroup" aria-label="Who writes the steps">
         <label><input type="radio" name="g-mode" value="auto" checked><span>Truss writes the steps</span></label>
@@ -379,7 +380,7 @@ body.film .wrap{zoom:1.3}
           <input type="text" id="g-name" placeholder="Set up the desk" maxlength="60"></label>
         <label class="field"><span class="fl">Steps, one per line</span>
           <textarea id="g-edit" rows="6" placeholder="Is the laptop open?&#10;Is the charger plugged into the laptop?&#10;Is the notebook on the left?"></textarea>
-          <span class="note">Each step is a yes or no question a single look can settle, where yes means it is done.</span></label>
+          <span class="note">Each step is a yes or no question one photo can settle, where yes means it is done.</span></label>
         <div class="leftout" id="g-draft-left" hidden></div>
         <div class="row">
           <button class="btn" type="submit" id="g-arm">Start the guide</button>
@@ -396,7 +397,7 @@ body.film .wrap{zoom:1.3}
         <div class="leftout" id="g-left" hidden></div>
         <div class="rfoot">
           <button class="pillbtn plain" id="g-skip">Skip this step</button>
-          <button class="pillbtn stop" id="g-stop">Stop the task</button>
+          <button class="pillbtn stop" id="g-stop">Stop the guide</button>
         </div>
         <div class="msg" id="g-run-msg" hidden></div>
       </div>
@@ -458,7 +459,7 @@ body.film .wrap{zoom:1.3}
         <div class="msg" id="s-meta-msg" hidden></div>
       </section>
 
-      <p class="note" style="margin:0" id="s-where">Keys stay on this Mac, in a file only you can read. They are never shown again or sent anywhere.</p>
+      <p class="note" style="margin:0" id="s-where">Keys stay on this Mac, in a file only you can read. They are never shown again.</p>
     </div>
   </div>
 </div>
@@ -523,14 +524,14 @@ function whenText(p) {
     if (!p.minutes) return "Checks each new photo from the glasses";
     return p.minutes === 1 ? "Checks every minute" : `Checks every ${p.minutes} minutes`;
   }
-  if (p.kind === "nightly") return `Until it is done, from ${clock(p.after)} each night`;
+  if (p.kind === "nightly") return `From ${clock(p.after)} each evening, until it is done`;
   if (p.kind === "window") return `${clock(p.after)} to ${clock(p.until)}`;
   return "";
 }
 // [word, class] for a question's state, in one or two words.
 function stateText(q) {
   if (q.state === "retired") return ["Stopped", ""];
-  if (q.state === "planting") return ["Needs looks", "warn"];
+  if (q.state === "planting") return ["Needs its photos", "warn"];
   if (q.kind === "done" && q.miss_pending) return ["Not seen", "warn"];
   if (q.kind === "done" && q.witness_time) return [`Seen ${q.witness_time}`, "yes"];
   if (q.state === "answered") {
@@ -635,13 +636,13 @@ async function loadAlerts() {
 }
 function renderBanners() {
   const out = [];
-  if (STATUS && STATUS.unreachable) out.push("Cannot reach Truss on this computer.");
+  if (STATUS && STATUS.unreachable) out.push("Truss is not running on this computer.");
   else if (STATUS && STATUS.checker && STATUS.checker !== "endpoint") out.push("Checks are not going to Muse Spark. Pick Muse Spark in Settings.");
   else if (STATUS && STATUS.config_error) out.push(`Truss cannot answer any checks yet. ${STATUS.config_error} Add the Meta Model API key in Settings.`);
   const banners = out.map((t) => `<div class="banner"><span class="mark">●</span><div>${esc(t)}</div></div>`);
   ALERTS.forEach((a) => {
     if (a.headline && a.note) banners.push(`<div class="banner"><span class="mark">●</span><div><div class="bhead">${esc(a.headline)}</div><div class="bnote">${esc(a.note)}</div></div></div>`);
-    else banners.push(`<div class="banner"><span class="mark">●</span><div>${esc(`${a.line} The phone will say so next.`)}</div></div>`);
+    else banners.push(`<div class="banner"><span class="mark">●</span><div>${esc(`${a.line} The glasses will say so next.`)}</div></div>`);
   });
   $("banners").innerHTML = banners.join("");
 }
@@ -721,7 +722,7 @@ function renderDay() {
   const groupHtml = parts.filter((p) => typeof p === "string");
   $("day").innerHTML = (groupHtml.join("") +
     (sampleCards.length ? `<p class="group">Ideas to try</p><div class="cards">${sampleCards.map((p) => p.html).join("")}</div>` : "")) ||
-    `<div class="empty">${live.length ? "Nothing else is being watched right now." : "Nothing is watched yet."}</div>`;
+    `<div class="empty">${live.length ? "Nothing else is being watched right now." : "Nothing to watch yet. Ask Truss something under Watch for me."}</div>`;
   $("count").textContent = live.length ? `${live.length} question${live.length === 1 ? "" : "s"}` : "";
   $("stopped").innerHTML = stopped.length
     ? `<details style="margin-top:12px"><summary class="note" style="font-weight:500">${stopped.length} stopped questions</summary>${stopped.map((q) => lineRow(q)).join("")}</details>`
@@ -751,7 +752,7 @@ function questionCard(q) {
   // A question still planting takes its looks right here.
   const add = q.state !== "planting" ? "" : `<div class="row" style="margin-top:8px">` +
     ["yes", "no"].map((k) => `<label class="btn2">${(k === "yes" ? q.has_ref_yes : q.has_ref_no) ? "Replace" : "Choose"} ${k} photo<input type="file" accept="image/jpeg" data-look="${k}" data-slug="${esc(q.slug)}" style="position:absolute;inset:0;opacity:0;cursor:pointer"></label>`).join("") +
-    ["yes", "no"].map((k) => `<button class="btn2" data-glasses="${k}" data-slug="${esc(q.slug)}">Take ${k} with the glasses</button>`).join("") + `</div>`;
+    ["yes", "no"].map((k) => `<button class="btn2" data-glasses="${k}" data-slug="${esc(q.slug)}">Take the ${k} photo with the glasses</button>`).join("") + `</div>`;
   const sub = bits.filter(Boolean).join(" · ");
   return `<div class="card"><div class="cq">${esc(q.question)}</div>${sub ? `<div class="csub">${esc(sub)}</div>` : ""}${add}<div class="cfoot"><span class="${pill}">${esc(word)}</span>${stop}</div></div>`;
 }
@@ -771,7 +772,7 @@ document.addEventListener("click", async (ev) => {
   ev.stopPropagation();
   if (del.dataset.armed !== "1") {
     del.dataset.armed = "1";
-    del.textContent = "Click again to delete it";
+    del.textContent = "Click again to delete";
     setTimeout(() => { del.dataset.armed = ""; del.textContent = "Delete"; }, 4000);
     return;
   }
@@ -804,7 +805,7 @@ async function loadSeen() {
   renderSeen();
 }
 // The seen rows. A state checked after its window closed keeps the
-// same "After the window" chip History gives it. A live question that has
+// same "Looked later" chip History gives it. A live question that has
 // no card because its sighting is here gets its Stop button on its
 // latest row, so it can always be stopped from Today.
 function paintSeen() {
@@ -814,7 +815,7 @@ function paintSeen() {
   const last = new Map();
   rows.forEach((a, i) => last.set(norm(a.question), i));
   $("seen").innerHTML = `<h2>What Truss has seen today</h2>` + rows.map((a, i) => {
-    const [word, cls] = a.kind === "state_check" ? ["After the window", "chip clay"] : ["Seen", "chip slate"];
+    const [word, cls] = a.kind === "state_check" ? ["Looked later", "chip clay"] : ["Seen", "chip slate"];
     const q = last.get(norm(a.question)) === i ? live.get(norm(a.question)) : null;
     const stop = q ? `<button class="pillstop" data-retire="${esc(q.slug)}">Stop</button>${delBtn(q)}` : "";
     return eventRow(a, SEEN.day, word, cls, false, stop);
@@ -836,7 +837,7 @@ $("tab-today").addEventListener("click", async (ev) => {
     try {
       const view = await glassesView((text) => showMsg("msg-today", text));
       const r = await postImage(`/plant/ref?slug=${encodeURIComponent(g.dataset.slug)}&kind=${g.dataset.glasses}`, view.file);
-      showMsg("msg-today", `Took the ${g.dataset.glasses} look from the glasses' view ${view.ago} seconds ago.${r.state === "standing" ? watchHint() : ""}`);
+      showMsg("msg-today", `Took the ${g.dataset.glasses} photo from the glasses, ${view.ago} seconds ago.${r.state === "standing" ? watchHint() : ""}`);
     } catch (e) { showMsg("msg-today", e.message, true); }
     g.disabled = false;
     SHOWN = "";
@@ -847,7 +848,7 @@ $("tab-today").addEventListener("click", async (ev) => {
   if (retire) {
     if (retire.dataset.armed !== "1") {
       retire.dataset.armed = "1";
-      retire.textContent = "Click again to stop watching it";
+      retire.textContent = "Click again to stop";
       setTimeout(() => { retire.dataset.armed = ""; retire.textContent = "Stop"; }, 4000);
       return;
     }
@@ -864,7 +865,7 @@ $("tab-today").addEventListener("click", async (ev) => {
     try {
       const r = await postJSON("/plant/bedtime", {});
       const notes = (r.notes || []).join(" ");
-      showMsg("msg-today", `Started: ${r.questions.join(", ")}. Each still needs its yes and no looks: add them below. ${notes}`);
+      showMsg("msg-today", `Started: ${r.questions.join(", ")}. Each still needs its yes and no photos: add them below. ${notes}`);
     } catch (e) { showMsg("msg-today", e.message, true); }
     loadQuestions();
     return;
@@ -891,11 +892,11 @@ async function loadAnswers() {
     const isToday = !!(STATUS && STATUS.now && r.day === STATUS.now.slice(0, 10));
     $("ans-day").textContent = isToday ? "Today" : new Date(`${r.day}T12:00:00`).toLocaleDateString([], {weekday: "long", month: "long", day: "numeric"});
     $("ans-intro").innerHTML = `Everything Truss saw ${isToday ? "today" : "that day"}, in one list.<span class="soft">Each thing appears once, with its photo.</span>`;
-    if (!r.answers.length) { $("answers").innerHTML = `<div class="empty">No answers on this day.</div>`; return; }
+    if (!r.answers.length) { $("answers").innerHTML = `<div class="empty">Truss saw nothing on this day.</div>`; return; }
     // The server returns the day newest first; each answer appears
     // once, with whether it was said out loud carried in its line.
     $("answers").innerHTML = r.answers.map((a) => {
-      const chip = {answer: ["Seen", "chip slate"], redo: ["Reminder", "chip clay"], cannot_tell: ["Couldn't tell", "chip"], state_check: ["After the window", "chip clay"]}[a.kind];
+      const chip = {answer: ["Seen", "chip slate"], redo: ["Already seen", "chip clay"], cannot_tell: ["Can't tell", "chip"], state_check: ["Looked later", "chip clay"]}[a.kind];
       return eventRow(a, r.day, chip ? chip[0] : "", chip ? chip[1] : "chip", a.kind === "redo" || a.kind === "state_check");
     }).join("");
   } catch (e) { $("answers").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
@@ -933,7 +934,7 @@ async function loadMemory() {
   const q = standing.find((x) => x.slug === MEM_SLUG);
   if (!q) {
     $("mem-q").textContent = "";
-    $("memory").innerHTML = `<div class="empty">Nothing is watched yet.</div>`;
+    $("memory").innerHTML = `<div class="empty">Nothing to watch yet. Ask Truss something under Watch for me.</div>`;
     return;
   }
   $("mem-q").textContent = q.question;
@@ -950,7 +951,7 @@ async function loadMemory() {
   $("mem-sum").textContent = (n
     ? `${n} check${n === 1 ? "" : "s"} today: ${counts.map(([v, k]) => `${k} ${MEM_WORD[v][0].toLowerCase()}`).join(", ")}. `
     : "") + `Every time Truss looked, what it decided and why, oldest first${who ? `. Truss checks with ${who}` : ""}.`;
-  if (!n) { $("memory").innerHTML = `<div class="empty">No checks yet today for this question.</div>`; return; }
+  if (!n) { $("memory").innerHTML = `<div class="empty">Truss has not looked for this yet today.</div>`; return; }
   // Seconds only where two checks share a minute, so close checks
   // still read apart.
   const hm = (c) => c.time.slice(0, 5);
@@ -976,9 +977,22 @@ function syncForm() {
   const done = document.querySelector("input[name=kind]:checked")?.value === "done";
   if (done) $("p-safety").checked = true;
   $("look-at-field").hidden = !done;
+  // Only a window has an end, so only a window can tell the wearer a
+  // thing they do was missed. Say so where the times are picked.
+  const until = clock($("p-until").value);
+  $("w-window-note").hidden = when !== "window";
+  $("w-window-note").textContent = done
+    ? `Truss watches during these hours. If it has not seen it by ${until || "the end time"}, the glasses say so once.`
+    : "Truss checks it whenever the glasses look during these hours.";
 }
-document.querySelectorAll("input[name=kind]").forEach((r) => r.addEventListener("change", syncForm));
-$("p-when").addEventListener("change", syncForm);
+// "Something I did" goes with "During these hours" unless a time choice
+// was already made: it is the one choice that can tell you it was missed.
+document.querySelectorAll("input[name=kind]").forEach((r) => r.addEventListener("change", () => {
+  if (r.checked && r.value === "done" && !$("p-when").dataset.touched) $("p-when").value = "window";
+  syncForm();
+}));
+$("p-when").addEventListener("change", () => { $("p-when").dataset.touched = "1"; syncForm(); });
+$("p-until").addEventListener("input", syncForm);
 $("p-minutes").addEventListener("input", () => { $("p-minutes").dataset.touched = "1"; });
 
 function fillForm(f) {
@@ -991,14 +1005,14 @@ function fillForm(f) {
   syncForm();
   $("p-safety").checked = !!f.safety;
   $("p-look").value = f.look || "";
-  showMsg("p-msg", f.safety ? "Filled in. Drop in the yes and no photos, then start watching for me." : "Filled in. Drop in the photos if you have them, then start watching for me.");
+  showMsg("p-msg", f.safety ? "Filled in. Add the yes and no photos, then press Start watching for me." : "Filled in. Add photos if you have them, then press Start watching for me.");
 }
 
 const LOOKS = {yes: null, no: null};
 function setLook(kind, file) {
   if (!file) return;
   if (!/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) {
-    showMsg("p-look-msg", "Looks must be JPEG photos. In Photos, use File > Export as JPEG.", true);
+    showMsg("p-look-msg", "Photos must be JPEG. In Photos, use File > Export as JPEG.", true);
     return;
   }
   LOOKS[kind] = file;
@@ -1030,10 +1044,10 @@ function setLook(kind, file) {
 function viewWait() {
   const p = PHONE && PHONE.phone;
   // Not watching: the phone opens the glasses camera for this one photo.
-  if (!(p && p.watching)) return {limit: 60, hint: " Asked the glasses for one photo; hold still on it."};
+  if (!(p && p.watching)) return {limit: 60, hint: " Hold still on it."};
   // A photo already being checked finishes first (up to about 45 s), then
   // the phone takes the one asked for.
-  return {limit: 75, hint: " Asked the glasses for a photo now; hold still on it."};
+  return {limit: 75, hint: " Hold still on it."};
 }
 async function glassesView(onWait) {
   const pressed = Date.now();
@@ -1061,7 +1075,7 @@ async function glassesView(onWait) {
     if (waited > limit) {
       throw new Error(`No photo came from the glasses in ${limit} seconds. Check that the glasses are on and the Truss app is open on the phone, then try again.`);
     }
-    if (onWait) onWait(`Waiting for a fresh view from the glasses… ${Math.round(waited)} of ${limit} seconds.${hint}`);
+    if (onWait) onWait(`Waiting for a photo from the glasses… ${Math.round(waited)} of ${limit} seconds.${hint}`);
     await new Promise((res) => setTimeout(res, 1000));
   }
 }
@@ -1078,9 +1092,9 @@ document.querySelectorAll("[data-take]").forEach((b) => b.addEventListener("clic
   try {
     const view = await glassesView((text) => showMsg("p-look-msg", text));
     const other = LOOKS[kind === "yes" ? "no" : "yes"];
-    if (await sameBytes(view.file, other)) throw new Error(`That view is the same photo as the ${kind === "yes" ? "no" : "yes"} look. Change what the glasses see, then take it again.`);
+    if (await sameBytes(view.file, other)) throw new Error(`That is the same photo as the ${kind === "yes" ? "no" : "yes"} photo. Change what the glasses see, then take it again.`);
     setLook(kind, view.file);
-    showMsg("p-look-msg", `Took the ${kind} look from the glasses' view ${view.ago} seconds ago.`);
+    showMsg("p-look-msg", `Took the ${kind} photo from the glasses, ${view.ago} seconds ago.`);
   } catch (e) { showMsg("p-look-msg", e.message, true); }
   b.disabled = false;
 }));
@@ -1108,7 +1122,7 @@ $("plant").addEventListener("submit", async (ev) => {
   else if (when === "nightly") pattern = {kind: "nightly", after: $("p-after-n").value};
   else pattern = {kind: "window", after: $("p-after").value, until: $("p-until").value};
   if (await sameBytes(LOOKS.yes, LOOKS.no)) {
-    showMsg("p-msg", "The yes and no looks are the same photo. Take one of them again.", true);
+    showMsg("p-msg", "The yes and no photos are the same. Take one of them again.", true);
     return;
   }
   if ((safety || kind === "done") && !(LOOKS.yes && LOOKS.no)) {
@@ -1161,7 +1175,7 @@ async function replayBlocker() {
     return "Couldn't check what is being watched, so nothing was sent.";
   }
   const q = fresh.find((x) => x.state !== "retired" && (x.safety || x.kind === "done"));
-  return q ? `Not sent. “${q.question}” is being watched, and an old photo would count as a real sighting of it. Stop watching it first, or test with the glasses.` : "";
+  return q ? `Not sent. Truss is watching for “${q.question}”, and an old photo would count for real. Stop watching it first, or test with the glasses.` : "";
 }
 $("r-go").addEventListener("click", async () => {
   if (!REPLAY) return;
@@ -1170,7 +1184,7 @@ $("r-go").addEventListener("click", async () => {
   if ($("r-go").dataset.armed !== "1") {
     $("r-go").dataset.armed = "1";
     $("r-go").textContent = "Send for real";
-    showMsg("r-msg", "This counts as a real sighting. If it answers a question, that question counts as answered for today. Click again to send.");
+    showMsg("r-msg", "This counts for real. If it answers a question, that question stays answered for today. Click again to send.");
     setTimeout(() => { $("r-go").dataset.armed = ""; $("r-go").textContent = "Send"; }, 6000);
     return;
   }
@@ -1183,7 +1197,7 @@ $("r-go").addEventListener("click", async () => {
     const r = await postImage("/capture", REPLAY);
     const secs = ((Date.now() - started) / 1000).toFixed(1);
     const said = (r.speak || []).filter(Boolean);
-    if (said.length) showMsg("r-msg", `Recorded as a sighting (${secs} seconds). The voice in the glasses said: “${said.join(" ")}”`);
+    if (said.length) showMsg("r-msg", `Counted for real (${secs} seconds). The glasses said: “${said.join(" ")}”`);
     else if (r.guide) showMsg("r-msg", `A guided task is running, so the photo went to it (${secs} seconds). Nothing to say.`);
     else showMsg("r-msg", `That photo did not answer any question (${secs} seconds), so it was not kept.`);
   } catch (e) {
@@ -1203,7 +1217,7 @@ let PHONE = null;
 // planting, say whether the phone is already watching for it.
 function watchHint() {
   const p = PHONE && PHONE.phone;
-  return p && p.watching ? " The phone is watching for it." : " The phone is not watching yet: press Start watching at the top when you want it to.";
+  return p && p.watching ? " Truss is watching for it now." : " Press Start watching at the top when you are ready.";
 }
 async function askPhone(on) {
   try {
@@ -1217,22 +1231,22 @@ async function askPhone(on) {
 function phoneText(w) {
   const p = w && w.phone;
   const req = w && w.request;
-  if (!p) return ["", "Phone not heard from yet"];
-  if (!p.reachable) return ["bad", `Phone not heard from for ${p.seconds_ago < 90 ? p.seconds_ago + " seconds" : Math.round(p.seconds_ago / 60) + " minutes"}`];
+  if (!p) return ["", "Phone not connected yet"];
+  if (!p.reachable) return ["bad", `Phone last seen ${p.seconds_ago < 90 ? p.seconds_ago + " seconds" : Math.round(p.seconds_ago / 60) + " minutes"} ago`];
   if (req && !req.on && p.watching && req.age_seconds < 600) return ["", "Asking the phone to stop…"];
-  if (p.watching && p.off) return ["", "Phone watching, paused while the glasses are off"];
-  if (p.watching && p.away) return ["bad", "Phone watching, waiting for the glasses"];
-  if (p.watching) return ["ok", p.mode === "live" ? "Phone watching (live view)" : p.mode === "photos" ? `Phone watching (a photo every ${p.every} seconds)` : "Phone watching"];
-  if (p.pending) return ["", "Phone starts once the glasses connect"];
+  if (p.watching && p.off) return ["", "Paused while the glasses are off"];
+  if (p.watching && p.away) return ["bad", "Waiting for the glasses"];
+  if (p.watching) return ["ok", p.mode === "live" ? "Watching the glasses live" : p.mode === "photos" ? `Watching, a photo every ${p.every} seconds` : "Watching"];
+  if (p.pending) return ["", "Starts when the glasses connect"];
   if (req && req.on && req.age_seconds < 600) return ["", "Asking the phone to start…"];
-  return ["", "Phone not watching"];
+  return ["", "Not watching"];
 }
 function renderPhone() {
   const [cls, text] = phoneText(PHONE);
   $("phone").innerHTML = `<span class="dot ${cls}"></span>${esc(text)}`;
   const p = PHONE && PHONE.phone;
   const on = !!(p && p.reachable && (p.watching || p.pending));
-  $("phone-go").textContent = on ? "Stop" : "Start watching";
+  $("phone-go").textContent = on ? "Stop watching" : "Start watching";
   $("phone-go").dataset.on = on ? "0" : "1";
 }
 async function loadPhone() {
@@ -1243,7 +1257,7 @@ $("phone-go").addEventListener("click", async () => {
   const start = $("phone-go").dataset.on !== "0";
   if (start) {
     const live = QUESTIONS.filter((q) => q.state !== "retired" && q.state !== "planting").length;
-    if (!live) { openTab("today"); showMsg("msg-today", "Nothing is being watched yet. Go to Watch for me and ask a question, or pick one of the samples below.", true); return; }
+    if (!live) { openTab("today"); showMsg("msg-today", "Nothing to watch yet. Ask Truss something under Watch for me, or pick an idea below.", true); return; }
   }
   $("phone-go").disabled = true;
   const said = await askPhone(start);
@@ -1272,7 +1286,7 @@ function renderSettings() {
   $("s-meta-clear").hidden = mk.from !== "saved";
   const model = STATUS && STATUS.model;
   $("s-meta-state").textContent = mk.set ? (model ? model : "Key set") : "No key";
-  $("s-where").textContent = `Keys stay on this Mac, in ${s.file}, which only you can read. They are never shown again or sent anywhere.`;
+  $("s-where").textContent = `Keys stay on this Mac, in ${s.file}, which only you can read. They are never shown again.`;
 }
 async function saveSettings(body, msgId, okText) {
   try {
@@ -1344,7 +1358,7 @@ function renderGuide() {
     return `<div class="gstep${n < GUIDE.step ? " done" : n === GUIDE.step ? " now" : ""}"><span class="snum">Step ${n}</span><span class="gstext">${esc(q)}</span>${chip}</div>`;
   }).join("");
   $("g-left").hidden = !GUIDE_LEFT.length;
-  $("g-left").textContent = GUIDE_LEFT.length ? `Left out, because Truss cannot check them by eye: ${GUIDE_LEFT.join("; ")}.` : "";
+  $("g-left").textContent = GUIDE_LEFT.length ? `Left out, because Truss cannot judge them by eye: ${GUIDE_LEFT.join("; ")}.` : "";
 }
 // Who writes the steps. Either way the steps are shown in the editor
 // first, and the guide starts only when Start the guide is pressed.
@@ -1361,7 +1375,7 @@ function showGuideForms() {
 }
 function setDraftLeft(left) {
   $("g-draft-left").hidden = !left.length;
-  $("g-draft-left").textContent = left.length ? `Left out, because Truss cannot check them by eye: ${left.join("; ")}.` : "";
+  $("g-draft-left").textContent = left.length ? `Left out, because Truss cannot judge them by eye: ${left.join("; ")}.` : "";
 }
 function resetDraft() {
   delete $("g-draft").dataset.drafted;
@@ -1394,7 +1408,7 @@ async function guidePost(url, body, msgId, label) {
     showMsg(msgId, e.name === "AbortError"
       ? "That took too long, so Truss stopped waiting. Try again in a moment."
       : e.name === "TypeError"
-        ? "The Desk lost touch with the laptop server. Check it is running, then try again."
+        ? "The Desk lost touch with Truss on this computer. Check it is running, then try again."
         : e.message, true);
     return null;
   } finally {
@@ -1431,8 +1445,8 @@ $("g-draft").addEventListener("submit", async (ev) => {
   $("g-task").value = "";
   resetDraft();
   showMsg("g-run-msg", PHONE && PHONE.phone && PHONE.phone.watching
-    ? "The phone will speak the first step in the glasses within about half a minute."
-    : "The phone is not watching yet. Press Start watching at the top, and it speaks the first step within about half a minute.");
+    ? "The glasses will say the first step within about half a minute."
+    : "Press Start watching at the top, and the glasses say the first step within about half a minute.");
   loadGuide();
 });
 showGuideForms();
@@ -1473,7 +1487,7 @@ function drawFeed() {
   const lines = FEED_LINES.slice().reverse().slice(0, 6);
   $("l-said").innerHTML = lines.length
     ? lines.map((l, i) => `<div class="said${i === 0 ? " new" : ""}"><span class="t">${esc(new Date(l.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}))}</span><span class="qt">${esc(l.text)}</span></div>`).join("")
-    : `<div class="empty">Nothing said yet. Lines appear here the moment the glasses speak them.</div>`;
+    : `<div class="empty">Nothing said yet. What the glasses say shows up here as they say it.</div>`;
 }
 async function loadFeed() {
   try {
