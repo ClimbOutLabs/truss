@@ -15,6 +15,11 @@ and the file can be handed over or read by a script. Each line is
 the date and time, a short tag saying what part of the server spoke,
 and the message, split by " | " like the answer log.
 
+The check lines are read back, too: check_history() gives one
+question's earlier checks on a day, so the next check of that
+question can be told what tonight's earlier checks found (see
+verdict.py).
+
 The every-few-seconds polls (the phone's check-ins, the Desk's
 refreshes, an empty alert poll) are left out, since they buried the
 lines that matter. Their failures are kept, and a line repeated many
@@ -234,6 +239,67 @@ def install(log_dir):
     sys.stdout = out
     sys.stderr = out
     return path
+
+
+# One tidy check line, as the loop prints it and _emit writes it: the
+# day and the time, the check tag, then "slug: verdict (seconds s)
+# reason". A check that failed before the model answered prints "no
+# verdict" instead, and a check the endpoint never made gives a reason
+# saying so; neither found anything, and neither matches below as a
+# result.
+_CHECK_LINE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) \| check\s*\| (.*)$"
+)
+_CHECK_REST = re.compile(r"^\([\d.]+ s\) ?(.*)$")
+
+# How much of the log's tail a history read looks through. One
+# evening of checks writes far less than this; the bound only keeps a
+# long-lived log from being read whole on every check.
+_HISTORY_TAIL_BYTES = 512 * 1024
+
+
+def check_history(path, slug, day, limit=6):
+    """One question's earlier checks on one day, read back from the
+    server log at path: a list of (time, verdict, reason), oldest
+    first, holding at most limit of the most recent. Only the check
+    lines this question's own slug heads count, and only the day
+    asked about, so another question's checks and an earlier day's
+    never appear. A check that found nothing (no verdict, or a reason
+    saying no check was made) is left out. A missing or unreadable
+    log is no history. Never raises."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - _HISTORY_TAIL_BYTES))
+            text = handle.read().decode("utf-8", "replace")
+    except (OSError, TypeError, ValueError):
+        return []
+    prefix = f"{slug}: "
+    found = []
+    for line in text.splitlines():
+        matched = _CHECK_LINE.match(line)
+        if matched is None or matched.group(1) != day.isoformat():
+            continue
+        message = matched.group(3)
+        if not message.startswith(prefix):
+            continue
+        verdict_word, _, rest = message[len(prefix):].partition(" ")
+        if verdict_word not in ("yes", "no", "cannot_tell"):
+            continue
+        rest = _CHECK_REST.match(rest)
+        if rest is None:
+            continue
+        reason = rest.group(1).strip()
+        if "no check was made" in reason:
+            continue
+        try:
+            at = datetime.fromisoformat(f"{matched.group(1)}T{matched.group(2)}")
+        except ValueError:
+            continue
+        found.append((at, verdict_word, reason))
+    if limit is None or limit < 0:
+        return found
+    return found[-limit:] if limit else []
 
 
 class Feed:

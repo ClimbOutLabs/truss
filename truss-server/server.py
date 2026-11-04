@@ -190,6 +190,20 @@ else:
         print(f"Model setup: {_where['config_error']}")
 
 
+def earlier_tonight(entry, now=None):
+    """This question's earlier check results tonight, read back from
+    the server log the checks were already written to (see
+    serverlog.check_history), for the check request to carry as
+    context. A restart loses nothing, and a question with no earlier
+    checks is checked exactly as before."""
+    slug = entry.get("slug")
+    if not slug:
+        return []
+    return serverlog.check_history(
+        LOG_DIR / "server.log", slug, (now or CLOCK()).date()
+    )
+
+
 def production_check(frame_path, entry):
     """The loop's check function, with the question's own reference
     looks. The endpoint checker reads the question's looks.txt from its
@@ -216,6 +230,7 @@ def production_check(frame_path, entry):
         looks=verdict.read_looks(Path(entry["ref_yes_path"]).parent),
         safety=entry.get("safety") is True,
         now=CLOCK(),
+        earlier=earlier_tonight(entry),
     )
 
 
@@ -230,6 +245,7 @@ def batch_check(frame_path, entries):
             "question": entry["question"],
             "looks": verdict.read_looks(Path(entry["ref_yes_path"]).parent),
             "safety": entry.get("safety") is True,
+            "earlier": earlier_tonight(entry),
         }
         for entry in entries
     ]
