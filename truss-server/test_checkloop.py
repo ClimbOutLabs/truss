@@ -132,7 +132,7 @@ def test_yes_on_third_check_speaks_and_keeps_evidence():
     check("third check fires", result["fired"] == [slug])
     check(
         "spoken line names the question, the answer, the observation",
-        at_any_time(spoken) == ["Is the stove off? Yes, as of TIME. All four burners are dark."],
+        at_any_time(spoken) == ["Is the stove off? Yes, that's how it looked at TIME. All four burners are dark."],
     )
     evidence = Path(result["evidence"])
     check("evidence photo kept", evidence.exists() and evidence.read_bytes() == JPEG)
@@ -261,7 +261,7 @@ def test_evidence_failure_still_speaks_once():
     check("evidence failure does not stop the firing", result["fired"] == [slug])
     check(
         "spoken once despite the evidence failure",
-        at_any_time(spoken) == ["Is the stove off? Yes, as of TIME. All four burners are dark."],
+        at_any_time(spoken) == ["Is the stove off? Yes, that's how it looked at TIME. All four burners are dark."],
     )
     check("frame kept in captures as the record", f.exists())
     check("question answered despite the failure", store.get(slug)["state"] == "answered")
@@ -378,8 +378,8 @@ def test_malformed_reason_still_speaks():
         sorted(at_any_time(spoken))
         == sorted(
             [
-                "Is the stove off? Yes, as of TIME.",
-                "Is the front door locked? Yes, as of TIME. The deadbolt is thrown.",
+                "Is the stove off? Yes, that's how it looked at TIME.",
+                "Is the front door locked? Yes, that's how it looked at TIME. The deadbolt is thrown.",
             ]
         ),
     )

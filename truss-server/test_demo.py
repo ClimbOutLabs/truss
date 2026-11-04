@@ -87,31 +87,31 @@ def test_done_act():
         check(f"no guessed verb: {q}", checkloop.done_act(q) is None)
         check(f"plain reminder: {q}",
               checkloop.redo_text({"at": "2026-11-03T13:02:00"}, {"question": q})
-              == "That is already done. You did it at 1:02 PM. I saw you.")
+              == "Just so you know, that's already done. I saw it at 1:02 PM.")
 
 
 def test_redo_lines():
     witness = {"date": "2026-11-03", "at": "2026-11-03T13:02:00", "frame": "x.jpg"}
     check("the redo names the act, the time, and that it was seen",
           checkloop.redo_text(witness, {"question": PILLS})
-          == "You took your night pills at 1:02 PM. I saw you.")
+          == "Just so you know, you already took your night pills at 1:02 PM. I saw you.")
     check("a question with no act gets the plain reminder",
           checkloop.redo_text(witness, {"question": "Has the dog been fed?"})
-          == "That is already done. You did it at 1:02 PM. I saw you.")
+          == "Just so you know, that's already done. I saw it at 1:02 PM.")
 
 
 def test_firing_lines_name_the_time():
     entry = {"question": STOVE, "kind": "state"}
     check("a state firing: question, yes, time, reason",
           checkloop.speak_text(entry, verdict_of("yes", "All four knobs point to off."), EVENING)
-          == "Is the stove off? Yes, as of 8:31 PM. All four knobs point to off.")
+          == "Is the stove off? Yes, that's how it looked at 8:31 PM. All four knobs point to off.")
     check("with no reason, the time still",
           checkloop.speak_text(entry, verdict_of("yes"), EVENING)
-          == "Is the stove off? Yes, as of 8:31 PM.")
+          == "Is the stove off? Yes, that's how it looked at 8:31 PM.")
     done = {"question": PILLS, "kind": "done"}
     check("a done firing says when it was seen",
           checkloop.speak_text(done, verdict_of("yes", "The compartment is empty."), EVENING)
-          == "Did I take my night pills? Yes. I saw it at 8:31 PM. The compartment is empty.")
+          == "Did you take your night pills? Yes, I saw it happen at 8:31 PM. The compartment is empty.")
 
 
 # -- the refusal ---------------------------------------------------------------
@@ -132,10 +132,10 @@ def test_refusal_detail():
     entry = {"question": STOVE}
     check("the refusal line",
           checkloop.refusal_text(entry, verdict_of("cannot_tell", "Stovetop only.", KNOBS))
-          == "Is the stove off? I can't tell. I can't see the four knobs on the front of the stove from here.")
+          == "Is the stove off? I can't tell from here. I can't quite see the four knobs on the front of the stove.")
     check("the plain refusal line",
           checkloop.refusal_text(entry, verdict_of("cannot_tell", "Hm.", "A better angle is needed."))
-          == "Is the stove off? I can't tell from here.")
+          == "Is the stove off? I can't tell from here, so I won't guess.")
     for name, text in checkloop.REFUSAL_TEMPLATES.items():
         check(f"refusal template {name} holds no action verb", action_verbs_in(text) == [])
 
@@ -183,7 +183,7 @@ def test_refusal_in_the_loop():
     )
     f = frame(captures, "doorway.jpg")
     result = loop.process_frame(f)
-    line = "Is the stove off? I can't tell. I can't see the four knobs on the front of the stove from here."
+    line = "Is the stove off? I can't tell from here. I can't quite see the four knobs on the front of the stove."
     check("the refusal is spoken once the stove is confirmed in view", spoken == [line])
     check("the presence check asks about the stove itself",
           "stove" in loop.presence_fn.calls[0] and "knob" not in loop.presence_fn.calls[0])
@@ -209,7 +209,7 @@ def test_refusal_in_the_loop():
     clock[0] += timedelta(minutes=1)
     loop.process_frame(frame(captures, "closer.jpg"))
     check("stepping closer, the yes is spoken with its time",
-          spoken[-1] == "Is the stove off? Yes, as of 8:44 PM. All four knobs point to off.")
+          spoken[-1] == "Is the stove off? Yes, that's how it looked at 8:44 PM. All four knobs point to off.")
     check("the answer log holds both", (day / "answers.txt").read_text().count("\n") == 3)
 
 
@@ -265,8 +265,8 @@ def test_refusal_needs_every_condition():
     tmp, store, slug, loop, spoken, clock, captures = refusal_rig([knobs_out], [seen])
     loop.process_frame(frame(captures, "a.jpg"))
     check("a cannot-tell naming the knobs is spoken as a refusal",
-          spoken == ["Is the stove off? I can't tell. I can't see all of the stove's "
-                     "control knobs from here."])
+          spoken == ["Is the stove off? I can't tell from here. I can't quite see "
+                     "all of the stove's control knobs."])
     tmp, store, slug, loop, spoken, clock, captures = refusal_rig([cannot], [seen])
     loop.presence_fn = None
     loop.process_frame(frame(captures, "a.jpg"))
@@ -339,7 +339,7 @@ def test_redo_log_shows_the_witness_photo():
     clock[0] = datetime(2026, 11, 3, 13, 40)
     second = loop.process_frame(frame(captures, "reach.jpg"))
     check("the stopped reach is spoken with the witnessed time",
-          spoken[-1] == "You took your night pills at 1:02 PM. I saw you.")
+          spoken[-1] == "Just so you know, you already took your night pills at 1:02 PM. I saw you.")
     items = history.answers(tmp / "log", "2026-11-03")
     redo = items[0]
     check("History shows the redo with the witness photo, the moment she was seen",
@@ -510,7 +510,7 @@ def test_rehearse_refusal():
 
     lines = preflight.rehearse_refusal(store, photo, check=fake)
     check("the rehearsal passes on a cannot-tell naming the knobs, and prints the line",
-          lines[0][0] == preflight.PASS and "I can't see the four knobs" in lines[0][2])
+          lines[0][0] == preflight.PASS and "I can't quite see the four knobs" in lines[0][2])
     check("the rehearsal asks the stove question with safety on",
           asked == {"question": STOVE, "safety": True})
     lines = preflight.rehearse_refusal(

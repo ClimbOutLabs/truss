@@ -5,7 +5,13 @@ Local server for the Truss Android app. Handles photo uploads and text-to-speech
 ## Requirements
 
 - Python 3.6+
-- macOS (uses `say` and `afconvert` commands)
+- macOS (uses `say` and `afconvert` commands). Speech uses the most
+  natural voice installed, a Premium or Enhanced English one when there
+  is one (see `voice.py`). For the best voice, add one once in System
+  Settings > Accessibility > Spoken Content > System voice > Manage
+  Voices (for example English (US) > Ava (Premium)), then restart the
+  server; its start-up banner names the voice. `TRUSS_VOICE` picks a
+  voice by name and `TRUSS_VOICE_RATE` sets words per minute.
 
 ## Installation
 
@@ -393,8 +399,8 @@ A thing done several times a day is planted once per window, with
 the same words each time: "Did I feed the dog?" from 8 to 10, from
 1 to 3, and from 7 to 9. The plantings are one routine. A second
 feed after the 9 AM one, inside the morning window or after it, is
-met with "You fed the dog at 9:00 AM. I saw you. The next window
-opens at 1:00 PM." Once the 1 PM window opens, feeding is the next
+met with "Just so you know, you already fed the dog at 9:00 AM. I saw
+you. The next window is at 1:00 PM." Once the 1 PM window opens, feeding is the next
 meal, not a repeat, so the morning feed is no longer watched for one.
 
 If the window closes and the loop never saw it done, that is not
@@ -417,9 +423,13 @@ a frame that arrived while the question rested is not watching. A gap
 of more than ten minutes between checks counts as not watching. A
 done window planted with no gap is checked on every frame inside it,
 since an act takes seconds. The three cases are worded as "I was with
-you the whole window and didn't see it", "I was with you from 9:10 PM to 9:50 PM
-and didn't see it", and "I wasn't with you during that window, so I
-can't say either way."
+you the whole time, from 9:00 to 10:00 PM, and I didn't see it happen",
+"I was with you from 9:10 to 9:50 PM, and I didn't see it then. I wasn't
+with you for the rest of the window, so I can't be sure", and "I wasn't
+with you between 9:00 and 10:00 PM, so I honestly can't say either way."
+Each alert opens like a companion checking in, with the question said
+back to the wearer: "Just checking in: it's past 10:00 PM. You asked me
+to keep an eye on this one: did you take your night pills?"
 
 ## Safety questions
 
@@ -428,8 +438,9 @@ one where a wrong word does harm. A done question is a safety
 question unless planted with `"safety": false`. "You didn't take your pills" after
 a missed witness is how Truss would cause the double dose it exists
 to prevent, so a safety alert says where to look and never says
-to act: "Check the Tuesday PM compartment first, before you act on
-this. When I see it, I'll tell you what's there." The thing to look at is
+to act: "Could you have a quick look at the Tuesday PM compartment
+yourself before you act on this? Once I can see it, I'll tell you
+what's there." The thing to look at is
 the optional `"look_at"` phrase given at planting; `{weekday}` in it
 is spoken as the day's name. Every sentence an alert can speak lives
 in one template table, and `test_safety.py` fails if any of them
@@ -442,8 +453,12 @@ refused at planting.
 After a safety miss, a state check is owed for the rest of that day.
 The next frame that shows the thing is checked as it is now, against
 its own reference looks, and the result is spoken once as a
-description ("Here is what I see now: the Tuesday PM compartment is
-empty"), with the frame kept as evidence. A cannot_tell, or a yes or
+description, never as a yes or no on the question ("Here's what I can
+see at the Tuesday PM compartment right now: the compartment still
+holds a pill."): an empty compartment is not proof the pills were
+taken, so the wearer hears what is there and decides. The frame is
+kept as evidence.
+The Desk and the app show it with an "After the window" chip. A cannot_tell, or a yes or
 no with no description behind it, is silent, and the check waits for
 the next frame, with no gap between checks. The check and its spoken
 line name the look-at phrase for the missed day, so a check owed for
@@ -500,13 +515,15 @@ Every sentence the check loop speaks lives in a template table in
 `checkloop.py`:
 
 - A firing names the time it was seen and what was seen: "Is the
-  stove off? Yes, as of 9:41 PM. All four knobs point to off." A done
-  question's firing says "I saw it at 1:02 PM".
+  stove off? Yes, that's how it looked at 9:41 PM. All four knobs point
+  to off." A done question's firing says "Yes, I saw it happen at
+  1:02 PM". The question is said back to the wearer ("Did I" is
+  spoken as "Did you").
 - The redo reminder (the stopped reach) says what was done, in the
-  wearer's own words said back, when, and that it was seen: "You took
-  your night pills at 1:02 PM. I saw you." A done question that does
-  not open "Did I ..." gets "That is already done. You did it at
-  1:02 PM. I saw you." So does one whose next word is not a known
+  wearer's own words said back, when, and that it was seen: "Just so you
+  know, you already took your night pills at 1:02 PM. I saw you." A
+  done question that does not open "Did I ..." gets "Just so you know,
+  that's already done. I saw it at 1:02 PM." So does one whose next word is not a known
   verb ("Did I already take ..."). In History the reminder shows the witness
   photo, the one of it being done.
 - The refusal, below.
@@ -515,8 +532,8 @@ Every sentence the check loop speaks lives in a template table in
 
 A safety question (the stove) that cannot be read from where the wearer is
 says so out loud, instead of staying silent: "Is the stove off? I
-can't tell. I can't see the four knobs on the front of the stove
-from here." It is spoken when all of these hold:
+can't tell from here. I can't quite see the four knobs on the front
+of the stove." It is spoken when all of these hold:
 
 - the question is a safety state question (the bedtime round plants
   the stove and the pills compartment that way), with a compiled
@@ -532,7 +549,7 @@ from here." It is spoken when all of these hold:
 The frame is kept as evidence and the answer log marks it "cannot
 tell". The detail named is the checker's own "missing" when it is a
 short plain noun phrase with no action verb in it; otherwise the line
-is "Is the stove off? I can't tell from here." `TRUSS_REFUSALS=0`
+is "Is the stove off? I can't tell from here, so I won't guess." `TRUSS_REFUSALS=0`
 turns refusals off.
 
 A safety check holds its all-clear (the stove is off, the door is

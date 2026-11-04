@@ -60,8 +60,8 @@ and the pills.
 - **Description over verdict.** A missed pills window never says "you
   didn't take your pills": the wearer may have taken them with the glasses off,
   and that sentence is how Truss would cause the double dose it exists to
-  prevent. It says where to look instead ("Check the Tuesday PM
-  compartment first, before you act on this"), and a test fails the build
+  prevent. It asks the wearer to look instead ("Could you have a quick look at
+  the Tuesday PM compartment yourself before you act on this?"), and a test fails the build
   if any alert sentence holds an action verb such as take, turn, feed or
   lock (`truss-server/test_safety.py`).
 - **Coverage is stated.** A missed-window alert says how much of the window

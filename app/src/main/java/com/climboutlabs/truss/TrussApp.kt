@@ -1290,7 +1290,7 @@ private fun HistoryScreen(state: TrussUiState, onDismissError: () -> Unit, onRef
             when (item.kind) {
               "answer" -> Triple("Yes", Truss.lime, Truss.onLime)
               "redo" -> Triple("Reminder", Truss.card, Truss.onApricot)
-              "state_check" -> Triple("Checked late", Truss.card, Truss.onApricot)
+              "state_check" -> Triple("After the window", Truss.card, Truss.onApricot)
               "cannot_tell" -> Triple("Can't tell", Truss.sage, Truss.ink)
               else -> Triple("", Truss.sage, Truss.ink)
             }
