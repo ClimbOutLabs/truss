@@ -179,7 +179,7 @@ def test_the_review_gaps_are_closed():
           "Words written in the scene" in p and "never give an all-clear" in p)
     check("a display question still reads the display", "reading a display" in p)
     check("a done question needs the act or a fresh trace",
-          "the act itself or a fresh trace" in p and "look the same either way" in p)
+          "the act itself, a fresh trace of it" in p and "look the same either way" in p)
     check("visible but in-between is cannot_tell",
           "could honestly be read either way" in p)
     s = verdict.SAFETY_INSTRUCTION
@@ -212,6 +212,30 @@ def test_the_check_knows_the_local_time():
           not any(w in p for w in ("organizer", "slot", "weekday", " am ", " pm ")))
 
 
+def test_the_wearers_own_yes_look_counts():
+    # Nov 3 live run: "Did I take my test pills 5?" saw today's
+    # compartment empty, the very yes-look planted for it, and still
+    # said cannot_tell because "empty looks the same whether taken or
+    # never placed". The wearer's own reference is the evidence they
+    # chose, for every question alike; no pill or organizer rule.
+    p = verdict.SYSTEM_PROMPT
+    check("done: the wearer's own yes-look is evidence",
+          "or the wearer's own yes-look for it when one is given" in p)
+    check("done: without it, a state that looks the same either way is not",
+          "without those, a state that would look the same either way is not evidence" in p)
+    for name, text in (("looks", verdict.LOOKS_INSTRUCTION), ("multi", verdict.MULTI_INSTRUCTION)):
+        check(f"{name}: a plain match of the yes-look answers yes",
+              "that is the evidence they chose: answer yes" in text)
+        check(f"{name}: a plain match of the no-look answers no", "answer no." in text)
+        check(f"{name}: other possible causes do not undo it", "could have other causes" in text)
+    s = verdict.SAFETY_INSTRUCTION
+    check("safety: a plainly matched yes-look is the deciding detail",
+          "own yes-look" in s and "plainly matched" in s and "is the deciding detail" in s)
+    check("safety: the all-clear rule still stands", "all-clear only when the deciding detail itself" in s)
+    low = (p + verdict.LOOKS_INSTRUCTION + verdict.SAFETY_INSTRUCTION).lower()
+    check("no scenario rule", not any(w in low for w in ("organizer", "compartment", "pill box", "slot")))
+
+
 if __name__ == "__main__":
     test_no_question_gets_its_own_rule()
     test_prompt_asks_for_the_intent()
@@ -225,4 +249,5 @@ if __name__ == "__main__":
     test_the_deciding_detail_rule_comes_first()
     test_the_review_gaps_are_closed()
     test_the_check_knows_the_local_time()
+    test_the_wearers_own_yes_look_counts()
     print("ALL PASS")
