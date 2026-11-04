@@ -78,12 +78,16 @@ def to_you(text):
     and the two verbs that agree with "I" change; every other word,
     and the punctuation, is kept as typed. A question already worded
     another way comes back unchanged."""
-    parts = re.split(r"([A-Za-z']+)", text)
+    # A typed curly apostrophe ("I’m") is read as a plain one.
+    parts = re.split(r"([A-Za-z']+)", text.replace("\u2019", "'"))
     words = [i for i in range(1, len(parts), 2)]
     lower = [parts[i].lower() for i in words]
     out = list(parts)
     for n, i in enumerate(words):
         word = lower[n]
+        if parts[i].isupper() and len(parts[i]) > 1:
+            # An all-caps word ("US", "TV") is a name, not a pronoun.
+            continue
         if word in _WITH_I and (
             (n > 0 and lower[n - 1] == "i") or (n + 1 < len(lower) and lower[n + 1] == "i")
         ):
@@ -92,7 +96,7 @@ def to_you(text):
             new = TO_YOU[word]
         else:
             continue
-        if parts[i][:1].isupper() and (word != "i" or i == words[0]):
+        if parts[i][:1].isupper() and (not word.startswith("i") or i == words[0]):
             new = new[:1].upper() + new[1:]
         out[i] = new
     return "".join(out)

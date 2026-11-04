@@ -247,46 +247,38 @@ def state_prompt(entry):
     )
 
 
-# Every sentence the post-miss state check can speak. It leads with
-# what the frame means for the question, read from the verdict against
-# the question's own yes look, then the checker's reason as it is: a
-# description of the frame. There is no line for a bare yes or no: a
-# verdict with nothing seen behind it is not spoken at all.
+# Every sentence the post-miss state check can speak. The checker's
+# reason is spoken as it is: a description of the frame, never a yes
+# or no on the question. An empty compartment is not proof the pills
+# were taken (they may have been dropped or moved), and "still a no"
+# would point toward doing it again, so the wearer hears only what is
+# there and decides. There is no line for a bare yes or no: a verdict
+# with nothing seen behind it is not spoken at all.
 MISS_CHECK_TEMPLATES = {
     "reason": (
         "I said I'd tell you once I could see it. You asked: {question} "
-        "From what I can see now, {answer}. {reason}"
+        "Here's what I can see right now: {reason}"
     ),
     "reason_look_at": (
         "I said I'd tell you once I could see it. You asked: {question} "
-        "From what I can see at {look_at} now, {answer}. {reason}"
+        "Here's what I can see at {look_at} right now: {reason}"
     ),
-}
-
-# What the state check's verdict means, said plainly. A yes is that the
-# frame matches the question's yes look; a no, that it does not yet.
-MISS_CHECK_ANSWERS = {
-    "yes": "it looks like a yes",
-    "no": "it still looks like a no",
 }
 
 
 def miss_check_text(entry, result):
     """The spoken state-check result, or None when the checker gave
-    no description to speak, or a verdict that is neither yes nor no."""
+    no description to speak."""
     reason = _reason_text(result)
-    answer = MISS_CHECK_ANSWERS.get(result.get("verdict"))
-    if not reason or answer is None:
+    if not reason:
         return None
     question = _spoken_question(entry)
     target = _owed_look_at(entry)
     if target:
         return MISS_CHECK_TEMPLATES["reason_look_at"].format(
-            question=question, look_at=target, answer=answer, reason=reason
+            question=question, look_at=target, reason=reason
         )
-    return MISS_CHECK_TEMPLATES["reason"].format(
-        question=question, answer=answer, reason=reason
-    )
+    return MISS_CHECK_TEMPLATES["reason"].format(question=question, reason=reason)
 
 
 # The refusal: what Mannie says when a safety question is in front of

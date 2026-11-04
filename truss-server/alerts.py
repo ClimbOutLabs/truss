@@ -240,13 +240,25 @@ def _spans_text(spans):
     return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
+# First words that read naturally in lower case mid-sentence. Any
+# other first word (a name: "Mia's bowl full?") keeps its capital.
+_LOWER_FIRST = {
+    "did", "do", "does", "is", "are", "was", "were", "am", "has", "have",
+    "had", "can", "could", "will", "would", "should", "shall", "may",
+    "might", "must", "you", "your", "yours", "you're", "you've",
+    "you'll", "you'd", "the", "a", "an", "it", "it's", "its", "there",
+    "any", "how", "what", "where", "when", "which", "who", "why",
+}
+
+
 def _question_text(entry):
     """The question said back to the wearer inside a sentence: "Did I
     take my pills" gives "did you take your pills?"."""
     question = to_you(entry["question"].strip())
     if not question.endswith("?"):
         question += "?"
-    if question[:1].isupper() and not question[1:2].isupper():
+    first = question.split(" ", 1)[0]
+    if first.lower() in _LOWER_FIRST and first[:1].isupper() and not first[1:2].isupper():
         question = question[:1].lower() + question[1:]
     return question
 

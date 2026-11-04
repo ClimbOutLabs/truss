@@ -82,11 +82,22 @@ def test_to_you():
         ("Did we feed the dog?", "Did you feed the dog?"),
         ("Is the stove off?", "Is the stove off?"),
         ("Is the garage door shut?", "Is the garage door shut?"),
+        ("Did I say I\u2019m home?", "Did you say you're home?"),
+        ("Is the US mail here?", "Is the US mail here?"),
     ]:
         check(f"said back: {mine!r} -> {yours!r}", to_you(mine) == yours)
 
 
+def test_inline_question():
+    from alerts import _question_text
+    check("an auxiliary first word is lower-cased mid-sentence",
+          _question_text({"question": "Did I take my pills"}) == "did you take your pills?")
+    check("a name keeps its capital",
+          _question_text({"question": "Mia's bowl full?"}) == "Mia's bowl full?")
+
+
 if __name__ == "__main__":
+    test_inline_question()
     test_parse()
     test_pick()
     test_say_command()

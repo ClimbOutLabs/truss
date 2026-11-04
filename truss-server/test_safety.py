@@ -10,6 +10,7 @@ Stdlib only. Exits non-zero on the first failure.
 """
 
 import json
+import re
 import os
 import sys
 import tempfile
@@ -97,8 +98,6 @@ def all_safety_templates():
         out[f"alerts.SPAN_TEMPLATES[{name}]"] = text
     for name, text in checkloop_module.MISS_CHECK_TEMPLATES.items():
         out[f"checkloop.MISS_CHECK_TEMPLATES[{name}]"] = text
-    for name, text in checkloop_module.MISS_CHECK_ANSWERS.items():
-        out[f"checkloop.MISS_CHECK_ANSWERS[{name}]"] = text
     # The refusal is spoken for safety questions only (the stove).
     # The redo reminder is not scanned: it is spoken only after the act
     # was seen, and says what she did ("You took your night pills at
@@ -141,6 +140,12 @@ def test_no_safety_template_instructs_the_act():
               "have a quick look" in text and "yourself before you act on this" in text)
     check("there is no bare yes or no line for the state check",
           set(checkloop_module.MISS_CHECK_TEMPLATES) == {"reason", "reason_look_at"})
+    for name, text in checkloop_module.MISS_CHECK_TEMPLATES.items():
+        bare = text.replace("{question}", " ").replace("{reason}", " ")
+        words = set(re.findall(r"[a-z]+", bare.lower()))
+        check(f"the state check {name} never answers the question yes or no",
+              not words & {"yes", "no"})
+    check("the state check has no answer table", not hasattr(checkloop_module, "MISS_CHECK_ANSWERS"))
 
 
 WINDOW_TIMES = (
@@ -614,8 +619,8 @@ def test_state_check_after_a_miss():
 
     clock.now = AFTER_CLOSE + timedelta(minutes=2)
     result = loop.process_frame(frame(captures, "3.jpg"))
-    expected = ("I said I'd tell you once I could see it. You asked: Did you take your night pills? From what I can see at the Tuesday PM compartment now, "
-                "it looks like a yes. The Tuesday PM compartment is empty.")
+    expected = ("I said I'd tell you once I could see it. You asked: Did you take your night pills? Here's what I can see at the Tuesday PM compartment right now: "
+                "The Tuesday PM compartment is empty.")
     check("the next frame showing the thing speaks what is there",
           spoken == [expected] and result["speak"] == [expected])
     check("that frame is kept as evidence",
@@ -652,8 +657,8 @@ def test_a_verdict_with_no_description_is_never_spoken():
     clock.now = AFTER_CLOSE + timedelta(minutes=5)
     loop.process_frame(frame(captures, "described.jpg"))
     check("a no with a description is spoken as that description",
-          spoken == ["I said I'd tell you once I could see it. You asked: Did you take your night pills? From what I can see at the Tuesday PM compartment now, "
-                     "it still looks like a no. The Tuesday PM compartment still holds pills."])
+          spoken == ["I said I'd tell you once I could see it. You asked: Did you take your night pills? Here's what I can see at the Tuesday PM compartment right now: "
+                     "The Tuesday PM compartment still holds pills."])
 
 
 def test_a_miss_settled_after_midnight_is_yesterdays():
@@ -680,8 +685,8 @@ def test_a_miss_settled_after_midnight_is_yesterdays():
               "Look only at the Tuesday PM compartment.")
           and "Wednesday" not in loop.check_fn.calls[0]["question"])
     check("and is offered through the small hours, naming Tuesday's compartment",
-          spoken == ["I said I'd tell you once I could see it. You asked: Did you take your night pills? From what I can see at the Tuesday PM compartment now, "
-                     "it looks like a yes. The Tuesday PM compartment is empty."])
+          spoken == ["I said I'd tell you once I could see it. You asked: Did you take your night pills? Here's what I can see at the Tuesday PM compartment right now: "
+                     "The Tuesday PM compartment is empty."])
 
     tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
         [verdict("yes", "The compartment is empty.")],

@@ -452,10 +452,12 @@ refused at planting.
 
 After a safety miss, a state check is owed for the rest of that day.
 The next frame that shows the thing is checked as it is now, against
-its own reference looks, and the result is spoken once: what the
-frame means for the question, then what was seen ("From what I can
-see at the Tuesday PM compartment now, it still looks like a no. The
-compartment still holds a pill."), with the frame kept as evidence.
+its own reference looks, and the result is spoken once as a
+description, never as a yes or no on the question ("Here's what I can
+see at the Tuesday PM compartment right now: the compartment still
+holds a pill."): an empty compartment is not proof the pills were
+taken, so the wearer hears what is there and decides. The frame is
+kept as evidence.
 The Desk and the app show it with an "After the window" chip. A cannot_tell, or a yes or
 no with no description behind it, is silent, and the check waits for
 the next frame, with no gap between checks. The check and its spoken
