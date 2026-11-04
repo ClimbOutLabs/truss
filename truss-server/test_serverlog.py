@@ -98,5 +98,30 @@ class FeedTest(unittest.TestCase):
         self.assertNotEqual(feed.run, serverlog.Feed().run)
 
 
+class LogTabTest(unittest.TestCase):
+    def test_keys_are_hidden(self):
+        env = {"TRUSS_META_API_KEY": "LLM|12345|abcdefghij", "AMAN_TOKEN": "short"}
+        self.assertEqual(
+            serverlog.hide_keys("sent LLM|12345|abcdefghij to meta", env),
+            "sent [key hidden] to meta",
+        )
+        self.assertEqual(serverlog.hide_keys("short stays", env), "short stays")
+        self.assertEqual(
+            serverlog.hide_keys("Authorization: Bearer abc123def456", {}),
+            "Authorization: Bearer [key hidden]",
+        )
+
+    def test_recent_keeps_the_tidy_lines(self):
+        recent = serverlog.Recent(size=3)
+        log = serverlog.TidyLog(io.StringIO(), keep_polls=False, clock=FIXED, recent=recent)
+        for n in range(5):
+            log.write(f"POST /capture -> saved capture_{n}.jpg\n")
+        lines = recent.since(0)
+        self.assertEqual([l["id"] for l in lines], [3, 4, 5])
+        self.assertEqual(lines[-1], {"id": 5, "at": "2026-11-03 05:30:45", "tag": "capture", "text": "saved capture_4.jpg"})
+        self.assertEqual([l["id"] for l in recent.since(4)], [5])
+        self.assertEqual(recent.since(5), [])
+
+
 if __name__ == "__main__":
     unittest.main()

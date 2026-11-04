@@ -180,6 +180,26 @@ def test_status_shows_a_check_in_flight():
         httpd.shutdown()
 
 
+def test_log_tab():
+    """GET /log serves the tidy log's latest lines after an id."""
+    import json
+    import serverlog
+    serverlog.RECENT.add("2026-11-04 01:00:00", "check", "pills: yes (3.1 s) seen")
+    newest = serverlog.RECENT.since(0)[-1]["id"]
+    httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/log?after={newest - 1}", timeout=3) as resp:
+            body = json.loads(resp.read())
+        check("GET /log returns the lines after the id", [l["text"] for l in body["lines"]] == ["pills: yes (3.1 s) seen"])
+        check("GET /log names the run", body["run"] == serverlog.RECENT.run)
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/log?after=x", timeout=3) as resp:
+            check("a bad id reads as 0", len(json.loads(resp.read())["lines"]) >= 1)
+    finally:
+        httpd.shutdown()
+
+
 if __name__ == "__main__":
     test_desk_is_served()
     test_page_calls_only_real_endpoints()
@@ -187,4 +207,5 @@ if __name__ == "__main__":
     test_latest_view()
     test_replay_is_not_the_glasses_view()
     test_status_shows_a_check_in_flight()
+    test_log_tab()
     print("ALL PASS")
