@@ -441,7 +441,12 @@ class CheckLoop:
         # will be written, or None; see sam_client.EvidenceOutliner.
         self.outline_fn = outline_fn
 
-    def process_frame(self, frame_path):
+    def process_frame(self, frame_path, return_hint=None):
+        """return_hint(slug), when given, is the hold-on gate's word on
+        whether the wearer is handling this question's thing right now
+        (see holdon.py): True stands in for the return check's yes, so
+        a wearer reaching for the pills again hears the reminder at
+        once. Anything else asks the return check as always."""
         frame_path = Path(frame_path)
         try:
             standing = [e for e in self.store.list() if e["state"] == "standing"]
@@ -463,18 +468,18 @@ class CheckLoop:
         # the answer is still on its way.
         claimed = [e["slug"] for e in due if e.get("kind") == "done"]
         try:
-            return self._check_frame(frame_path, due, watch, owed)
+            return self._check_frame(frame_path, due, watch, owed, return_hint)
         finally:
             self.store.end_checks(claimed)
 
-    def _check_frame(self, frame_path, due, watch, owed):
+    def _check_frame(self, frame_path, due, watch, owed, return_hint=None):
         now = self.now_fn()
         fired = []
         refusable = None
         errors = 0
         # What each due question's check found, for a caller that told
         # the wearer to hold on (see holdon.py).
-        seen = []
+        checked = []
         if not due:
             print("  check: no question is due on this frame (each waits for its gap)", flush=True)
         batched, batch_started = self._batch(frame_path, due)
@@ -497,7 +502,7 @@ class CheckLoop:
                 _print_check(entry, None, f"check failed: {e}", started)
             else:
                 _print_check(entry, verdict, _reason_text(result), started)
-            seen.append({
+            checked.append({
                 "slug": entry.get("slug"),
                 "question": entry.get("question"),
                 "kind": entry.get("kind"),
@@ -545,14 +550,33 @@ class CheckLoop:
                 continue
             prompt_entry = dict(entry)
             prompt_entry["question"] = return_prompt(entry)
+            started = time.monotonic()
             try:
-                result = self.check_fn(frame_path, prompt_entry)
+                hinted = return_hint is not None and return_hint(entry["slug"]) is True
+            except Exception:
+                hinted = False
+            try:
+                if hinted:
+                    result = {"verdict": "yes", "reason": "The hold-on gate saw the wearer handling it."}
+                else:
+                    result = self.check_fn(frame_path, prompt_entry)
                 if not isinstance(result, dict):
                     raise TypeError("check returned no verdict")
                 verdict = result.get("verdict")
             except Exception:
                 result, verdict = {}, None
                 errors += 1
+            # Not a "check <slug>:" line: a return check is not an
+            # answer to the question, and the check history (earlier
+            # results carried as context) must never read it as one.
+            try:
+                print(
+                    f"return check {entry.get('slug')}: {verdict or 'no verdict'} "
+                    f"({time.monotonic() - started:.1f} s) {' '.join(_reason_text(result).split())}"[:400],
+                    flush=True,
+                )
+            except Exception:
+                pass
             try:
                 # The return check is recorded like any other check,
                 # so the store's gap before the next one survives a
@@ -727,7 +751,7 @@ class CheckLoop:
             "evidence": str(evidence) if evidence else None,
             "outline": str(outline) if outline else None,
             "errors": errors,
-            "seen": seen,
+            "checked": checked,
         }
 
     def _batch(self, frame_path, due):

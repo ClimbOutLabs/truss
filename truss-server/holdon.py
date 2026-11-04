@@ -30,45 +30,47 @@ import threading
 import time
 import uuid
 
-import endpoint
-from checkloop import _spoken_question, done_act
+from datetime import datetime
 
-HOLD_LINE = "Hold on, let me check."
+import endpoint
+from checkloop import _clock
+
+HOLD_LINE = "Hold on, let me check something."
 # Said after a hold-on when the full check found nothing to say.
 NOTHING_LINE = "I couldn't confirm it that time."
 
 
 def hold_line(entries):
-    """The hold-on line, naming the question when one is due: "Hold
-    on, let me check if you took your pills." Several due, or a
-    question that does not read back, gets the plain line."""
-    if len(entries) != 1:
-        return HOLD_LINE
-    question = (entries[0].get("question") or "").strip()
-    act = done_act(question) if entries[0].get("kind") == "done" else None
-    if act:
-        return f"Hold on, let me check if you {act}."
-    if not question:
-        return HOLD_LINE
-    spoken = _spoken_question({"question": question})
-    return f"Hold on, let me check: {spoken[0].lower()}{spoken[1:]}"
+    """The hold-on line: one fixed sentence, never the question said
+    back."""
+    return HOLD_LINE
 
 
-def follow_up(seen):
-    """What to say after a hold-on when the full check fired nothing:
-    what it saw on a done question's clear no ("Not yet. ..."), or
-    NOTHING_LINE for anything else. Never an all-clear: a
-    yes always fires through the loop's own line."""
+def follow_up(checked, fired=(), speak=(), now=None):
+    """What to say after a hold-on, in Muse Spark's own words: the
+    reason its check gave, with at most a few words around it. A done
+    question that fired: the reason and "I saw it at 11:30 AM." A done
+    question's clear no: "Not yet." and the reason. Any other line the
+    loop made (a refusal, a state firing, a reminder) is said as the
+    loop wrote it. Anything else, including any state question's no
+    (which can be the all-clear itself, "All the knobs point to off"),
+    is NOTHING_LINE."""
+    by_slug = {item.get("slug"): item for item in checked or []}
+    if speak:
+        if len(fired) == 1 and len(speak) == 1:
+            item = by_slug.get(fired[0]) or {}
+            reason = (item.get("reason") or "").strip()
+            if item.get("kind") == "done" and item.get("verdict") == "yes" and reason:
+                return [f"{reason} I saw it at {_clock(now or datetime.now())}."]
+        return list(speak)
     lines = []
-    for item in seen or []:
+    for item in checked or []:
         reason = (item.get("reason") or "").strip()
-        # Only a done question's no is read back ("not done yet"). A
-        # state question's no can be the all-clear itself ("Is the
-        # stove left on?" no: "All the knobs point to off"), which is
-        # never spoken from here.
         if item.get("verdict") == "no" and reason and item.get("kind") == "done":
             lines.append(f"Not yet. {reason}")
     return [" ".join(lines)] if lines else [NOTHING_LINE]
+
+
 # How long the gate may take before it is no longer worth waiting for.
 GATE_LIMIT_S = 8.0
 # After a hold-on is spoken, the next one waits this long, so a hand

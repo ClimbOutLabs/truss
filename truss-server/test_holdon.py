@@ -98,10 +98,11 @@ def run(loop, gate_fn, hold_on="1"):
 def test_gate_yes_answers_early():
     loop = SlowLoop(1.5)
     first, first_s, later, unknown = run(loop, lambda f, q: True)
-    check("gate yes: the phone hears hold-on first", first["speak"] == ["Hold on, let me check if you took your pills."])
+    check("gate yes: the phone hears hold-on first", first["speak"] == ["Hold on, let me check something."])
     check("gate yes: before the full check is done", first_s < 1.2)
     check("gate yes: nothing fired in the early reply", first["fired"] == [])
-    check("gate yes: the full answer follows", later == {"speak": ["You took your pills."], "fired": ["pills"]})
+    check("gate yes: the loop's own line follows when it cannot be reworded",
+          later == {"speak": ["You took your pills."], "fired": ["pills"]})
     check("gate yes: the full check ran once", loop.calls == 1)
     check("an unknown id is a 404", unknown == 404)
 
@@ -127,8 +128,8 @@ def test_hold_on_then_nothing_says_so():
 class NoLoop:
     def process_frame(self, path):
         time.sleep(1.5)
-        return {"managed": True, "fired": [], "speak": [], "errors": 0, "seen": [
-            {"slug": "pills", "kind": "done", "verdict": "no",
+        return {"managed": True, "fired": [], "speak": [], "errors": 0, "checked": [
+            {"slug": "pills", "kind": "done", "verdict": "no", "question": "Did I take my pills?",
              "reason": "The Wednesday pills are still in the box."}]}
 
 
@@ -139,14 +140,17 @@ def test_hold_on_then_no_says_what_it_saw():
 
 
 def test_lines():
-    check("line: a done question is named as its act",
+    check("line: one fixed sentence, never the question",
           holdon.hold_line([{"question": "Did I take my night pills?", "kind": "done"}])
-          == "Hold on, let me check if you took your night pills.")
-    check("line: a state question is asked back",
-          holdon.hold_line([{"question": "Is my stove off?", "kind": "state"}])
-          == "Hold on, let me check: is your stove off?")
-    check("line: several questions get the plain line",
-          holdon.hold_line([{"question": "a"}, {"question": "b"}]) == holdon.HOLD_LINE)
+          == "Hold on, let me check something.")
+    check("follow-up: a done question's yes says when it was seen",
+          holdon.follow_up([{"slug": "p", "kind": "done", "verdict": "yes",
+                             "reason": "The Wednesday compartment is empty."}],
+                           fired=["p"], speak=["loop line"],
+                           now=__import__("datetime").datetime(2026, 11, 4, 11, 30))
+          == ["The Wednesday compartment is empty. I saw it at 11:30 AM."])
+    check("follow-up: other lines are said as the loop wrote them",
+          holdon.follow_up([], fired=[], speak=["a refusal"]) == ["a refusal"])
     check("follow-up: cannot_tell is the couldn't-confirm line",
           holdon.follow_up([{"verdict": "cannot_tell", "reason": "too dark", "kind": "done"}])
           == [holdon.NOTHING_LINE])

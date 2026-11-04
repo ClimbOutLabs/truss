@@ -484,11 +484,13 @@ def guide_said(alert_id):
 HOLD = holdon.Pending()
 
 
-def _run_loop(filepath):
+def _run_loop(filepath, return_hint=None):
     """LOOP.process_frame, never raising: a loop failure must never
     break the capture itself."""
     try:
-        return LOOP.process_frame(filepath)
+        if return_hint is None:
+            return LOOP.process_frame(filepath)
+        return LOOP.process_frame(filepath, return_hint=return_hint)
     except Exception as e:
         print(f"POST /capture -> loop failed, frame kept: {e}")
         return {"managed": False, "fired": [], "speak": [], "errors": 1}
@@ -1690,17 +1692,26 @@ class TrussHandler(BaseHTTPRequestHandler):
         ):
             try:
                 now = CLOCK()
-                gated = list(STORE.due(now=now)) + list(STORE.redo_watch(now=now))
+                due_now = list(STORE.due(now=now))
+                watched = list(STORE.redo_watch(now=now))
             except Exception:
-                gated = []
+                due_now, watched = [], []
+            gated = due_now + watched
             questions = [e["question"] for e in gated]
         if not questions:
             return _run_loop(filepath)
         either = threading.Event()
+        gate_done = threading.Event()
         box = {}
 
+        def hint(slug):
+            # A question already seen done today: the gate's yes (the
+            # wearer handling it again) is the return check's yes.
+            gate_done.wait(holdon.GATE_LIMIT_S)
+            return box.get("gate") is True
+
         def full():
-            box["result"] = _run_loop(filepath)
+            box["result"] = _run_loop(filepath, hint if watched else None)
             box["full"] = True
             either.set()
 
@@ -1709,6 +1720,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             yes = holdon.gate(filepath, questions)
             print(f"gate: {'yes' if yes else 'no'} ({time.monotonic() - started:.1f} s)", flush=True)
             box["gate"] = yes
+            gate_done.set()
             either.set()
 
         worker = threading.Thread(target=full, daemon=True)
@@ -1718,12 +1730,15 @@ class TrussHandler(BaseHTTPRequestHandler):
         while not box.get("full") and "gate" not in box and time.monotonic() < limit:
             either.wait(0.05)
             either.clear()
-        if box.get("full") or not box.get("gate"):
+        # Only a question that will really be checked is worth a
+        # hold-on; one already seen done today hears its reminder
+        # straight away instead (see hint).
+        if box.get("full") or not box.get("gate") or not due_now:
             worker.join()
             return box["result"]
         pid = HOLD.open()
         HOLD.held()
-        early = dict(response, speak=[holdon.hold_line(gated)], fired=[], pending=pid)
+        early = dict(response, speak=[holdon.hold_line(due_now)], fired=[], pending=pid)
         data = json.dumps(early).encode()
         try:
             self.send_response(200)
@@ -1743,9 +1758,13 @@ class TrussHandler(BaseHTTPRequestHandler):
         speak = result.get("speak", []) if managed else []
         HOLD.finish(pid, {
             # The wearer was told to hold on, so silence would leave
-            # them waiting: a check that found nothing to say says so,
-            # without claiming anything about the state.
-            "speak": speak or holdon.follow_up(result.get("seen") if managed else None),
+            # them waiting: see holdon.follow_up for what is said.
+            "speak": holdon.follow_up(
+                result.get("checked") if managed else None,
+                fired=result.get("fired", []) if managed else [],
+                speak=speak,
+                now=CLOCK(),
+            ),
             "fired": result.get("fired", []) if managed else [],
         })
         if managed:
