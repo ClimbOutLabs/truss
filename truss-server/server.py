@@ -1705,10 +1705,11 @@ class TrussHandler(BaseHTTPRequestHandler):
         box = {}
 
         def hint(slug):
-            # A question already seen done today: the gate's yes (the
-            # wearer handling it again) is the return check's yes.
+            # A question already seen done today: the gate saying the
+            # wearer is handling this question's own thing again is the
+            # return check's yes. Another question's thing never is.
             gate_done.wait(holdon.GATE_LIMIT_S)
-            return box.get("gate") is True
+            return slug in box.get("handled", set())
 
         def full():
             box["result"] = _run_loop(filepath, hint if watched else None)
@@ -1717,9 +1718,16 @@ class TrussHandler(BaseHTTPRequestHandler):
 
         def quick():
             started = time.monotonic()
-            yes = holdon.gate(filepath, questions)
-            print(f"gate: {'yes' if yes else 'no'} ({time.monotonic() - started:.1f} s)", flush=True)
-            box["gate"] = yes
+            picked = holdon.gate(filepath, questions)
+            handled = {gated[i].get("slug") for i in picked}
+            print(
+                f"gate: {', '.join(sorted(str(h) for h in handled)) if handled else 'no'} "
+                f"({time.monotonic() - started:.1f} s)",
+                flush=True,
+            )
+            box["handled"] = handled
+            # A hold-on only for a due question that is really checked.
+            box["gate"] = bool(handled & {e.get("slug") for e in due_now})
             gate_done.set()
             either.set()
 

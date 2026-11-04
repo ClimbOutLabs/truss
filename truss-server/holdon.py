@@ -34,6 +34,7 @@ from datetime import datetime
 
 import endpoint
 from checkloop import _clock
+from wording import to_you
 
 HOLD_LINE = "Hold on, let me check something."
 # Said after a hold-on when the full check found nothing to say.
@@ -59,13 +60,13 @@ def follow_up(checked, fired=(), speak=(), now=None):
     if speak:
         if len(fired) == 1 and len(speak) == 1:
             item = by_slug.get(fired[0]) or {}
-            reason = (item.get("reason") or "").strip()
+            reason = to_you((item.get("reason") or "").strip())
             if item.get("kind") == "done" and item.get("verdict") == "yes" and reason:
                 return [f"{reason} I saw it at {_clock(now or datetime.now())}."]
         return list(speak)
     lines = []
     for item in checked or []:
-        reason = (item.get("reason") or "").strip()
+        reason = to_you((item.get("reason") or "").strip())
         if item.get("verdict") == "no" and reason and item.get("kind") == "done":
             lines.append(f"Not yet. {reason}")
     return [" ".join(lines)] if lines else [NOTHING_LINE]
@@ -84,8 +85,8 @@ RESULT_WAIT_S = 280.0
 
 GATE_SCHEMA = {
     "type": "object",
-    "properties": {"in_view": {"type": "boolean"}},
-    "required": ["in_view"],
+    "properties": {"handling": {"type": "array", "items": {"type": "integer"}}},
+    "required": ["handling"],
     "additionalProperties": False,
 }
 
@@ -96,7 +97,8 @@ GATE_SYSTEM = (
     "with the thing one of them is about, right now: a hand on it or "
     "reaching into it, holding it, opening it, turning it, or the act "
     "the question asks about under way. The thing only sitting in view, "
-    "with no hand on it, is false: in_view true or false."
+    "with no hand on it, does not count. Reply with the numbers of the "
+    "questions whose thing is being handled, or an empty list."
 )
 
 
@@ -110,10 +112,12 @@ def gate_effort():
 
 
 def gate(frame_path, questions):
-    """True when the quick look says one of the questions' things is in
-    view; False on a no or any failure. Never raises."""
+    """The positions (from 0) of the questions whose thing the quick
+    look says the wearer is handling right now; empty on a no or any
+    failure. Each question gets its own answer, so handling the stove
+    never counts for the pills. Never raises."""
     try:
-        lines = "\n".join(f"- {q}" for q in questions if q)
+        lines = "\n".join(f"{n}. {q}" for n, q in enumerate(questions, start=1))
         content = [
             endpoint.text_part(f"Questions (do not answer them):\n{lines}"),
             endpoint.image_part(frame_path),
@@ -121,9 +125,12 @@ def gate(frame_path, questions):
         reply = endpoint.ask_json(
             GATE_SYSTEM, content, GATE_SCHEMA, "gate", max_tokens=2048, effort=gate_effort()
         )
-        return reply.get("in_view") is True
+        return {
+            n - 1 for n in reply.get("handling", [])
+            if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(questions)
+        }
     except Exception:
-        return False
+        return set()
 
 
 class Pending:

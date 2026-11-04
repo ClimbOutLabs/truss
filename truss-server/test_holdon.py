@@ -45,7 +45,7 @@ class SlowLoop:
 
 class DueStore:
     def due(self, now=None):
-        return [{"question": "Did I take my pills?", "kind": "done"}]
+        return [{"slug": "pills", "question": "Did I take my pills?", "kind": "done"}]
 
     def redo_watch(self, now=None):
         return []
@@ -97,7 +97,7 @@ def run(loop, gate_fn, hold_on="1"):
 
 def test_gate_yes_answers_early():
     loop = SlowLoop(1.5)
-    first, first_s, later, unknown = run(loop, lambda f, q: True)
+    first, first_s, later, unknown = run(loop, lambda f, q: {0})
     check("gate yes: the phone hears hold-on first", first["speak"] == ["Hold on, let me check something."])
     check("gate yes: before the full check is done", first_s < 1.2)
     check("gate yes: nothing fired in the early reply", first["fired"] == [])
@@ -108,7 +108,7 @@ def test_gate_yes_answers_early():
 
 
 def test_gate_no_changes_nothing():
-    first, _, later, _ = run(SlowLoop(0.3), lambda f, q: False)
+    first, _, later, _ = run(SlowLoop(0.3), lambda f, q: set())
     check("gate no: the reply is the full answer", first["speak"] == ["You took your pills."])
     check("gate no: no pending id", "pending" not in first and later is None)
 
@@ -120,7 +120,7 @@ class QuietLoop:
 
 
 def test_hold_on_then_nothing_says_so():
-    first, _, later, _ = run(QuietLoop(), lambda f, q: True)
+    first, _, later, _ = run(QuietLoop(), lambda f, q: {0})
     check("nothing found: the follow-up says so, never a state",
           first["speak"][0].startswith("Hold on") and later["speak"] == [holdon.NOTHING_LINE])
 
@@ -134,7 +134,7 @@ class NoLoop:
 
 
 def test_hold_on_then_no_says_what_it_saw():
-    _, _, later, _ = run(NoLoop(), lambda f, q: True)
+    _, _, later, _ = run(NoLoop(), lambda f, q: {0})
     check("a clear no: says what it saw",
           later["speak"] == ["Not yet. The Wednesday pills are still in the box."])
 
@@ -165,13 +165,13 @@ def test_lines():
 def test_full_check_first_wins():
     def slow_gate(f, q):
         time.sleep(1.0)
-        return True
+        return {0}
     first, _, later, _ = run(SlowLoop(0.1), slow_gate)
     check("full first: no hold-on", first["speak"] == ["You took your pills."] and later is None)
 
 
 def test_off_by_default():
-    first, _, later, _ = run(SlowLoop(0.3), lambda f, q: True, hold_on="")
+    first, _, later, _ = run(SlowLoop(0.3), lambda f, q: {0}, hold_on="")
     check("off: no hold-on even on a gate yes", first["speak"] == ["You took your pills."] and later is None)
 
 
@@ -199,11 +199,58 @@ def test_rest_and_uncollected():
     check("pending: a new guide cannot clear it (own queue)", not hasattr(p, "_say_later"))
 
 
+class WatchStore:
+    """Pills already seen done today; the stove is due."""
+    def due(self, now=None):
+        return [{"slug": "stove", "question": "Is the stove off?", "kind": "state"}]
+
+    def redo_watch(self, now=None):
+        return [{"slug": "pills", "question": "Did I take my pills?", "kind": "done"}]
+
+
+class HintLoop:
+    def __init__(self):
+        self.hints = {}
+
+    def process_frame(self, path, return_hint=None):
+        if return_hint is not None:
+            self.hints = {slug: return_hint(slug) for slug in ("pills", "stove")}
+        return {"managed": True, "fired": [], "speak": [], "errors": 0, "checked": []}
+
+
+def test_hint_is_per_question():
+    loop = HintLoop()
+    saved = DueStore.due, DueStore.redo_watch
+    DueStore.due, DueStore.redo_watch = WatchStore.due, WatchStore.redo_watch
+    try:
+        # The gate saw the stove being handled (question 1), not the pills.
+        run(loop, lambda f, q: {0})
+        check("hint: handling the stove never counts for the pills",
+              loop.hints.get("pills") is False)
+        run(loop, lambda f, q: {1})
+        check("hint: handling the pills counts for the pills",
+              loop.hints.get("pills") is True)
+    finally:
+        DueStore.due, DueStore.redo_watch = saved
+
+
+def test_gate_reads_numbers():
+    saved = holdon.endpoint.ask_json
+    holdon.endpoint.ask_json = lambda *a, **k: {"handling": [2, 9, True, 0]}
+    try:
+        frame = Path(tempfile.mkdtemp()) / "f.jpg"
+        frame.write_bytes(b"x")
+        check("gate: only real question numbers count",
+              holdon.gate(str(frame), ["a", "b", "c"]) == {1})
+    finally:
+        holdon.endpoint.ask_json = saved
+
+
 def test_gate_failure_is_no():
     saved = holdon.endpoint.ask_json
     holdon.endpoint.ask_json = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down"))
     try:
-        check("gate: a failure is a no", holdon.gate("/nonexistent.jpg", ["q"]) is False)
+        check("gate: a failure is a no", holdon.gate("/nonexistent.jpg", ["q"]) == set())
     finally:
         holdon.endpoint.ask_json = saved
 
@@ -217,5 +264,7 @@ if __name__ == "__main__":
     test_full_check_first_wins()
     test_off_by_default()
     test_rest_and_uncollected()
+    test_hint_is_per_question()
+    test_gate_reads_numbers()
     test_gate_failure_is_no()
     print("ALL PASS")
