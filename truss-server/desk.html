@@ -1145,6 +1145,7 @@ $("plant").addEventListener("submit", async (ev) => {
     $("p-text").value = "";
     $("p-look").value = "";
     clearLooks();
+    delete $("p-when").dataset.touched;
   } catch (e) {
     showMsg("p-msg", e.message, true);
   } finally {
