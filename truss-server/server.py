@@ -484,10 +484,12 @@ def guide_said(alert_id):
 HOLD = holdon.Pending()
 
 
-def _run_loop(filepath, return_hint=None):
+def _run_loop(filepath, return_hint=None, force=None):
     """LOOP.process_frame, never raising: a loop failure must never
     break the capture itself."""
     try:
+        if force:
+            return LOOP.process_frame(filepath, force=force)
         if return_hint is None:
             return LOOP.process_frame(filepath)
         return LOOP.process_frame(filepath, return_hint=return_hint)
@@ -1694,8 +1696,14 @@ class TrussHandler(BaseHTTPRequestHandler):
                 now = CLOCK()
                 due_now = list(STORE.due(now=now))
                 watched = list(STORE.redo_watch(now=now))
+                waiting = [] if (due_now or watched) else list(STORE.due(now=now, ignore_gap=True))
             except Exception:
-                due_now, watched = [], []
+                due_now, watched, waiting = [], [], []
+            if waiting:
+                # Nothing is due, only waiting out its gap: the gate
+                # runs first, and a question it sees being handled is
+                # checked on this frame anyway, after a hold-on.
+                return self._gate_then_check(filepath, response, filename, file_size, waiting)
             gated = due_now + watched
             questions = [e["question"] for e in gated]
         if not questions:
@@ -1746,7 +1754,15 @@ class TrussHandler(BaseHTTPRequestHandler):
             return box["result"]
         pid = HOLD.open()
         HOLD.held()
-        early = dict(response, speak=[holdon.hold_line(due_now)], fired=[], pending=pid)
+        self._send_early(response, pid)
+        print(f"POST /capture -> saved {filename} ({file_size} bytes)")
+        print(f"POST /capture -> hold-on spoken, answer {pid} follows")
+        worker.join()
+        self._finish_pending(pid, box["result"])
+        return None
+
+    def _send_early(self, response, pid):
+        early = dict(response, speak=[holdon.HOLD_LINE], fired=[], pending=pid)
         data = json.dumps(early).encode()
         try:
             self.send_response(200)
@@ -1758,10 +1774,32 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.connection.shutdown(socket.SHUT_WR)
         except OSError:
             pass
+
+    def _gate_then_check(self, filepath, response, filename, file_size, waiting):
+        """No question due, some waiting out their gap: ask the gate
+        first. Nothing handled is the ordinary loop on this frame. A
+        handled question gets the hold-on line and is checked on this
+        frame, its gap waived, and the answer follows as usual."""
+        started = time.monotonic()
+        picked = holdon.gate(filepath, [e["question"] for e in waiting])
+        force = {waiting[i].get("slug") for i in picked}
+        print(
+            f"gate: {', '.join(sorted(str(f) for f in force)) if force else 'no'} "
+            f"({time.monotonic() - started:.1f} s, before its gap)",
+            flush=True,
+        )
+        if not force:
+            return _run_loop(filepath)
+        pid = HOLD.open()
+        HOLD.held()
+        self._send_early(response, pid)
         print(f"POST /capture -> saved {filename} ({file_size} bytes)")
-        print(f"POST /capture -> hold-on spoken, answer {pid} follows")
-        worker.join()
-        result = box["result"]
+        print(f"POST /capture -> hold-on spoken, answer {pid} follows (gap waived)")
+        result = _run_loop(filepath, force=force)
+        self._finish_pending(pid, result)
+        return None
+
+    def _finish_pending(self, pid, result):
         managed = result.get("managed")
         speak = result.get("speak", []) if managed else []
         HOLD.finish(pid, {
@@ -1777,7 +1815,6 @@ class TrussHandler(BaseHTTPRequestHandler):
         })
         if managed:
             print(f"POST /capture -> loop: fired={result['fired']} errors={result['errors']} (answer {pid})")
-        return None
 
     def handle_capture_result(self):
         """GET /capture/result?id=: the full answer for a capture that

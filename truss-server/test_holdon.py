@@ -32,6 +32,26 @@ def check(name, ok):
         raise SystemExit(1)
 
 
+class GapStore:
+    """Nothing due; the pills question is waiting out its gap."""
+    def due(self, now=None, ignore_gap=False):
+        return [{"slug": "pills", "question": "Did I take my pills?", "kind": "done"}] if ignore_gap else []
+
+    def redo_watch(self, now=None):
+        return []
+
+
+class ForceLoop:
+    def __init__(self):
+        self.force = None
+
+    def process_frame(self, path, return_hint=None, force=None):
+        self.force = force
+        checked = [{"slug": "pills", "kind": "done", "verdict": "no",
+                    "reason": "Pills are still in the box."}] if force else []
+        return {"managed": True, "fired": [], "speak": [], "errors": 0, "checked": checked}
+
+
 class SlowLoop:
     def __init__(self, seconds):
         self.seconds = seconds
@@ -58,11 +78,11 @@ def multipart(data=b"\xff\xd8x"):
     return body, f"multipart/form-data; boundary={b}"
 
 
-def run(loop, gate_fn, hold_on="1"):
+def run(loop, gate_fn, hold_on="1", store=None):
     tmp = Path(tempfile.mkdtemp())
     (tmp / "captures").mkdir()
     saved = (S.CAPTURES_DIR, S.LOOP, S.STORE, holdon.gate, S.endpoint.meta_on, S.run_sweep, S.HOLD)
-    S.CAPTURES_DIR, S.LOOP, S.STORE = tmp / "captures", loop, DueStore()
+    S.CAPTURES_DIR, S.LOOP, S.STORE = tmp / "captures", loop, store or DueStore()
     holdon.gate = gate_fn
     S.endpoint.meta_on = lambda: True
     S.run_sweep = lambda: None
@@ -246,6 +266,17 @@ def test_gate_reads_numbers():
         holdon.endpoint.ask_json = saved
 
 
+def test_gap_waived_when_handled():
+    loop = ForceLoop()
+    first, _, later, _ = run(loop, lambda f, q: {0}, store=GapStore())
+    check("gap: a handled question is checked inside its gap", loop.force == {"pills"})
+    check("gap: after a hold-on", first["speak"] == [holdon.HOLD_LINE] and "pending" in first)
+    check("gap: and its answer follows", later["speak"] == ["Not yet. Pills are still in the box."])
+    loop = ForceLoop()
+    first, _, later, _ = run(loop, lambda f, q: set(), store=GapStore())
+    check("gap: nothing handled waits its gap as before", loop.force is None and "pending" not in first)
+
+
 def test_gate_failure_is_no():
     saved = holdon.endpoint.ask_json
     holdon.endpoint.ask_json = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down"))
@@ -266,5 +297,6 @@ if __name__ == "__main__":
     test_rest_and_uncollected()
     test_hint_is_per_question()
     test_gate_reads_numbers()
+    test_gap_waived_when_handled()
     test_gate_failure_is_no()
     print("ALL PASS")

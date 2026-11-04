@@ -441,12 +441,14 @@ class CheckLoop:
         # will be written, or None; see sam_client.EvidenceOutliner.
         self.outline_fn = outline_fn
 
-    def process_frame(self, frame_path, return_hint=None):
+    def process_frame(self, frame_path, return_hint=None, force=None):
         """return_hint(slug), when given, is the hold-on gate's word on
         whether the wearer is handling this question's thing right now
         (see holdon.py): True stands in for the return check's yes, so
         a wearer reaching for the pills again hears the reminder at
-        once. Anything else asks the return check as always."""
+        once. Anything else asks the return check as always. force is
+        a set of slugs the gate saw being handled: checked on this frame
+        even inside their gap (see QuestionStore.claim_due)."""
         frame_path = Path(frame_path)
         try:
             standing = [e for e in self.store.list() if e["state"] == "standing"]
@@ -454,7 +456,10 @@ class CheckLoop:
             owed = self.store.miss_check_watch(now=self.now_fn())
             # Claimed last, so nothing after it in this block can fail
             # and leak the claim.
-            due = self.store.claim_due(now=self.now_fn()) if standing else []
+            if force:
+                due = self.store.claim_due(now=self.now_fn(), force=force) if standing else []
+            else:
+                due = self.store.claim_due(now=self.now_fn()) if standing else []
         except Exception:
             # A broken question file must never break capturing. Fall
             # back to day 1 behavior: keep the frame, manage nothing.
