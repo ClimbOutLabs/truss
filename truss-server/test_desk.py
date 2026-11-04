@@ -43,6 +43,25 @@ def test_desk_is_served():
         httpd.shutdown()
 
 
+def test_favicon_is_served():
+    """GET /favicon.ico gives the browser a real icon, so a page load
+    stops landing in the log as a 404."""
+    httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/favicon.ico") as resp:
+            body = resp.read()
+            check("GET /favicon.ico is 200", resp.status == 200)
+            check("GET /favicon.ico is an image",
+                  resp.headers["Content-Type"].startswith("image/"))
+            check("GET /favicon.ico has a body", len(body) > 0)
+            check("GET /favicon.ico is cached for a day",
+                  "max-age=86400" in resp.headers.get("Cache-Control", ""))
+    finally:
+        httpd.shutdown()
+
+
 def test_page_calls_only_real_endpoints():
     page = (Path(__file__).parent / "desk.html").read_text()
     source = (Path(__file__).parent / "server.py").read_text()
@@ -202,6 +221,7 @@ def test_log_tab():
 
 if __name__ == "__main__":
     test_desk_is_served()
+    test_favicon_is_served()
     test_page_calls_only_real_endpoints()
     test_only_the_buttons_start_watching()
     test_latest_view()
