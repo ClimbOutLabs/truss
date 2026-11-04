@@ -878,7 +878,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
 
   /**
    * Live view: keep the open video running until the view differs from the last one the
-   * laptop received (or that one is a while old, or the glasses held still on another
+   * laptop received (or the glasses held still on another
    * view since, see lookedAwaySinceSent) and has held still for a moment, so the
    * photo taken next is of something new and not blurred by a turning head. Nothing here
    * knows what is in the view; it only compares small grey pictures of the video.
@@ -965,11 +965,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                         // A different view held still, not a head shake's blur.
                         if (differs && now - steadySince >= LIVE_STEADY_MS) lookedAwaySinceSent = true
                         if (waiting) return@first false
-                        val changed =
-                            last == null ||
-                                now - lastSentAt >= SAME_VIEW_WINDOW_MS ||
-                                differs ||
-                                lookedAwaySinceSent
+                        // Only a change counts: Live view never re-sends the same view on a
+                        // clock (that read as timed photos while the glasses lay still).
+                        val changed = last == null || differs || lookedAwaySinceSent
                         // Held still long enough, and this frame is about as sharp as
                         // the sharpest since it held still: a small head shake blurs a
                         // frame without moving the grid much, so a blurred one waits for
@@ -977,7 +975,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                         val sharpEnough =
                             sharp * 100 >= bestSharp * LIVE_SHARP_PERCENT ||
                                 now - steadySince >= LIVE_SHARP_WAIT_MS
-                        if (changed && now - steadySince >= LIVE_STEADY_MS && sharpEnough) {
+                        if (changed && now - steadySince >= LIVE_SEND_STILL_MS && sharpEnough) {
                           pendingLive = current
                           lookNow = true
                           true
@@ -2202,8 +2200,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val LIVE_FRAME_RATE = 7
     // Mean grey-level difference below which two photos count as the same view.
     private const val SAME_VIEW_THRESHOLD = 8
-    // A same view is sent again after this long anyway, so a question that has
-    // just come due still gets its look.
+    // Timed photos: a same view is sent again after this long anyway, so a question that
+    // has just come due still gets its look. Live view sends only on a change.
     private const val SAME_VIEW_WINDOW_MS = 120_000L
     // Live view: how often a video frame is looked at, how little a view may move between
     // two looks to count as still, how long it must stay still, and the longest hold
@@ -2211,11 +2209,14 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     private const val LIVE_LOOK_EVERY_MS = 250L
     private const val LIVE_STEADY_THRESHOLD = 4
     private const val LIVE_STEADY_MS = 1_000L
+    // Live view sends a new view only once it has held still this long: you stopped to
+    // look at something. A pause while walking is shorter and sends nothing.
+    private const val LIVE_SEND_STILL_MS = 3_000L
     private const val LIVE_HOLD_MAX_MS = 180_000L
     // Live view: a still frame goes only when it is at least this percent as sharp as the
     // sharpest frame since the view held still, or once it has held still this long.
     private const val LIVE_SHARP_PERCENT = 85
-    private const val LIVE_SHARP_WAIT_MS = 3_000L
+    private const val LIVE_SHARP_WAIT_MS = 4_000L
     // Rows read for the sharpness measure, spread over the middle half of the frame.
     private const val SHARP_ROWS = 36
   }
