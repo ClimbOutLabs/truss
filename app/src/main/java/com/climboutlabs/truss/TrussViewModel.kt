@@ -1408,6 +1408,14 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
    * moment ago is not sent again. Three failed photos in a row stop watching.
    */
   fun startWatching(requestPermission: suspend (Permission) -> PermissionStatus) {
+    // A Desk look still waiting for its one photo is taken by watching instead.
+    if (_uiState.value.deskLookPending) {
+      _uiState.update { it.copy(deskLookPending = false) }
+      if (SystemClock.elapsedRealtime() - deskLookAskedAt <= LOOK_FRESH_MS) {
+        lookAskedAt = deskLookAskedAt
+        lookAsked = true
+      }
+    }
     if (watchJob?.isActive == true) {
       // Switched back on while a last photo was still finishing: keep going.
       if (watchStopAsked) {
@@ -1545,6 +1553,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
   fun stopWatching() {
     stoppedAt = SystemClock.elapsedRealtime()
     lookAsked = false
+    _uiState.update { it.copy(deskLookPending = false) }
     watchStopAsked = true
     holdYield = true
     _uiState.update { it.copy(watching = false, deskStartPending = false) }
@@ -1704,6 +1713,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     if (!_uiState.value.deskLookPending) return
     _uiState.update { it.copy(deskLookPending = false) }
     if (_uiState.value.watching) return
+    // The Desk has given up on a look this old (check-ins pause during a capture).
+    if (SystemClock.elapsedRealtime() - deskLookAskedAt > LOOK_FRESH_MS) return
     photoLog("The Desk asked for a photo now.")
     captureAndUpload(requestPermission)
   }

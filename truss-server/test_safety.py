@@ -440,6 +440,21 @@ def test_failed_checks_are_not_watching():
           created[0]["coverage"] == "none")
 
 
+def test_checker_outages_are_not_watching():
+    """The checker reports an outage as cannot_tell with a failure
+    kind, not as an exception. Those frames were never looked at, so
+    the alert must not say it watched."""
+    outage = {"verdict": "cannot_tell", "reason": "The API timed out. So no check was made.",
+              "missing": "", "failure": "timeout"}
+    tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
+        script=[dict(outage) for _ in range(60)], start=at(21, 0))
+    planted(store)
+    run_window(loop, clock, captures, 60)
+    created = sweep_missed(store, alerts, now=AFTER_CLOSE, checks=checks)
+    check("cannot_tell from a failed call counts as no watching at all",
+          created[0]["coverage"] == "none")
+
+
 # -- the safety flag -----------------------------------------------------------
 
 
@@ -842,6 +857,7 @@ if __name__ == "__main__":
     test_frames_inside_the_check_gap_are_not_watching()
     test_a_done_window_is_checked_on_every_frame()
     test_failed_checks_are_not_watching()
+    test_checker_outages_are_not_watching()
     test_safety_flag_in_the_store()
     test_only_safety_questions_owe_a_state_check()
     test_a_spoken_state_check_is_never_owed_again_that_day()

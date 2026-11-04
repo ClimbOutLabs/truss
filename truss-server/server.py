@@ -656,7 +656,7 @@ class TrussHandler(BaseHTTPRequestHandler):
             after = int(query.get("after", ["0"])[0])
         except ValueError:
             after = 0
-        self.send_json({"lines": FEED.since(after)})
+        self.send_json({"lines": FEED.since(after), "run": FEED.run})
 
     def handle_feed_audio(self):
         """One spoken line's audio, exactly as the glasses played it."""
