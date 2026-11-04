@@ -646,11 +646,24 @@ def _ask_one_inner(cfg, system, content, schema, schema_name, max_tokens):
         except _Truncated:
             # Whatever a cut-off reply holds is never read: a draft
             # inside unfinished thinking must not become the answer.
-            failure, failure_kind = (
-                "The model's reply was cut off before it finished.",
-                "truncated",
-            )
+            # The log says which kind of cut-off it was, and how many
+            # tokens it used, so a repeat can be told apart: the token
+            # limit (thinking counts toward it), or thinking that never
+            # closed although the model said it was done. Either way the
+            # retry gets more room.
+            spent = used["output_tokens"]
+            if finish == "length":
+                failure = (
+                    "The model's reply was cut off at the token limit "
+                    f"({spent or '?'} of {max_tokens or 'unset'} tokens, thinking included)."
+                )
+            else:
+                failure = (
+                    "The model's reply was cut off: its thinking never closed "
+                    f"(finish_reason {finish or 'none'}, {spent or '?'} of {max_tokens or 'unset'} tokens)."
+                )
             max_tokens = (max_tokens or 1024) * TRUNCATION_GROWTH
+            failure_kind = "truncated"
             continue
         if parsed is None:
             failure, failure_kind = "The model's reply was not JSON.", "invalid"
