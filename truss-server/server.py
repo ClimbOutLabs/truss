@@ -1690,12 +1690,13 @@ class TrussHandler(BaseHTTPRequestHandler):
             holdon.enabled()
             and self.headers.get("Origin") is None
             and endpoint.meta_on()
-            and HOLD.may_hold()
         ):
             try:
                 now = CLOCK()
                 due_now = list(STORE.due(now=now))
-                watched = list(STORE.redo_watch(now=now))
+                # Reminded already counts too: a hand on the thing again
+                # repeats the reminder (see CheckLoop's REDO_REPEAT_S).
+                watched = list(STORE.redo_watch(now=now, include_spoken=True))
                 waiting = [] if (due_now or watched) else list(STORE.due(now=now, ignore_gap=True))
             except Exception:
                 due_now, watched, waiting = [], [], []
@@ -1713,11 +1714,12 @@ class TrussHandler(BaseHTTPRequestHandler):
         box = {}
 
         def hint(slug):
-            # A question already seen done today: the gate saying the
-            # wearer is handling this question's own thing again is the
-            # return check's yes. Another question's thing never is.
+            # A question already seen done today: the gate seeing this
+            # question's own thing in shot again is the return check's
+            # yes, and the reminder is said again every time. Another
+            # question's thing never counts.
             gate_done.wait(holdon.GATE_LIMIT_S)
-            return slug in box.get("handled", set())
+            return slug in box.get("close", set())
 
         def full():
             box["result"] = _run_loop(filepath, hint if watched else None)
@@ -1735,12 +1737,9 @@ class TrussHandler(BaseHTTPRequestHandler):
                 f"({time.monotonic() - started:.1f} s)",
                 flush=True,
             )
-            # Only a hand on it stands in for the return check: a glance
-            # must never spend the once-only reminder.
-            box["handled"] = handled
-            # A hold-on, for a glance or a hand, only for a due question
-            # that is really checked.
-            box["gate"] = bool(close & {e.get("slug") for e in due_now})
+            box["close"] = close
+            # A hold-on whenever a question's thing is in shot.
+            box["gate"] = bool(close & {e.get("slug") for e in due_now + watched})
             gate_done.set()
             either.set()
 
@@ -1751,10 +1750,21 @@ class TrussHandler(BaseHTTPRequestHandler):
         while not box.get("full") and "gate" not in box and time.monotonic() < limit:
             either.wait(0.05)
             either.clear()
-        # Only a question that will really be checked is worth a
-        # hold-on; one already seen done today hears its reminder
-        # straight away instead (see hint).
-        if box.get("full") or not box.get("gate") or not due_now:
+        if box.get("full"):
+            # The loop finished first (a reminder needs no model call):
+            # the hold-on still leads when the thing is in shot, in the
+            # same reply.
+            gate_done.wait(max(0.0, limit - time.monotonic()))
+            result = box["result"]
+            if box.get("gate") and HOLD.may_hold() and result.get("managed"):
+                HOLD.held()
+                print("POST /capture -> hold-on spoken with the answer")
+                return dict(result, speak=[holdon.HOLD_LINE] + holdon.follow_up(
+                    result.get("checked"), fired=result.get("fired", []),
+                    speak=result.get("speak", []), now=CLOCK(),
+                ))
+            return result
+        if not box.get("gate") or not HOLD.may_hold():
             worker.join()
             return box["result"]
         pid = HOLD.open()
@@ -1793,8 +1803,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             f"({time.monotonic() - started:.1f} s, before its gap)",
             flush=True,
         )
-        if not force:
-            return _run_loop(filepath)
+        if not force or not HOLD.may_hold():
+            return _run_loop(filepath, force=force)
         pid = HOLD.open()
         HOLD.held()
         self._send_early(response, pid)

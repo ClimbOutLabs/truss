@@ -33,7 +33,9 @@ import uuid
 from datetime import datetime
 
 import endpoint
-from checkloop import _clock
+import re
+
+from checkloop import _PAST, _REGULAR, _TO_YOU, _clock
 from wording import to_you
 
 HOLD_LINE = "Hold on, let me check something."
@@ -45,6 +47,21 @@ def hold_line(entries):
     """The hold-on line: one fixed sentence, never the question said
     back."""
     return HOLD_LINE
+
+
+def done_base(question):
+    """A done question's act in the base form, said to the wearer:
+    "Did I take my pills?" gives "take your pills", or None when the
+    question does not open "Did I <verb>" (see checkloop.done_act)."""
+    match = re.match(r"^\s*did\s+i\s+([a-z]+)\b(.*)$", question or "", re.IGNORECASE)
+    if not match:
+        return None
+    verb = match.group(1).lower()
+    if verb not in _PAST and verb not in _REGULAR:
+        return None
+    rest = match.group(2).strip().rstrip("?.! ").strip()
+    words = [_TO_YOU.get(word.lower(), word) for word in rest.split()] if rest else []
+    return " ".join([verb] + words)
 
 
 def follow_up(checked, fired=(), speak=(), now=None):
@@ -68,15 +85,17 @@ def follow_up(checked, fired=(), speak=(), now=None):
     for item in checked or []:
         reason = to_you((item.get("reason") or "").strip())
         if item.get("verdict") == "no" and reason and item.get("kind") == "done":
-            lines.append(f"Not yet. {reason}")
+            base = done_base(item.get("question"))
+            lines.append(f"No, you didn't {base} yet. {reason}" if base else f"Not yet. {reason}")
     return [" ".join(lines)] if lines else [NOTHING_LINE]
 
 
 # How long the gate may take before it is no longer worth waiting for.
 GATE_LIMIT_S = 8.0
-# After a hold-on is spoken, the next one waits this long, so a hand
-# held in view does not hear it on every photo.
-HOLD_REST_S = 60.0
+# After a hold-on is spoken, the next one waits this long (0 by
+# default: every photo with the thing in shot hears it; Live view only
+# sends a photo when the view changes, so a still scene never repeats).
+HOLD_REST_S = float(os.environ.get("TRUSS_HOLD_REST_S") or 0)
 # How long a finished result waits to be collected before its lines
 # go to the alert queue instead.
 COLLECT_S = 45.0

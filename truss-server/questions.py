@@ -1017,7 +1017,7 @@ class QuestionStore:
             watch["redo_spoken"] = True
             self._write_watch(slug, watch)
 
-    def redo_watch(self, now=None):
+    def redo_watch(self, now=None, include_spoken=False):
         """Done questions holding a witness from today whose redo
         reminder has not been spoken yet. These are no longer checked
         as ordinary questions; the loop offers them frames under a
@@ -1034,7 +1034,9 @@ class QuestionStore:
             now = now or datetime.now()
             out = []
             for entry in self.list():
-                if entry["kind"] != "done" or entry["redo_spoken"]:
+                if entry["kind"] != "done":
+                    continue
+                if entry["redo_spoken"] and not include_spoken:
                     continue
                 if entry["state"] != "standing":
                     continue

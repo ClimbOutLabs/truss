@@ -48,6 +48,7 @@ with scripted verdicts, and so the real checker (eval/checker.py) can
 be wired in without the loop knowing anything about models or keys.
 """
 
+import os
 import re
 import shutil
 import time
@@ -408,6 +409,11 @@ def _refusable(entry, result):
     )
 
 
+# A reminder repeated (the gate saw the thing in shot again) waits
+# this long after the last one; 0 by default, so every reach hears it.
+REDO_REPEAT_S = float(os.environ.get("TRUSS_REDO_REPEAT_S") or 0)
+
+
 class CheckLoop:
     def __init__(self, store, check_fn, log_dir, speak_fn=None, now_fn=None,
                  checks=None, outline_fn=None, presence_fn=None,
@@ -430,6 +436,9 @@ class CheckLoop:
         self._refused = {}
         # When each question's thing was last checked and not in view.
         self._absent = {}
+        # When each question's redo reminder was last spoken, so a
+        # repeat (a hand on it again, via the gate) never nags.
+        self._redo_said = {}
         # The check log (a coverage.CheckLog). Without one, no check
         # is counted as watching, and alerts claim nothing was watched.
         self.checks = checks
@@ -452,7 +461,12 @@ class CheckLoop:
         frame_path = Path(frame_path)
         try:
             standing = [e for e in self.store.list() if e["state"] == "standing"]
-            watch = self.store.redo_watch(now=self.now_fn())
+            if return_hint is not None:
+                # With the gate, a question reminded already stays
+                # watched: a hand on it again repeats the reminder.
+                watch = self.store.redo_watch(now=self.now_fn(), include_spoken=True)
+            else:
+                watch = self.store.redo_watch(now=self.now_fn())
             owed = self.store.miss_check_watch(now=self.now_fn())
             # Claimed last, so nothing after it in this block can fail
             # and leak the claim.
@@ -560,6 +574,12 @@ class CheckLoop:
                 hinted = return_hint is not None and return_hint(entry["slug"]) is True
             except Exception:
                 hinted = False
+            if entry.get("redo_spoken"):
+                # Reminded already: said again only for a hand on it,
+                # and not within REDO_REPEAT_S of the last time.
+                said = self._redo_said.get(entry["slug"])
+                if not hinted or (said is not None and time.monotonic() - said < REDO_REPEAT_S):
+                    continue
             try:
                 if hinted:
                     result = {"verdict": "yes", "reason": "The hold-on gate saw the wearer handling it."}
@@ -701,6 +721,7 @@ class CheckLoop:
                     # risk being spoken twice.
                     errors += 1
                 else:
+                    self._redo_said[entry["slug"]] = time.monotonic()
                     text = redo_text(witness, entry, next_at)
                     speak.append(text)
                     if self.speak_fn is not None:

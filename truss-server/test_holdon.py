@@ -37,7 +37,7 @@ class GapStore:
     def due(self, now=None, ignore_gap=False):
         return [{"slug": "pills", "question": "Did I take my pills?", "kind": "done"}] if ignore_gap else []
 
-    def redo_watch(self, now=None):
+    def redo_watch(self, now=None, include_spoken=False):
         return []
 
 
@@ -67,7 +67,7 @@ class DueStore:
     def due(self, now=None):
         return [{"slug": "pills", "question": "Did I take my pills?", "kind": "done"}]
 
-    def redo_watch(self, now=None):
+    def redo_watch(self, now=None, include_spoken=False):
         return []
 
 
@@ -156,7 +156,7 @@ class NoLoop:
 def test_hold_on_then_no_says_what_it_saw():
     _, _, later, _ = run(NoLoop(), lambda f, q: ({0}, {0}))
     check("a clear no: says what it saw",
-          later["speak"] == ["Not yet. The Wednesday pills are still in the box."])
+          later["speak"] == ["No, you didn't take your pills yet. The Wednesday pills are still in the box."])
 
 
 def test_lines():
@@ -182,12 +182,19 @@ def test_lines():
           == [holdon.NOTHING_LINE])
 
 
-def test_full_check_first_wins():
+def test_full_check_first_still_leads_with_hold_on():
     def slow_gate(f, q):
         time.sleep(1.0)
         return {0}, {0}
     first, _, later, _ = run(SlowLoop(0.1), slow_gate)
-    check("full first: no hold-on", first["speak"] == ["You took your pills."] and later is None)
+    check("full first: the hold-on still leads, in the same reply",
+          first["speak"][0] == holdon.HOLD_LINE and later is None)
+
+
+def test_full_check_first_no_gate_no_hold_on():
+    first, _, later, _ = run(SlowLoop(0.1), lambda f, q: (set(), set()))
+    check("full first, nothing in shot: the answer alone",
+          first["speak"] == ["You took your pills."] and later is None)
 
 
 def test_off_by_default():
@@ -199,7 +206,7 @@ def test_rest_and_uncollected():
     p = holdon.Pending()
     check("pending: may hold at first", p.may_hold())
     p.held()
-    check("pending: rests after a hold-on", not p.may_hold())
+    check("pending: no rest by default (every photo in shot hears it)", p.may_hold())
     saved = holdon.COLLECT_S
     holdon.COLLECT_S = 0.1
     try:
@@ -224,7 +231,7 @@ class WatchStore:
     def due(self, now=None):
         return [{"slug": "stove", "question": "Is the stove off?", "kind": "state"}]
 
-    def redo_watch(self, now=None):
+    def redo_watch(self, now=None, include_spoken=False):
         return [{"slug": "pills", "question": "Did I take my pills?", "kind": "done"}]
 
 
@@ -251,8 +258,8 @@ def test_hint_is_per_question():
         check("hint: handling the pills counts for the pills",
               loop.hints.get("pills") is True)
         run(loop, lambda f, q: (set(), {1}))
-        check("hint: a glance at the pills never spends the reminder",
-              loop.hints.get("pills") is False)
+        check("hint: the pills in shot again repeats the reminder",
+              loop.hints.get("pills") is True)
     finally:
         DueStore.due, DueStore.redo_watch = saved
 
@@ -286,6 +293,31 @@ def test_glance_gives_hold_on():
           first["speak"] == [holdon.HOLD_LINE] and later is not None)
 
 
+class ReminderLoop:
+    """A witnessed question: the loop answers at once with the reminder."""
+    def process_frame(self, path, return_hint=None, force=None):
+        said = return_hint is not None and return_hint("pills")
+        return {"managed": True, "fired": [], "errors": 0, "checked": [],
+                "speak": ["Just so you know, you already took your pills at 12:15 PM. I saw you."] if said else []}
+
+
+class WitnessedStore:
+    def due(self, now=None, ignore_gap=False):
+        return []
+
+    def redo_watch(self, now=None, include_spoken=False):
+        return [{"slug": "pills", "question": "Did I take my pills?", "kind": "done"}] if include_spoken else []
+
+
+def test_reminder_every_time_with_hold_on():
+    for _ in range(2):
+        first, _, later, _ = run(ReminderLoop(), lambda f, q: (set(), {0}), store=WitnessedStore())
+        heard = first["speak"] + (later["speak"] if later else [])
+        check("reminder: hold-on, then the reminder, every time",
+              heard == [holdon.HOLD_LINE,
+                        "Just so you know, you already took your pills at 12:15 PM. I saw you."])
+
+
 def test_gate_failure_is_no():
     saved = holdon.endpoint.ask_json
     holdon.endpoint.ask_json = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down"))
@@ -301,12 +333,14 @@ if __name__ == "__main__":
     test_hold_on_then_nothing_says_so()
     test_hold_on_then_no_says_what_it_saw()
     test_lines()
-    test_full_check_first_wins()
+    test_full_check_first_still_leads_with_hold_on()
+    test_full_check_first_no_gate_no_hold_on()
     test_off_by_default()
     test_rest_and_uncollected()
     test_hint_is_per_question()
     test_gate_reads_numbers()
     test_gap_waived_when_handled()
     test_glance_gives_hold_on()
+    test_reminder_every_time_with_hold_on()
     test_gate_failure_is_no()
     print("ALL PASS")
