@@ -120,6 +120,9 @@ data class TrussUiState(
     /** The Desk asked for watching while the phone could not start yet (glasses or
      * laptop not connected): watching starts by itself once both are. */
     val deskStartPending: Boolean = false,
+    /** The Desk asked for one photo now while the phone is not watching: the app screen
+     * takes it (as Look now does) once the glasses are connected. Watching stays off. */
+    val deskLookPending: Boolean = false,
 ) {
   /** True while any glasses camera or audio work is running. */
   val busy: Boolean
@@ -1604,7 +1607,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           .getSharedPreferences(PREFS, Activity.MODE_PRIVATE)
           .getString(KEY_DESK_HANDLED, null)
   private var deskAskedAt = 0L
-  private var deskFreshMs = 600_000L
+  private var deskLookAskedAt = 0L
 
   /**
    * Check in with the laptop every few seconds: say how watching stands, so the Desk
@@ -1635,8 +1638,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     // While the phone is on the glasses' Wi-Fi the laptop may be out of reach. A live
     // hold still tries, so the Desk's Stop is heard; a failed try is only logged.
     if (state.streamActive && !state.liveHolding) return
-    if (state.deskStartPending && SystemClock.elapsedRealtime() - deskAskedAt > deskFreshMs) {
+    if (state.deskStartPending && SystemClock.elapsedRealtime() - deskAskedAt > DESK_PENDING_MS) {
       _uiState.update { it.copy(deskStartPending = false) }
+    }
+    if (state.deskLookPending && SystemClock.elapsedRealtime() - deskLookAskedAt > LOOK_FRESH_MS) {
+      _uiState.update { it.copy(deskLookPending = false) }
     }
     val now = _uiState.value
     val reply =
@@ -1652,7 +1658,6 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                   off = now.glassesOff,
               )
         }
-    deskFreshMs = reply.freshSeconds * 1000L
     val look = reply.lookId
     if (look != null && look != lookHandledId) {
       lookHandledId = look
@@ -1662,6 +1667,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         lookAskedAt = SystemClock.elapsedRealtime()
         lookAsked = true
         watchNudge.tryEmit(Unit)
+      } else if (reply.lookAgeSeconds <= LOOK_ACT_SECONDS) {
+        // Not watching: one photo, as Look now takes, and watching stays off. A look
+        // asked a while ago (the app was only just opened) is left alone.
+        deskLookAskedAt = SystemClock.elapsedRealtime() - reply.lookAgeSeconds * 1000L
+        _uiState.update { it.copy(deskLookPending = true) }
       }
     }
     val request = reply.request ?: return
@@ -1686,6 +1696,16 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       _uiState.update { it.copy(deskStartPending = false) }
       if (_uiState.value.watching) stopWatching()
     }
+  }
+
+  /** Take the one photo the Desk asked for while the phone is not watching. Called by
+   * the app screen, which holds the camera permission prompt. */
+  fun takeDeskLook(requestPermission: suspend (Permission) -> PermissionStatus) {
+    if (!_uiState.value.deskLookPending) return
+    _uiState.update { it.copy(deskLookPending = false) }
+    if (_uiState.value.watching) return
+    photoLog("The Desk asked for a photo now.")
+    captureAndUpload(requestPermission)
   }
 
   fun setWatchEverySeconds(seconds: Int) {
@@ -2040,6 +2060,11 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     // How long a Desk request for a photo now stays worth taking (the server's
     // LOOK_FRESH_SECONDS).
     private const val LOOK_FRESH_MS = 60_000L
+    // A Desk look older than this when the phone first hears of it, while not watching,
+    // is not taken: the app was opened after the Desk asked.
+    private const val LOOK_ACT_SECONDS = 20
+    // How long a Desk start waits for the glasses to connect before it is dropped.
+    private const val DESK_PENDING_MS = 600_000L
     private const val WATCH_MAX_FAILURES = 3
     private const val SIGNATURE_SIDE = 16
     // Live view's video frame rate. The toolkit offers 30, 24, 15, 7 and 2; looks are

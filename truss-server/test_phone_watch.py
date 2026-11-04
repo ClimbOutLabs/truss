@@ -82,6 +82,17 @@ def test_store():
     check("an unknown mode and a non-bool off are dropped", p["mode"] is None and p["off"] is False)
 
 
+def test_start_is_fresh_for_a_minute_only():
+    # A phone that opens the app later must not start on an old start.
+    check("a start is worth acting on for a minute", phone_watch.FRESH_SECONDS == 60)
+    clock = Clock()
+    desk = phone_watch.WatchDesk(clock)
+    desk.ask(True)
+    clock.now += timedelta(seconds=phone_watch.FRESH_SECONDS + 1)
+    reply = desk.report({}, "x")
+    check("an old start comes back older than fresh_seconds", reply["request"]["age_seconds"] > reply["fresh_seconds"])
+
+
 def test_look():
     clock = Clock()
     desk = phone_watch.WatchDesk(clock)
@@ -139,6 +150,7 @@ def test_http():
 
 if __name__ == "__main__":
     test_store()
+    test_start_is_fresh_for_a_minute_only()
     test_look()
     test_http()
     print("ALL PASS")

@@ -688,11 +688,7 @@ $("tab-today").addEventListener("click", async (ev) => {
     try {
       const view = await glassesView((text) => showMsg("msg-today", text));
       const r = await postImage(`/plant/ref?slug=${encodeURIComponent(g.dataset.slug)}&kind=${g.dataset.glasses}`, view.file);
-      showMsg("msg-today", `Took the ${g.dataset.glasses} look from the glasses' view ${view.ago} seconds ago.`);
-      if (r.state === "standing") {
-        const said = await askPhone(true);
-        if (said.startsWith("Couldn't")) showMsg("msg-today", said, true);
-      }
+      showMsg("msg-today", `Took the ${g.dataset.glasses} look from the glasses' view ${view.ago} seconds ago.${r.state === "standing" ? watchHint() : ""}`);
     } catch (e) { showMsg("msg-today", e.message, true); }
     g.disabled = false;
     SHOWN = "";
@@ -734,12 +730,7 @@ $("tab-today").addEventListener("change", async (ev) => {
   if (!input.dataset || !input.dataset.look || !input.files[0]) return;
   try {
     const r = await postImage(`/plant/ref?slug=${encodeURIComponent(input.dataset.slug)}&kind=${input.dataset.look}`, input.files[0]);
-    showMsg("msg-today", "");
-    // The question is watched from now on: have the phone watching too.
-    if (r.state === "standing") {
-      const said = await askPhone(true);
-      if (said.startsWith("Couldn't")) showMsg("msg-today", said, true);
-    }
+    showMsg("msg-today", r.state === "standing" ? watchHint().trim() : "");
   } catch (e) { showMsg("msg-today", e.message, true); return; }
   loadQuestions();
 });
@@ -819,14 +810,15 @@ function setLook(kind, file) {
 // as a File. The phone sends a view every few seconds while it is
 // watching, so this waits for one newer than the press: an
 // older frame could show the thing before it was set up, or be the
-// same frame as the other look. With no view at all the phone is
-// asked to start, and the error says to try again.
+// same frame as the other look. Taking a look never starts watching:
+// a phone that is not watching takes just this one photo.
 // How long to wait for that view. The Desk asks the phone for a photo
 // now (POST /watch/look), which it takes at its next check-in, a few
 // seconds away, unless a photo is still being checked.
 function viewWait() {
   const p = PHONE && PHONE.phone;
-  if (!(p && p.watching)) return {limit: 15, hint: ""};
+  // Not watching: the phone opens the glasses camera for this one photo.
+  if (!(p && p.watching)) return {limit: 45, hint: " Asked the glasses for one photo; hold still on it."};
   // A photo already being checked finishes first (up to about 45 s), then
   // the phone takes the one asked for.
   return {limit: 75, hint: " Asked the glasses for a photo now; hold still on it."};
@@ -849,8 +841,7 @@ async function glassesView(onWait) {
       }
     }
     if (waited > limit) {
-      const said = await askPhone(true);
-      throw new Error(said.startsWith("Couldn't") ? said : `No new view came from the glasses in ${limit} seconds. Asked the phone to start watching; try again in a few seconds.`);
+      throw new Error(`No photo came from the glasses in ${limit} seconds. Check that the glasses are on and the Truss app is open on the phone, then try again.`);
     }
     if (onWait) onWait(`Waiting for a fresh view from the glasses… ${Math.round(waited)} of ${limit} seconds.${hint}`);
     await new Promise((res) => setTimeout(res, 1000));
@@ -918,8 +909,7 @@ $("plant").addEventListener("submit", async (ev) => {
       if (LOOKS[k]) state = (await postImage(`/plant/ref?slug=${encodeURIComponent(r.slug)}&kind=${k}`, LOOKS[k])).state;
     }
     if (state === "planting") state = (await postJSON("/plant/finish", {slug: r.slug})).state;
-    const said = await askPhone(true);
-    showMsg("p-msg", `Watching now: ${text}. ${said}`, said.startsWith("Couldn't"));
+    showMsg("p-msg", `Started: ${text}.${watchHint()}`);
     $("p-text").value = "";
     $("p-look").value = "";
     clearLooks();
@@ -991,6 +981,12 @@ $("r-go").addEventListener("click", async () => {
 // request on the server; the phone picks it up within a few seconds
 // while the Truss app is open, and starts once the glasses connect.
 let PHONE = null;
+// Only the Start and Stop buttons start or stop watching. After a
+// planting, say whether the phone is already watching for it.
+function watchHint() {
+  const p = PHONE && PHONE.phone;
+  return p && p.watching ? " The phone is watching for it." : " The phone is not watching yet: press Start watching at the top when you want it to.";
+}
 async function askPhone(on) {
   try {
     PHONE = await postJSON("/watch", {on});
@@ -1141,8 +1137,9 @@ $("g-form").addEventListener("submit", async (ev) => {
     GUIDE_LEFT = r.left_out || [];
     showMsg("g-msg", "");
     $("g-task").value = "";
-    if (!(PHONE && PHONE.phone && PHONE.phone.watching)) await askPhone(true);
-    showMsg("g-run-msg", "The phone will speak the first step in the glasses within about half a minute.");
+    showMsg("g-run-msg", PHONE && PHONE.phone && PHONE.phone.watching
+      ? "The phone will speak the first step in the glasses within about half a minute."
+      : "The phone is not watching yet. Press Start watching at the top, and it speaks the first step within about half a minute.");
   } catch (e) {
     showMsg("g-msg", e.message, true);
   }
