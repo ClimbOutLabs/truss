@@ -30,6 +30,7 @@ from checkloop import CheckLoop
 from guide import Guide
 import task_steps
 import history
+import memory
 from phone_watch import WatchDesk
 from plant_compile import Compiler, compile_folder, needs_compile
 from questions import QuestionStore, SafetyLooksNeeded
@@ -635,6 +636,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_guide_status()
         elif path == "/answers":
             self.handle_answers()
+        elif path == "/memory":
+            self.handle_memory()
         elif path == "/evidence":
             self.handle_evidence()
         elif path == "/status":
@@ -868,6 +871,35 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(400, str(e))
             return
         self.send_json({"day": day, "answers": items})
+
+    def handle_memory(self):
+        """One question's checks on one day, in time order: GET
+        /memory?slug=<slug>&day=YYYY-MM-DD, today when no day is
+        given. Read-only; every check the server logged for the
+        question, not only the ones that fired, each with its verdict,
+        its reason, and the evidence photo's name when one was kept
+        (for GET /evidence). The slug must be a standing question's
+        own, in the store's plain shape."""
+        query = parse_qs(urlparse(self.path).query)
+        slug = (query.get("slug") or [""])[0]
+        entry = STORE.get(slug) if re.fullmatch(r"[a-z0-9-]+", slug) else None
+        if entry is None:
+            self.send_error(404, "No question with that slug.")
+            return
+        day = (query.get("day") or [CLOCK().date().isoformat()])[0]
+        try:
+            items = memory.timeline(LOG_DIR, day, slug, entry["question"])
+        except ValueError as e:
+            self.send_error(400, str(e))
+            return
+        self.send_json(
+            {
+                "day": day,
+                "slug": slug,
+                "question": entry["question"],
+                "checks": items,
+            }
+        )
 
     def handle_evidence(self):
         """One kept photo from a day's log folder: GET

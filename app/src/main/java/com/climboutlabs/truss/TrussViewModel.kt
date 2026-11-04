@@ -104,6 +104,14 @@ data class TrussUiState(
     val history: List<AnswerItem> = emptyList(),
     val historyBusy: Boolean = false,
     val historyPhotos: Map<String, Bitmap> = emptyMap(),
+    // Truss Memory: one question's checks today, in time order, each with its
+    // verdict and the reason the checker wrote. Its kept photos ride in
+    // historyPhotos under the same day/name keys.
+    val memorySlug: String? = null,
+    val memoryQuestion: String = "",
+    val memoryDay: String? = null,
+    val memory: List<MemoryItem> = emptyList(),
+    val memoryBusy: Boolean = false,
     // Hands-free watching: a glasses photo every watchEverySeconds while on.
     val watching: Boolean = false,
     /** While watching: when the glasses went away (off, folded, out of reach), or null. */
@@ -2220,6 +2228,66 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         showError(e)
       } finally {
         _uiState.update { it.copy(historyBusy = false) }
+      }
+    }
+  }
+
+  /**
+   * Load one question's checks today for the Truss Memory screen: every check,
+   * not only the answers History keeps. With no slug, the question already
+   * chosen there, or the first standing question.
+   */
+  fun loadMemory(slug: String? = null) {
+    if (_uiState.value.memoryBusy) return
+    _uiState.update { it.copy(memoryBusy = true) }
+    viewModelScope.launch {
+      try {
+        val client = laptopClient()
+        var wanted = slug ?: _uiState.value.memorySlug
+        if (wanted == null || _uiState.value.questionsList.none { it.slug == wanted }) {
+          val list = withContext(Dispatchers.IO) { client.getQuestions() }
+          _uiState.update { it.copy(questionsList = list) }
+          wanted = wanted?.takeIf { chosen -> list.any { it.slug == chosen } } ?: list.firstOrNull()?.slug
+        }
+        val slug = wanted
+        if (slug == null) {
+          _uiState.update {
+            it.copy(memorySlug = null, memoryQuestion = "", memoryDay = null, memory = emptyList())
+          }
+          return@launch
+        }
+        val result = withContext(Dispatchers.IO) { client.getMemory(slug) }
+        _uiState.update {
+          it.copy(
+              memorySlug = slug,
+              memoryQuestion = result.question,
+              memoryDay = result.day,
+              memory = result.checks,
+          )
+        }
+        for (item in result.checks) {
+          val name = item.evidence ?: continue
+          val key = "${result.day}/$name"
+          if (_uiState.value.historyPhotos.containsKey(key)) continue
+          val photo =
+              try {
+                withContext(Dispatchers.IO) { decodeThumbnail(client.getEvidence(result.day, name)) }
+              } catch (e: CancellationException) {
+                throw e
+              } catch (e: Exception) {
+                Log.i(TAG, "Memory photo $key could not be loaded: ${e.message}")
+                null
+              }
+          if (photo != null) {
+            _uiState.update { it.copy(historyPhotos = it.historyPhotos + (key to photo)) }
+          }
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        showError(e)
+      } finally {
+        _uiState.update { it.copy(memoryBusy = false) }
       }
     }
   }
