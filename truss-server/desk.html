@@ -264,7 +264,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
           <div class="field"><span class="fl">When</span>
             <select id="p-when">
               <option value="interval">Every few minutes</option>
-              <option value="nightly">Each night</option>
+              <option value="nightly">Until it is done</option>
               <option value="window">Between two times</option>
             </select></div>
           <div class="row" id="w-interval"><input type="number" id="p-minutes" min="0" step="1" value="15" style="width:90px"><span class="note">minutes apart. Use 0 to check every photo.</span></div>
@@ -432,7 +432,7 @@ function whenText(p) {
     if (!p.minutes) return "Checks each new photo from the glasses";
     return p.minutes === 1 ? "Checks every minute" : `Checks every ${p.minutes} minutes`;
   }
-  if (p.kind === "nightly") return `Each night from ${clock(p.after)} until it is answered`;
+  if (p.kind === "nightly") return `Until it is done, from ${clock(p.after)} each night`;
   if (p.kind === "window") return `${clock(p.after)} to ${clock(p.until)}`;
   return "";
 }
