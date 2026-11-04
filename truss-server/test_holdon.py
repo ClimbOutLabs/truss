@@ -156,7 +156,7 @@ class NoLoop:
 def test_hold_on_then_no_says_what_it_saw():
     _, _, later, _ = run(NoLoop(), lambda f, q: ({0}, {0}))
     check("a clear no: says what it saw",
-          later["speak"] == ["No, you didn't take your pills yet. The Wednesday pills are still in the box."])
+          later["speak"] == ["I haven't seen you take your pills yet. The Wednesday pills are still in the box."])
 
 
 def test_lines():
@@ -281,7 +281,7 @@ def test_gap_waived_when_handled():
     first, _, later, _ = run(loop, lambda f, q: ({0}, {0}), store=GapStore())
     check("gap: a handled question is checked inside its gap", loop.force == {"pills"})
     check("gap: after a hold-on", first["speak"] == [holdon.HOLD_LINE] and "pending" in first)
-    check("gap: and its answer follows", later["speak"] == ["Not yet. Pills are still in the box."])
+    check("gap: and its answer follows", later["speak"] == ["I haven't seen it yet. Pills are still in the box."])
     loop = ForceLoop()
     first, _, later, _ = run(loop, lambda f, q: (set(), set()), store=GapStore())
     check("gap: nothing handled waits its gap as before", loop.force is None and "pending" not in first)

@@ -68,7 +68,7 @@ def follow_up(checked, fired=(), speak=(), now=None):
     """What to say after a hold-on, in Muse Spark's own words: the
     reason its check gave, with at most a few words around it. A done
     question that fired: the reason and "I saw it at 11:30 AM." A done
-    question's clear no: "Not yet." and the reason. Any other line the
+    question's clear no: "I haven't seen you ... yet." and the reason. Any other line the
     loop made (a refusal, a state firing, a reminder) is said as the
     loop wrote it. Anything else, including any state question's no
     (which can be the all-clear itself, "All the knobs point to off"),
@@ -86,7 +86,9 @@ def follow_up(checked, fired=(), speak=(), now=None):
         reason = to_you((item.get("reason") or "").strip())
         if item.get("verdict") == "no" and reason and item.get("kind") == "done":
             base = done_base(item.get("question"))
-            lines.append(f"No, you didn't {base} yet. {reason}" if base else f"Not yet. {reason}")
+            # One photo's no is never "you didn't": the act may have
+            # happened out of shot, and a miss is only ever not seen.
+            lines.append(f"I haven't seen you {base} yet. {reason}" if base else f"I haven't seen it yet. {reason}")
     return [" ".join(lines)] if lines else [NOTHING_LINE]
 
 
