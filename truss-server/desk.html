@@ -93,7 +93,7 @@ section{display:flex;flex-direction:column;gap:16px}
 .form{display:flex;flex-direction:column;gap:15px;max-width:720px}
 label.field,div.field{display:flex;flex-direction:column;gap:6px}
 .fl{font-weight:600}
-input[type=text],input[type=password],input[type=time],input[type=number],input[type=date],select{font:inherit;font-size:14px;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--card);width:100%}
+textarea,input[type=text],input[type=password],input[type=time],input[type=number],input[type=date],select{font:inherit;font-size:14px;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--card);width:100%}
 #p-text{font-size:16px;padding:12px 14px}
 .seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card)}
 .seg label{text-align:center;cursor:pointer}
@@ -153,6 +153,7 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 .pillbtn.plain{background:var(--sage);color:var(--ink)}
 .pillbtn.stop{background:var(--apricot);color:var(--on-apricot)}
 .leftout{color:var(--muted);font-size:14.5px;margin-top:15px;line-height:1.5}
+#g-edit{resize:vertical;min-height:150px;line-height:1.6}
 /* live */
 .viewwrap{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
 .view{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;background:var(--sage);display:block}
@@ -322,13 +323,32 @@ summary{cursor:pointer;font-weight:600;font-size:14px}
 
   <!-- Watch me do this: a named job, walked step by step -->
   <div id="tab-guide" class="pane" hidden>
-    <p class="intro">A guided task, one step at a time.<span class="soft">Truss writes the steps, speaks them one at a time in the glasses, and moves on when a photo shows a step is done. It never checks safety by eye: whether the stove is off, the pills are taken, or food is cooked through are questions to watch for instead. For cooking, use a probe thermometer, and Truss reads the number on it.</span></p>
-    <form id="g-form" class="ask" autocomplete="off">
-      <label class="field"><span class="fl">Start a task</span>
-        <input type="text" id="g-task" placeholder="Lock up for the night" maxlength="200" required></label>
-      <div><button class="btn" type="submit" id="g-go">Write the steps</button></div>
-      <div class="msg" id="g-msg" hidden></div>
-    </form>
+    <p class="intro">A guided task, one step at a time.<span class="soft">Type the steps yourself, or name the job and let Truss write them. You see the steps first, and nothing is spoken until you press Start the guide. Then the glasses speak one step at a time and move on when a photo shows it is done. Truss never checks safety by eye: whether the stove is off, the pills are taken, or food is cooked through are questions to watch for instead, and a step like that is left out. For cooking, use a probe thermometer, and Truss reads the number on it.</span></p>
+    <div id="g-form" style="display:flex;flex-direction:column;gap:14px;max-width:720px">
+      <div class="seg" role="radiogroup" aria-label="Who writes the steps">
+        <label><input type="radio" name="g-mode" value="auto" checked><span>Truss writes the steps</span></label>
+        <label><input type="radio" name="g-mode" value="manual"><span>I'll type the steps</span></label>
+      </div>
+      <form id="g-auto" class="ask" autocomplete="off">
+        <label class="field"><span class="fl">The job</span>
+          <input type="text" id="g-task" placeholder="Lock up for the night" maxlength="200" required></label>
+        <div><button class="btn" type="submit" id="g-go">Work out the steps</button></div>
+        <div class="msg" id="g-msg" hidden></div>
+      </form>
+      <form id="g-draft" class="ask" autocomplete="off" hidden>
+        <label class="field"><span class="fl">Name</span>
+          <input type="text" id="g-name" placeholder="Set up the desk" maxlength="60"></label>
+        <label class="field"><span class="fl">Steps, one per line</span>
+          <textarea id="g-edit" rows="6" placeholder="Is the laptop open?&#10;Is the charger plugged into the laptop?&#10;Is the notebook on the left?"></textarea>
+          <span class="note">Each step is a yes or no question a single look can settle, where yes means it is done.</span></label>
+        <div class="leftout" id="g-draft-left" hidden></div>
+        <div class="row">
+          <button class="btn" type="submit" id="g-arm">Start the guide</button>
+          <button class="btn2" type="button" id="g-reset" hidden>Start over</button>
+        </div>
+        <div class="msg" id="g-arm-msg" hidden></div>
+      </form>
+    </div>
     <section id="g-run" hidden>
       <h2>Running now</h2>
       <div class="run">
@@ -1233,41 +1253,96 @@ function renderGuide() {
   $("g-left").hidden = !GUIDE_LEFT.length;
   $("g-left").textContent = GUIDE_LEFT.length ? `Left out, because Truss cannot check them by eye: ${GUIDE_LEFT.join("; ")}.` : "";
 }
-$("g-form").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const task = $("g-task").value.trim();
-  if (!task) return;
-  $("g-go").disabled = true;
-  // Writing the steps is two model calls and can take a minute or two,
-  // so the wait shows its seconds, and a reply that never comes ends in
-  // a plain message instead of a spinner forever.
+// Who writes the steps. Either way the steps are shown in the editor
+// first, and the guide starts only when Start the guide is pressed.
+function guideMode() {
+  const m = document.querySelector("input[name=g-mode]:checked");
+  return m ? m.value : "auto";
+}
+function showGuideForms() {
+  const auto = guideMode() === "auto";
+  const drafted = !!$("g-draft").dataset.drafted;
+  $("g-auto").hidden = !auto || drafted;
+  $("g-draft").hidden = auto && !drafted;
+  $("g-reset").hidden = !auto || !drafted;
+}
+function setDraftLeft(left) {
+  $("g-draft-left").hidden = !left.length;
+  $("g-draft-left").textContent = left.length ? `Left out, because Truss cannot check them by eye: ${left.join("; ")}.` : "";
+}
+function resetDraft() {
+  delete $("g-draft").dataset.drafted;
+  $("g-name").value = "";
+  $("g-edit").value = "";
+  setDraftLeft([]);
+  showMsg("g-arm-msg", "");
+  showGuideForms();
+}
+document.querySelectorAll("input[name=g-mode]").forEach((r) => r.addEventListener("change", () => {
+  showMsg("g-msg", "");
+  showMsg("g-arm-msg", "");
+  showGuideForms();
+}));
+$("g-reset").addEventListener("click", resetDraft);
+// A wait on the model shows its seconds, and a reply that never comes
+// ends in a plain message instead of a spinner forever.
+async function guidePost(url, body, msgId, label) {
   const t0 = Date.now();
-  const tick = () => showMsg("g-msg", `Writing the steps… ${Math.round((Date.now() - t0) / 1000)} s`);
+  const tick = () => showMsg(msgId, `${label} ${Math.round((Date.now() - t0) / 1000)} s`);
   tick();
   const ticker = setInterval(tick, 1000);
   const ctl = new AbortController();
   const limit = setTimeout(() => ctl.abort(), GUIDE_WRITE_LIMIT_MS);
   try {
-    const r = await postJSON("/guide/task", {task, phone: true}, ctl.signal);
-    GUIDE_LEFT = r.left_out || [];
-    showMsg("g-msg", "");
-    $("g-task").value = "";
-    showMsg("g-run-msg", PHONE && PHONE.phone && PHONE.phone.watching
-      ? "The phone will speak the first step in the glasses within about half a minute."
-      : "The phone is not watching yet. Press Start watching at the top, and it speaks the first step within about half a minute.");
+    const r = await postJSON(url, body, ctl.signal);
+    showMsg(msgId, "");
+    return r;
   } catch (e) {
-    showMsg("g-msg", e.name === "AbortError"
-      ? "The steps took too long to write, so Truss stopped waiting. Try again, or name the job in other words."
+    showMsg(msgId, e.name === "AbortError"
+      ? "That took too long, so Truss stopped waiting. Try again in a moment."
       : e.name === "TypeError"
         ? "The Desk lost touch with the laptop server. Check it is running, then try again."
         : e.message, true);
+    return null;
   } finally {
     clearInterval(ticker);
     clearTimeout(limit);
   }
+}
+$("g-auto").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const task = $("g-task").value.trim();
+  if (!task) return;
+  $("g-go").disabled = true;
+  const r = await guidePost("/guide/task", {task, draft: true}, "g-msg",
+    "Working out the steps for this job, usually under a minute…");
   $("g-go").disabled = false;
+  if (!r) return;
+  $("g-name").value = r.title || task;
+  $("g-edit").value = (r.steps || []).join("\n");
+  setDraftLeft(r.left_out || []);
+  $("g-draft").dataset.drafted = "1";
+  showMsg("g-arm-msg", "Check the steps and change any you like, then press Start the guide.");
+  showGuideForms();
+});
+$("g-draft").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const steps = $("g-edit").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!steps.length) { showMsg("g-arm-msg", "Type at least one step, one per line.", true); return; }
+  $("g-arm").disabled = true;
+  const r = await guidePost("/guide/start", {title: $("g-name").value.trim(), steps, phone: true}, "g-arm-msg",
+    "Checking the steps…");
+  $("g-arm").disabled = false;
+  if (!r) return;
+  GUIDE_LEFT = r.left_out || [];
+  $("g-task").value = "";
+  resetDraft();
+  showMsg("g-run-msg", PHONE && PHONE.phone && PHONE.phone.watching
+    ? "The phone will speak the first step in the glasses within about half a minute."
+    : "The phone is not watching yet. Press Start watching at the top, and it speaks the first step within about half a minute.");
   loadGuide();
 });
+showGuideForms();
 async function guideAct(what) {
   try {
     await postJSON(what === "stop" ? "/guide/stop" : "/guide/skip", {phone: true});

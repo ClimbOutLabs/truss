@@ -833,9 +833,12 @@ def test_http():
             check("a capture the loop checks leaves a check time",
                   len(server_module.CHECKS.times(today, slug)) == 1)
 
+            # A step a draft already cleared starts without a judging call.
+            server_module.GUIDE_CLEARED.clear()
+            server_module.GUIDE_CLEARED.add("Is the kettle on the counter?")
             status, _ = post(
                 base + "/guide/start",
-                json.dumps({"title": "Water", "steps": ["Is the tap off?"]}).encode(),
+                json.dumps({"title": "Water", "steps": ["Is the kettle on the counter?"]}).encode(),
             )
             check("a guide starts", status == 200)
             post(base + "/capture", img, ctype)

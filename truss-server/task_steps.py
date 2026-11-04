@@ -178,6 +178,45 @@ def clean_task(task):
     return task
 
 
+NONE_CHECKABLE = (
+    "No step of that job can be checked by eye here. Safety checks "
+    "need a standing question with its two looks."
+)
+
+
+def clean_steps(raw_steps):
+    """Steps as the guide will speak them: trimmed, each ending in a
+    question mark, without repeats, at most MAX_STEPS."""
+    written = []
+    for raw in raw_steps or []:
+        step = _clean_step(raw)
+        if step and step not in written:
+            written.append(step)
+    return written[:MAX_STEPS]
+
+
+def check_steps(raw_steps, ask_json, text_part, cleared=(), raise_if_none=True):
+    """Steps typed or edited by the person, or written by the model,
+    judged by intent before a guide may run them. Steps in cleared were
+    already judged not to be all-clears (the steps of a draft just
+    written), so only new or edited steps cost a call. Returns
+    {"steps", "left_out"}; the judge fails closed (see judge_steps)."""
+    written = clean_steps(raw_steps)
+    if not written:
+        raise TaskError("Type at least one step, one per line, like: Is the shelf level?")
+    fresh = [s for s in written if s not in cleared]
+    verdicts = dict(zip(fresh, judge_steps(fresh, ask_json, text_part)))
+    steps, left_out = [], []
+    for step in written:
+        if verdicts.get(step, False):
+            left_out.append(step.rstrip("?"))
+        else:
+            steps.append(step)
+    if not steps and raise_if_none:
+        raise TaskError(NONE_CHECKABLE)
+    return {"steps": steps, "left_out": left_out}
+
+
 def compose_steps(task, ask_json, text_part):
     """Ask the model for the job's steps. ask_json and text_part are
     endpoint.ask_json and endpoint.text_part, injected so this can be
@@ -198,26 +237,15 @@ def compose_steps(task, ask_json, text_part):
     if not isinstance(answer, dict):
         raise TaskError("The model's answer was not a list of steps.")
 
-    written = []
-    for raw in answer.get("steps") or []:
-        step = _clean_step(raw)
-        if step and step not in written:
-            written.append(step)
-    written = written[:MAX_STEPS]
-    steps, left_out = [], []
-    for step, all_clear in zip(written, judge_steps(written, ask_json, text_part)):
-        if all_clear:
-            left_out.append(step.rstrip("?"))
-        else:
-            steps.append(step)
+    if not clean_steps(answer.get("steps")):
+        raise TaskError("The model wrote no steps for that job. Try naming it in other words.")
+    checked = check_steps(answer.get("steps"), ask_json, text_part, raise_if_none=False)
+    steps, left_out = checked["steps"], checked["left_out"]
     for raw in answer.get("left_out") or []:
         if isinstance(raw, str) and " ".join(raw.split()):
             left_out.append(" ".join(raw.split())[:MAX_STEP_CHARS])
     if not steps:
-        raise TaskError(
-            "No step of that job can be checked by eye here. Safety checks "
-            "need a standing question with its two looks."
-        )
+        raise TaskError(NONE_CHECKABLE)
     title = answer.get("title")
     title = " ".join(title.split())[:60] if isinstance(title, str) and title.strip() else task[:60]
     model = answer.get("_model")

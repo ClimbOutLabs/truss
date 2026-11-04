@@ -39,8 +39,8 @@ The server will:
 - `POST /tts` - Send JSON `{"text": "..."}`, returns audio/wav file
 - `POST /plant/question` - Start planting a standing question, JSON `{"text": "..."}` with optional `"kind"`, `"pattern"`, `"safety"` (true or false), and `"look_at"`, returns the slug and the next prompt
 - `POST /plant/bedtime` - Plant the bedtime round (stove, front door, tonight's pills) in walk order, JSON with optional `"after"` and `"gap_minutes"`
-- `POST /guide/start` - Start a guided job, JSON `{"title": "...", "steps": ["Is the water shut off?", ...]}`, returns the first step as a line to speak
-- `POST /guide/task` - Start a guided job from its name, JSON `{"task": "lock up for the night"}`; the model writes the steps (see "Guided tasks")
+- `POST /guide/start` - Arm a guided job on steps the person has seen, JSON `{"title": "...", "steps": ["Is the shelf level?", ...]}`. Steps not from the last draft are judged by intent first, and an all-clear is left out. Returns the first step as a line to speak
+- `POST /guide/task` - Write a guided job's steps from its name, JSON `{"task": "lock up for the night"}`; the model writes the steps (see "Guided tasks"). With `"draft": true` the steps come back for the person to check and edit, and nothing starts until `/guide/start`
 - `POST /guide/skip` - Skip the guide's current step
 - `POST /guide/stop` - Stop the guide at once; nothing is kept
 - `GET /guide/status` - The guide's state, step, and current step

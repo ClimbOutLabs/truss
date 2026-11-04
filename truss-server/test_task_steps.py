@@ -289,6 +289,8 @@ def test_server_task_failure_starts_nothing():
 
 def test_stop_with_phone_replaces_the_queue():
     server_module, httpd, base = serve()
+    real_ask = server_module.endpoint.ask_json
+    server_module.endpoint.ask_json = asker({})
     try:
         call(base, "/guide/start", {"title": "T", "steps": ["Is the lid on?", "Is the box shut?"], "phone": True})
         check("start with phone queues", len(server_module.guide_waiting()) == 1)
@@ -299,6 +301,54 @@ def test_stop_with_phone_replaces_the_queue():
         call(base, "/guide/start", {"title": "T", "steps": ["Is the lid on?"]})
         check("start without phone queues nothing", server_module.guide_waiting() == [])
     finally:
+        server_module.endpoint.ask_json = real_ask
+        call(base, "/guide/stop", {"phone": False})
+        httpd.shutdown()
+
+
+def test_a_draft_is_shown_and_armed_by_hand():
+    """Written steps come back as a draft and start nothing; the person
+    arms them, edited or not. Draft steps cost no second judging call;
+    an edited or typed step is judged, and an all-clear is left out."""
+    server_module, httpd, base = serve()
+    real_ask = server_module.endpoint.ask_json
+    calls = []
+    curry = {"title": "Curry", "steps": ["Are the onions golden brown?", "Is the chicken in the pan?",
+                                         "Is the chicken cooked through?"], "left_out": []}
+    server_module.endpoint.ask_json = asker(curry, calls)
+    try:
+        status, draft = call(base, "/guide/task", {"task": "chicken curry", "phone": True, "draft": True})
+        check("a draft comes back", status == 200 and draft["draft"] is True
+              and draft["steps"] == ["Are the onions golden brown?", "Is the chicken in the pan?"])
+        check("the draft lists what was left out", draft["left_out"] == ["Is the chicken cooked through"])
+        check("a draft starts no guide", server_module.GUIDE["session"] is None)
+        check("a draft queues nothing for the phone", server_module.guide_waiting() == [])
+
+        calls.clear()
+        status, reply = call(base, "/guide/start", {"title": draft["title"], "steps": draft["steps"], "phone": True})
+        check("arming the draft starts the guide", status == 200 and reply["of"] == 2)
+        check("arming an unedited draft costs no model call", calls == [])
+        check("the first step is queued for the phone", len(server_module.guide_waiting()) == 1)
+        call(base, "/guide/stop", {"phone": False})
+
+        # Typed by hand: a typed all-clear is judged and left out.
+        calls.clear()
+        status, reply = call(base, "/guide/start", {"title": "Lock up", "steps": [
+            "is the bike in the shed", "Is the chicken cooked through?"], "phone": True})
+        check("typed steps are judged", [c["name"] for c in calls] == [task_steps.CLASSIFY_SCHEMA_NAME])
+        check("the checkable typed step runs", status == 200 and reply["steps"] == ["is the bike in the shed?"])
+        check("the typed all-clear is left out", reply["left_out"] == ["Is the chicken cooked through"])
+        check("and the phone hears it is not checked",
+              server_module.guide_waiting()[0]["line"].startswith("Not checked in this guide"))
+        call(base, "/guide/stop", {"phone": False})
+
+        status, _ = call(base, "/guide/start", {"title": "T", "steps": ["Is the chicken cooked through?"]})
+        check("only all-clears typed: nothing starts", status == 400 and server_module.GUIDE["session"].state != "active")
+        status, _ = call(base, "/guide/start", {"title": "T", "steps": ["  ", ""]})
+        check("no steps typed: a plain 400", status == 400)
+    finally:
+        server_module.endpoint.ask_json = real_ask
+        call(base, "/guide/stop", {"phone": False})
         httpd.shutdown()
 
 
@@ -362,4 +412,5 @@ if __name__ == "__main__":
     test_stop_with_phone_replaces_the_queue()
     test_writing_steps_never_holds_up_the_rest()
     test_unexpected_failure_is_a_plain_error()
+    test_a_draft_is_shown_and_armed_by_hand()
     print("ALL PASS")

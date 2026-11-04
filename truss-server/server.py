@@ -449,6 +449,9 @@ GUIDE_SAY = []
 GUIDE_SAY_LOCK = threading.Lock()
 # Held while a guide starts, skips or stops, so two at once cannot
 # both pass the "already running" check.
+# The steps of the last draft written (POST /guide/task with "draft"),
+# already judged not to be all-clears: arming them needs no second call.
+GUIDE_CLEARED = set()
 GUIDE_LOCK = threading.Lock()
 
 
@@ -730,6 +733,11 @@ class TrussHandler(BaseHTTPRequestHandler):
         if path == "/guide/task":
             self.handle_guide_task()
             return
+        # Typed steps are judged by intent before a guide runs them, a
+        # model call; like writing them, it runs off the write lock.
+        if path == "/guide/start":
+            self.handle_guide_start()
+            return
         with WRITE_LOCK:
             self._do_post(path)
 
@@ -748,8 +756,6 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_questions_retire()
         elif path == "/questions/delete":
             self.handle_questions_retire(delete=True)
-        elif path == "/guide/start":
-            self.handle_guide_start()
         elif path == "/guide/skip":
             self.handle_guide_skip()
         elif path == "/guide/stop":
@@ -1290,10 +1296,15 @@ class TrussHandler(BaseHTTPRequestHandler):
         return session
 
     def handle_guide_start(self):
-        """Start a guide: POST JSON {"title": ..., "steps": [...]}. Each
-        step is a question a glance can settle. The reply carries the
-        first step's prompt as a line to speak. With "phone": true the
-        line is also queued for the phone to speak (see GUIDE_SAY)."""
+        """Arm a guide on steps the person has seen: POST JSON {"title":
+        ..., "steps": [...]}, typed by hand or a draft from /guide/task
+        with "draft": true, edited or not. Each step is a question a
+        glance can settle. Steps not cleared by a draft just written are
+        judged by intent first (task_steps.check_steps, failing closed),
+        so a typed all-clear is left out just as a written one is. The
+        reply carries the first step's prompt as a line to speak, the
+        steps and what was left out. With "phone": true the lines are
+        also queued for the phone to speak (see GUIDE_SAY)."""
         body = self._guide_body()
         if body is None:
             return
@@ -1303,10 +1314,35 @@ class TrussHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(400, "Steps must be a list of step questions.")
             return
-        self._start_guide(
-            steps, str(body.get("title") or "Guided job"),
-            body.get("phone") is True, "/guide/start",
-        )
+        session = GUIDE["session"]
+        if session is not None and session.state == "active":
+            self.send_error(400, "A guide is already running. Stop it first.")
+            return
+        started = time.monotonic()
+        with GUIDE_LOCK:
+            cleared = set(GUIDE_CLEARED)
+        try:
+            checked = task_steps.check_steps(
+                steps, endpoint.ask_json, endpoint.text_part, cleared=cleared
+            )
+        except task_steps.TaskError as e:
+            print(f"POST /guide/start -> not started: {e}")
+            self.send_error(400, str(e))
+            return
+        except Exception as e:
+            print(f"POST /guide/start -> failed ({time.monotonic() - started:.1f} s): {e!r}")
+            self.send_error(500, "Something went wrong checking the steps. Try again in a moment.")
+            return
+        title = " ".join(str(body.get("title") or "").split())[:60] or "Guided job"
+        with WRITE_LOCK:
+            self._start_guide(
+                checked["steps"], title, body.get("phone") is True, "/guide/start",
+                extra={
+                    "steps": checked["steps"],
+                    "left_out": checked["left_out"],
+                    "left_out_line": task_steps.left_out_line(checked["left_out"]),
+                },
+            )
 
     def handle_guide_task(self):
         """Start a guide from a named job: POST JSON {"task": "lock up
@@ -1338,6 +1374,21 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(500, "Something went wrong writing the steps. Try again in a moment.")
             return
         print(f"POST /guide/task: steps written in {time.monotonic() - started:.1f} s")
+        if body.get("draft") is True:
+            # A draft is shown to the person, who can edit it and then
+            # arms the guide with /guide/start. Its steps were judged
+            # just now, so arming them costs no second call.
+            with GUIDE_LOCK:
+                GUIDE_CLEARED.clear()
+                GUIDE_CLEARED.update(plan["steps"])
+            self.send_json({
+                "draft": True,
+                "title": plan["title"],
+                "steps": plan["steps"],
+                "left_out": plan["left_out"],
+                "model": plan["model"],
+            })
+            return
         with WRITE_LOCK:
             self._start_guide(
                 plan["steps"], plan["title"], body.get("phone") is True, "/guide/task",
