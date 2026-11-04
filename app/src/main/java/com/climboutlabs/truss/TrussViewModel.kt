@@ -38,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -635,6 +636,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
       var stayOpen = false
       var lookStartedAt = startedAt
       var lastLookAt = 0L
+      // When the last photo was taken. Live view's wait between looks counts from here,
+      // not from when its check ended, so a check (often 20 to 40 s) is not added to it.
+      var lastPhotoAt = 0L
       look@ while (true) {
         if (looks > 0) {
           lookStartedAt = SystemClock.elapsedRealtime()
@@ -648,7 +652,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         var liveDecided = false
         if (liveWatch && _uiState.value.captureMode == CaptureMode.LIVE) {
           val notBefore =
-              if (looks > 1) lastLookAt + _uiState.value.watchEverySeconds * 1000L else 0L
+              if (looks > 1) maxOf(lastPhotoAt, 1L) + _uiState.value.watchEverySeconds * 1000L else 0L
           if (!holdForView(stream, firstError, notBefore)) return
           // The video already judged this view new; only readable video counts.
           liveDecided = pendingLive != null
@@ -670,6 +674,7 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         check(photoError == null) { photoError ?: "Photo capture failed." }
         val captured = photoData
         check(captured != null) { "Photo capture returned nothing." }
+        lastPhotoAt = SystemClock.elapsedRealtime()
         val bitmap = withContext(Dispatchers.Default) { decodePhoto(captured) }
         check(bitmap != null) { "The photo from the glasses could not be decoded." }
         photoLog("Photo is ${bitmap.width} by ${bitmap.height}.")
@@ -787,7 +792,10 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
           // Live view keeps the session open while this photo is checked (30 s or
           // more): a Desk look asked meanwhile is taken from the open stream at once,
           // instead of after the check.
-          val sideLook = if (stayOpen) viewModelScope.launch { deskLookDuringCheck(stream, client) } else null
+          // The video is still open while this photo is checked: a look away made now
+          // counts (see lookedAwaySinceSent), measured against this photo's view.
+          if (stayOpen && pendingLive != null) lookedAwaySinceSent = false
+          val sideLook = if (stayOpen) viewModelScope.launch { watchDuringCheck(stream, client, pendingLive) } else null
           val result =
               try {
                 withContext(Dispatchers.IO) { client.postCapture(jpegFile) }
@@ -800,7 +808,9 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
             lastSentSignature = signature
             lastSentAt = SystemClock.elapsedRealtime()
             lastSentLive = pendingLive
-            lookedAwaySinceSent = false
+            // Held open, the video was read during the check and any look away since
+            // this photo is already in the flag; otherwise it starts over.
+            if (!stayOpen) lookedAwaySinceSent = false
           }
           if (fromWatch) {
             watchRecord("sent", fired = result.fired.size)
@@ -1106,6 +1116,39 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
    * view only (POST /watch/look/photo). Runs until cancelled; a photo under way always
    * finishes first. A failure leaves the look pending, for the next look to take.
    */
+  private suspend fun watchDuringCheck(
+      stream: com.meta.wearable.dat.camera.Stream,
+      client: LaptopClient,
+      sent: IntArray?,
+  ) = coroutineScope {
+    launch { deskLookDuringCheck(stream, client) }
+    if (sent != null) launch { lookAwayDuringCheck(stream, sent) }
+  }
+
+  /** Read the open video while a photo is checked, and note a look away: the glasses
+   * holding still on a view other than the one just sent. Live view then takes the
+   * next still view as new, even if it is that same view again. */
+  private suspend fun lookAwayDuringCheck(stream: com.meta.wearable.dat.camera.Stream, sent: IntArray) {
+    var previous: IntArray? = null
+    var steadySince = 0L
+    var lastLooked = 0L
+    stream.videoStream.collect { frame ->
+      val now = SystemClock.elapsedRealtime()
+      if (now - lastLooked < LIVE_LOOK_EVERY_MS) return@collect
+      lastLooked = now
+      val current = lumaSignature(frame) ?: return@collect
+      val before = previous
+      if (before == null || signatureDistance(before, current) > LIVE_STEADY_THRESHOLD) steadySince = now
+      previous = current
+      if (!lookedAwaySinceSent &&
+          signatureDistance(sent, current) >= SAME_VIEW_THRESHOLD &&
+          now - steadySince >= LIVE_STEADY_MS) {
+        lookedAwaySinceSent = true
+        photoLog("Live view: looked away while the last photo is checked.")
+      }
+    }
+  }
+
   private suspend fun deskLookDuringCheck(
       stream: com.meta.wearable.dat.camera.Stream,
       client: LaptopClient,
