@@ -965,9 +965,15 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
                         // A different view held still, not a head shake's blur.
                         if (differs && now - steadySince >= LIVE_STEADY_MS) lookedAwaySinceSent = true
                         if (waiting) return@first false
-                        // Only a change counts: Live view never re-sends the same view on a
-                        // clock (that read as timed photos while the glasses lay still).
-                        val changed = last == null || differs || lookedAwaySinceSent
+                        // A change counts. The same view is sent again only after a long
+                        // floor (2 minutes read as timed photos while the glasses lay still),
+                        // so a question that came due, or a check promised after a miss,
+                        // still gets a look at a view that never changes.
+                        val changed =
+                            last == null ||
+                                differs ||
+                                lookedAwaySinceSent ||
+                                now - lastSentAt >= LIVE_SAME_VIEW_FLOOR_MS
                         // Held still long enough, and this frame is about as sharp as
                         // the sharpest since it held still: a small head shake blurs a
                         // frame without moving the grid much, so a blurred one waits for
@@ -2212,6 +2218,8 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
     // Live view sends a new view only once it has held still this long: you stopped to
     // look at something. A pause while walking is shorter and sends nothing.
     private const val LIVE_SEND_STILL_MS = 3_000L
+    // Live view sends an unchanged view again only after this long.
+    private const val LIVE_SAME_VIEW_FLOOR_MS = 600_000L
     private const val LIVE_HOLD_MAX_MS = 180_000L
     // Live view: a still frame goes only when it is at least this percent as sharp as the
     // sharpest frame since the view held still, or once it has held still this long.
