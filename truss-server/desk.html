@@ -840,7 +840,7 @@ function setLook(kind, file) {
 function viewWait() {
   const p = PHONE && PHONE.phone;
   // Not watching: the phone opens the glasses camera for this one photo.
-  if (!(p && p.watching)) return {limit: 45, hint: " Asked the glasses for one photo; hold still on it."};
+  if (!(p && p.watching)) return {limit: 60, hint: " Asked the glasses for one photo; hold still on it."};
   // A photo already being checked finishes first (up to about 45 s), then
   // the phone takes the one asked for.
   return {limit: 75, hint: " Asked the glasses for a photo now; hold still on it."};
