@@ -409,7 +409,8 @@ def check(
             safety=safety is True, now=now, earlier=earlier,
         )
         reply = endpoint.ask_json(
-            system, content, VERDICT_SCHEMA, "verdict", config=cfg, max_tokens=max_tokens()
+            system, content, VERDICT_SCHEMA, "verdict", config=cfg, max_tokens=max_tokens(),
+            effort=endpoint.check_effort(safety=safety is True),
         )
         model = reply.get("_model") or model
         usage["spark_input_tokens"] = reply["_usage"]["input_tokens"]
@@ -501,7 +502,10 @@ def check_many(frame_path, items, config=None, now=None):
         # Each answer needs its own room after any thinking.
         room = max_tokens() + 512 * (len(items) - 1)
         reply = endpoint.ask_json(
-            system, content, MANY_SCHEMA, "verdicts", config=cfg, max_tokens=room
+            system, content, MANY_SCHEMA, "verdicts", config=cfg, max_tokens=room,
+            effort=endpoint.check_effort(
+                safety=any(item.get("safety") is True for item in items)
+            ),
         )
         model = reply.get("_model") or model
         usage["spark_input_tokens"] = reply["_usage"]["input_tokens"]

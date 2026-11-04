@@ -25,6 +25,13 @@ Muse Spark over the Meta Model API, first, with the above as fallback:
     TRUSS_META_MODEL      default muse-spark-1.3 (never the
                           contributor tier)
     TRUSS_META_TIMEOUT_S  default 120
+    TRUSS_META_REASONING_EFFORT  default low: how hard Muse Spark
+                          thinks on a check (minimal, low, medium,
+                          high, xhigh). "default" leaves it to the
+                          model. Checks only; compiles and the guide
+                          keep the model's own level.
+    TRUSS_META_SAFETY_REASONING_EFFORT  default medium, the same for
+                          a safety check
 
 With TRUSS_META_API_KEY set, every call that names no config of its
 own (checks, the plant-time compile, the guide) goes to Muse Spark.
@@ -84,6 +91,38 @@ DEFAULT_META_TIMEOUT_S = 120.0
 # there is a fallback to ask instead.
 META_REST_S = 300.0
 _REST_KINDS = ("unreachable", "timeout", "refused", "http")
+
+# How hard Muse Spark thinks on a check. Thinking is nearly all of a
+# check's time: on 2026-11-04 one pill check took 24.6 s, 40.8 s and
+# 59.8 s on the same scene at the model's own level. A check is a
+# short look-and-classify, so it asks for low effort. The prompt's
+# rules (safety fails closed, intent over literal) are unchanged.
+DEFAULT_REASONING_EFFORT = "low"
+REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
+
+
+
+# A safety check (the stove, the pills) keeps more thought: a wrong
+# all-clear there is the one answer that does harm.
+DEFAULT_SAFETY_REASONING_EFFORT = "medium"
+
+
+def _effort_value(name, default):
+    raw = (os.environ.get(name) or "").strip().lower()
+    if raw in ("default", "model", "off", "none"):
+        return None
+    return raw if raw in REASONING_EFFORTS else default
+
+
+def check_effort(safety=False):
+    """The reasoning_effort a check asks Muse Spark for, or None to
+    leave it to the model: TRUSS_META_REASONING_EFFORT (default low)
+    for an ordinary check, TRUSS_META_SAFETY_REASONING_EFFORT (default
+    medium) for a safety one."""
+    if safety:
+        return _effort_value("TRUSS_META_SAFETY_REASONING_EFFORT", DEFAULT_SAFETY_REASONING_EFFORT)
+    return _effort_value("TRUSS_META_REASONING_EFFORT", DEFAULT_REASONING_EFFORT)
+
 
 # A thinking model that runs out of room is retried once with this
 # much more room.
@@ -508,7 +547,7 @@ def _reply_content(text):
     )
 
 
-def ask_json(system, content, schema, schema_name, config=None, max_tokens=None):
+def ask_json(system, content, schema, schema_name, config=None, max_tokens=None, effort=None):
     """Ask the model one question and return its reply as a dict that
     validates against schema.
 
@@ -524,6 +563,10 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
     thinking that never closed) is never parsed, whatever it holds: it
     is retried once with TRUNCATION_GROWTH times the room, and a second
     cut-off raises EndpointError with kind "truncated".
+
+    effort is a reasoning_effort level (see check_effort) sent to Muse
+    Spark only, never to the fallback or an explicit config; checks
+    set it, compiles and the guide do not.
 
     With no config, the call goes to Muse Spark when TRUSS_META_API_KEY
     is set and falls back as the module docstring says; "_model" names
@@ -562,7 +605,10 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
         # stand in; with none, Muse Spark is asked as usual.
         if not (_resting() and fallback is not None and usable(fallback) is not None):
             try:
-                return _ask_one(meta, system, content, schema, schema_name, max_tokens)
+                return _ask_one(
+                    meta, system, content, schema, schema_name, max_tokens,
+                    effort,
+                )
             except EndpointError as e:
                 fallback = usable(fallback)
                 if fallback is None:
@@ -582,18 +628,20 @@ def ask_json(system, content, schema, schema_name, config=None, max_tokens=None)
     return _ask_one(fallback, system, content, schema, schema_name, max_tokens)
 
 
-def _ask_one(cfg, system, content, schema, schema_name, max_tokens):
+def _ask_one(cfg, system, content, schema, schema_name, max_tokens, reasoning_effort=None):
     """ask_json against one endpoint, with its one retry. An
     EndpointError raised here names cfg's model."""
     try:
-        return _ask_one_inner(cfg, system, content, schema, schema_name, max_tokens)
+        return _ask_one_inner(
+            cfg, system, content, schema, schema_name, max_tokens, reasoning_effort
+        )
     except EndpointError as e:
         if e.model is None:
             e.model = cfg.model
         raise
 
 
-def _ask_one_inner(cfg, system, content, schema, schema_name, max_tokens):
+def _ask_one_inner(cfg, system, content, schema, schema_name, max_tokens, reasoning_effort=None):
     refuse_contributor(cfg.model)
     api_key = cfg.api_key if _key_allowed(cfg.base_url) else None
     url = f"{cfg.base_url}/chat/completions"
@@ -626,7 +674,19 @@ def _ask_one_inner(cfg, system, content, schema, schema_name, max_tokens):
             body["max_tokens"] = max_tokens
         if use_format:
             body["response_format"] = response_format
+        if reasoning_effort:
+            body["reasoning_effort"] = reasoning_effort
         status, text = _post(url, body, api_key, remaining)
+        if status in (400, 422) and reasoning_effort:
+            # A server that does not take reasoning_effort: ask the same
+            # request again without it, before anything else is dropped.
+            report(f"  {cfg.model}: reasoning_effort was refused; asking without it.")
+            reasoning_effort = None
+            body.pop("reasoning_effort", None)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise EndpointError("The model endpoint did not finish in time.", kind="timeout")
+            status, text = _post(url, body, api_key, remaining)
         if status in (400, 422) and use_format and attempt == 0:
             # Most likely a server without JSON-schema mode: ask again
             # without response_format, with the schema in the prompt.
