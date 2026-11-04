@@ -458,7 +458,7 @@ see at the Tuesday PM compartment right now: the compartment still
 holds a pill."): an empty compartment is not proof the pills were
 taken, so the wearer hears what is there and decides. The frame is
 kept as evidence.
-The Desk and the app show it with an "After the window" chip. A cannot_tell, or a yes or
+The Desk and the app show it with an "Looked later" chip. A cannot_tell, or a yes or
 no with no description behind it, is silent, and the check waits for
 the next frame, with no gap between checks. The check and its spoken
 line name the look-at phrase for the missed day, so a check owed for
