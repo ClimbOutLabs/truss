@@ -1160,7 +1160,12 @@ class TrussViewModel(application: Application) : AndroidViewModel(application) {
         try {
           var data: PhotoData? = null
           var error: String? = null
-          stream.capturePhoto().onSuccess { data = it }.onFailure { e, _ -> error = e.description }
+          // Bounded: a Stop that ends the held camera mid-photo must never leave this
+          // (and the upload waiting on it) hanging.
+          withTimeoutOrNull(STEP_TIMEOUT_MS) {
+            stream.capturePhoto().onSuccess { data = it }.onFailure { e, _ -> error = e.description }
+          } ?: throw IllegalStateException("the photo did not come within ${STEP_TIMEOUT_MS / 1000} s")
+          if (heldCamera == null || watchStopAsked) throw IllegalStateException("watching was stopped")
           val captured = data ?: throw IllegalStateException(error ?: "no photo")
           val bitmap =
               withContext(Dispatchers.Default) { decodePhoto(captured) }

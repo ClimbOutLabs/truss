@@ -70,7 +70,9 @@ def plant_round(store, after="20:00", gap_minutes=1):
         raise ValueError("gap_minutes must be a finite number of minutes, zero or more")
 
     pattern = {"kind": "nightly", "after": after, "minutes": gap_minutes}
-    entries = store.list()
+    # A deleted question is gone for the wearer: the round plants a fresh
+    # one rather than refusing over a question no list shows any more.
+    entries = [e for e in store.list() if not e.get("deleted")]
 
     # Pick the round's existing members, matching the wearer's words
     # loosely (a missing question mark, different case) and preferring

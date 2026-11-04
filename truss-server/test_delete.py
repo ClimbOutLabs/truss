@@ -102,6 +102,14 @@ def main():
         except urllib.error.HTTPError as e:
             check("a browser's look photo is refused", e.code == 403)
         check("and the view is unchanged", server_module.LATEST["bytes"] == b"\xff\xd8look")
+        # A deleted bedtime question does not block the bedtime round.
+        import bedtime
+        bedtime.plant_round(store)
+        slug = [e for e in store.list() if bedtime._norm(e["question"]) == bedtime._norm(bedtime.ROUND[0])][0]["slug"]
+        store.delete(slug)
+        again = bedtime.plant_round(store)
+        live = [e for e in store.list() if bedtime._norm(e["question"]) == bedtime._norm(bedtime.ROUND[0]) and not e.get("deleted")]
+        check("the bedtime round plants a fresh copy of a deleted question", bool(again) and len(live) == 1 and live[0]["slug"] != slug)
     finally:
         httpd.shutdown()
         server_module.STORE, server_module.ALERTS = saved
