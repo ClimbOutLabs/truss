@@ -145,8 +145,8 @@ def test_other_platforms():
               lan.lan_address("win32") == "10.1.2.3" and lan.lan_address("darwin") == "10.1.2.3")
         del os.environ["TRUSS_HOST"]
         real_mac = lan._mac_en0
-        lan._mac_en0 = lambda: "192.168.0.9"
-        check("a Mac still uses en0", lan.lan_address("darwin") == "192.168.0.9")
+        lan._mac_en0 = lambda: "192.0.2.9"
+        check("a Mac still uses en0", lan.lan_address("darwin") == "192.0.2.9")
         lan._mac_en0 = real_mac
         got = lan.lan_address("win32")
         check("elsewhere the routed address is an IPv4 address or None",
