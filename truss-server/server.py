@@ -70,6 +70,21 @@ STORE = QuestionStore(Path(__file__).parent / "questions")
 # was spoken; nothing else clears it.
 ALERTS = AlertStore(Path(__file__).parent / "alerts")
 
+
+def live_alerts():
+    """The pending missed-window alerts whose question is still
+    watched. A question stopped or deleted after its window closed
+    must never be spoken about: its alert stays on disk but is not
+    offered (the phone would otherwise say it the next time it
+    polls, which looked like the question coming back)."""
+    out = []
+    for a in ALERTS.pending():
+        entry = STORE.get(a["slug"])
+        if entry is None or entry["state"] == "retired":
+            continue
+        out.append(a)
+    return out
+
 # The times each done question was actually checked, kept by day
 # next to the answer log (see coverage.py). Only the time is kept; the
 # photo itself still goes when no question fires on it. Alerts read
@@ -604,6 +619,9 @@ class TrussHandler(BaseHTTPRequestHandler):
         if path == "/watch/phone":
             self.handle_watch_phone()
             return
+        if path == "/watch/look/photo":
+            self.handle_look_photo()
+            return
         if path == "/watch/look":
             self.send_json(WATCH.look())
             print("POST /watch/look -> ask the phone for a photo now")
@@ -632,6 +650,8 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.handle_alerts_ack()
         elif path == "/questions/retire":
             self.handle_questions_retire()
+        elif path == "/questions/delete":
+            self.handle_questions_retire(delete=True)
         elif path == "/guide/start":
             self.handle_guide_start()
         elif path == "/guide/task":
@@ -711,9 +731,11 @@ class TrussHandler(BaseHTTPRequestHandler):
     def handle_questions(self):
         """List the standing questions and their states."""
         today = CLOCK().date().isoformat()
-        pending = {a["slug"] for a in ALERTS.pending() if a.get("date") == today}
+        pending = {a["slug"] for a in live_alerts() if a.get("date") == today}
         entries = []
         for entry in STORE.list():
+            if entry.get("deleted"):
+                continue
             item = {
                 "slug": entry["slug"],
                 "question": entry["question"],
@@ -770,9 +792,39 @@ class TrussHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
         print(f"GET /evidence -> {day}/{name} ({len(data)} bytes)")
 
-    def handle_questions_retire(self):
+    def handle_look_photo(self):
+        """The phone's photo for a Desk look, taken while another photo
+        of watching is still being checked: POST multipart with an
+        image field. It only becomes the glasses' latest view (GET
+        /latest), so the Desk's take yes/no gets it at once. No
+        question is checked on it, and nothing waits for the write
+        lock."""
+        content_type = self.headers.get("Content-Type", "")
+        if not content_type.startswith("multipart/form-data") or "boundary=" not in content_type:
+            self.send_error(400, "Expected multipart/form-data")
+            return
+        if self.headers.get("Origin") is not None:
+            # Only the phone's own frames are the glasses' view.
+            self.send_error(403, "Only the phone sends the glasses' view.")
+            return
+        boundary = content_type.split("boundary=")[-1].encode()
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        image_data = self.extract_multipart_field(body, boundary, b"image")
+        if not image_data:
+            self.send_error(400, "No image field found")
+            return
+        keep_latest(image_data)
+        _seen("capture", self.client_address[0])
+        self.send_json({"bytes": len(image_data)})
+        print(f"POST /watch/look/photo -> kept the glasses' view for the Desk ({len(image_data)} bytes)")
+
+    def handle_questions_retire(self, delete=False):
         """Stop watching a question: POST JSON {"slug": ...}. Its folder,
-        looks and history stay on disk; it is only never checked again."""
+        looks and history stay on disk; it is only never checked again.
+        POST /questions/delete does the same and also takes it off the
+        Desk's and the phone's lists. Either way, a missed-window alert
+        still waiting for it is never spoken (see live_alerts)."""
         try:
             content_length = int(self.headers.get("Content-Length", 0))
             data = json.loads(self.rfile.read(content_length).decode())
@@ -789,6 +841,11 @@ class TrussHandler(BaseHTTPRequestHandler):
         ):
             self.send_error(404, "No question with that slug.")
             return
+        if delete:
+            STORE.delete(slug)
+            self.send_json({"slug": slug, "state": "retired", "deleted": True})
+            print(f"POST /questions/delete -> {slug}")
+            return
         STORE.retire(slug)
         self.send_json({"slug": slug, "state": "retired"})
         print(f"POST /questions/retire -> {slug}")
@@ -799,7 +856,7 @@ class TrussHandler(BaseHTTPRequestHandler):
         already here on this poll."""
         run_sweep()
         alerts = []
-        for a in ALERTS.pending():
+        for a in live_alerts():
             item = {"id": a["id"], "line": a["line"]}
             banner = desk_banner(a, now=CLOCK())
             if banner is not None:
