@@ -259,7 +259,7 @@ def test_server_task_queues_lines_for_the_phone():
             capture(base)
             status, cap = capture(base)
             check("a repeat after two cannot-tells is spoken in the reply",
-                  cap["speak"] == ["Have another look. Is the chicken in the pan?"])
+                  cap["speak"] == ["Let's have another look. Is the chicken in the pan?"])
             check("and the stale queued line is dropped", server_module.guide_waiting() == [])
         finally:
             server_module.guide_check = real_check
@@ -294,7 +294,7 @@ def test_stop_with_phone_replaces_the_queue():
         check("start with phone queues", len(server_module.guide_waiting()) == 1)
         call(base, "/guide/stop", {"phone": True})
         queued = server_module.guide_waiting()
-        check("stop leaves only its own line", [q["line"] for q in queued] == ["Stopped."])
+        check("stop leaves only its own line", [q["line"] for q in queued] == ["Okay, I've stopped the guide."])
         server_module.GUIDE_SAY.clear()
         call(base, "/guide/start", {"title": "T", "steps": ["Is the lid on?"]})
         check("start without phone queues nothing", server_module.guide_waiting() == [])

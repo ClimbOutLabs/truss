@@ -380,7 +380,7 @@ def test_done_fire_records_witness():
     result = loop.process_frame(frame(captures, "1.jpg"))
     check("done question fires like any question", result["fired"] == [slug])
     check("the firing is spoken as before",
-          spoken == ["Did I take my night pills? Yes. I saw it at 9:05 PM. "
+          spoken == ["Did you take your night pills? Yes, I saw it happen at 9:05 PM. "
                      "Tonight's compartment is empty."])
     witness = store.witness_today(slug, now=clock.now)
     check("the firing leaves a witness with the evidence photo's name",
@@ -406,7 +406,7 @@ def test_redo_reminder_speaks_once():
           loop.check_fn.redo_calls[0]["ref_yes_path"]
           == store.get(slug)["ref_yes_path"])
     check("the reminder names the witnessed time",
-          spoken[-1] == "You took your night pills at 9:05 PM. I saw you.")
+          spoken[-1] == "Just so you know, you already took your night pills at 9:05 PM. I saw you.")
     check("the return frame is kept as evidence",
           result["evidence"] is not None and Path(result["evidence"]).exists())
     log_text = Path(result["evidence"]).parent.joinpath("answers.txt").read_text()
@@ -415,7 +415,7 @@ def test_redo_reminder_speaks_once():
     clock.now = datetime(2026, 10, 27, 21, 25)
     loop.process_frame(frame(captures, "3.jpg"))
     check("the reminder is spoken exactly once",
-          spoken.count("You took your night pills at 9:05 PM. I saw you.") == 1)
+          spoken.count("Just so you know, you already took your night pills at 9:05 PM. I saw you.") == 1)
     check("after the reminder the question is not return-checked again",
           len(loop.check_fn.redo_calls) == 1)
 
@@ -478,7 +478,7 @@ def test_state_window_question_is_unchanged():
     result = loop.process_frame(frame(captures, "1.jpg"))
     check("a state question in a window fires as before",
           result["fired"] == [slug]
-          and spoken == ["Is the stove off? Yes, as of 9:05 PM. All four burners are dark."])
+          and spoken == ["Is the stove off? Yes, that's how it looked at 9:05 PM. All four burners are dark."])
     check("a state firing leaves no witness",
           store.get(slug)["witness"] is None)
     loop.process_frame(frame(captures, "2.jpg"))
@@ -565,7 +565,7 @@ def test_redo_checks_obey_the_check_gap():
     check("a return check is allowed again after the gap",
           len(loop.check_fn.redo_calls) == 2)
     check("the allowed return check can speak the reminder",
-          spoken[-1] == "You took your night pills at 8:50 PM. I saw you.")
+          spoken[-1] == "Just so you know, you already took your night pills at 8:50 PM. I saw you.")
 
 
 def test_retired_witnessed_question_never_reminds():
@@ -612,11 +612,11 @@ def test_miss_alert_lifecycle():
           len(created) == 1 and created[0]["slug"] == slug)
     check("the alert line is plain and claims only what was watched",
           created[0]["line"]
-          == "It is past 10:00 PM. About your question: "
-             "Did I take my night pills? I wasn't with you during that "
-             "window, from 8:00 PM to 10:00 PM, so I can't say either way. "
-             "Check with your own eyes first, before you act on this. "
-             "When I see it, I'll tell you what's there.")
+          == "Just checking in: it's past 10:00 PM. You asked me to keep an "
+             "eye on this one: did you take your night pills? I wasn't with "
+             "you between 8:00 and 10:00 PM, so I honestly can't say either "
+             "way. Could you have a quick look yourself before you act on "
+             "this? Once I can see it, I'll tell you what's there.")
     check("the sweep is idempotent",
           sweep_missed(store, alerts, now=after_close) == []
           and len(alerts.pending()) == 1)
@@ -704,7 +704,7 @@ def test_no_miss_while_a_check_is_in_flight():
             check("yes: the witnessed act is never called missed",
                   after == [] and alerts.pending() == [])
             check("yes: the answer was spoken",
-                  spoken == ["Did I take my night pills? Yes. I saw it at 9:59 PM. "
+                  spoken == ["Did you take your night pills? Yes, I saw it happen at 9:59 PM. "
                              "Tonight's compartment is empty."])
         check(f"{answer}: the claim is released after the check",
               not store.check_in_flight(slug))
@@ -734,8 +734,9 @@ def test_miss_for_a_window_ending_at_midnight():
           and created[0]["id"] == "2026-10-27-did-i-take-my-night-pills")
     check("the line after midnight speaks of yesterday",
           created[0]["line"].startswith(
-              "Yesterday's window ended at 11:59 PM. About your question: "
-              "Did I take my night pills? I wasn't with you during that window")
+              "Just checking in about yesterday. The window ended at 11:59 PM, "
+              "and you asked me to keep an eye on this one: did you take your "
+              "night pills? I wasn't with you between")
           and "not done" not in created[0]["line"])
 
     tmp, store, alerts = sweep_rig()
@@ -1035,7 +1036,7 @@ def test_http():
             check("GET /alerts returns the pending alert",
                   len(got["alerts"]) == 1
                   and got["alerts"][0]["id"] == pending[0]["id"]
-                  and "About your question" in got["alerts"][0]["line"])
+                  and "keep an eye on this one" in got["alerts"][0]["line"])
 
             status, _ = post(
                 base + "/alerts/ack",
@@ -1088,12 +1089,12 @@ def test_second_feed_is_stopped_until_the_next_window():
         clock.now = again_at
         loop.process_frame(frame(captures, "again.jpg"))
         check(f"{label}: a second feed is stopped, and the next window is named",
-              spoken[-1] == "You fed the dog at 9:00 AM. I saw you. "
-                            "The next window opens at 1:00 PM.")
+              spoken[-1] == "Just so you know, you already fed the dog at 9:00 AM. I saw you. "
+                            "The next window is at 1:00 PM.")
         log_text = (Path(store.root).parent / "log" / "2026-10-27"
                     / "answers.txt").read_text()
         check(f"{label}: the answer log carries the same words",
-              "The next window opens at 1:00 PM." in log_text)
+              "The next window is at 1:00 PM." in log_text)
 
 
 def test_the_next_window_is_not_a_second_feed():
@@ -1134,7 +1135,7 @@ def test_last_window_names_no_next_one():
     clock.now = datetime(2026, 10, 27, 23, 0)
     loop.process_frame(frame(captures, "late.jpg"))
     check("after the last window the reminder names no next one",
-          spoken[-1] == "You fed the dog at 7:30 PM. I saw you.")
+          spoken[-1] == "Just so you know, you already fed the dog at 7:30 PM. I saw you.")
 
 
 def test_other_words_are_another_routine():
@@ -1152,7 +1153,7 @@ def test_other_words_are_another_routine():
     clock.now = datetime(2026, 10, 27, 11, 0)
     loop.process_frame(frame(captures, "again.jpg"))
     check("and its window is never named as the next one",
-          spoken[-1] == "You took your morning pills at 9:00 AM. I saw you.")
+          spoken[-1] == "Just so you know, you already took your morning pills at 9:00 AM. I saw you.")
 
 
 if __name__ == "__main__":

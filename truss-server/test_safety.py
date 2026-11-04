@@ -40,9 +40,11 @@ PILLS = "Did I take my night pills?"
 LOOK_AT = "the {weekday} PM compartment"
 DAY = datetime(2026, 10, 27)  # a Tuesday
 AFTER_CLOSE = datetime(2026, 10, 27, 22, 30)
-TAIL = ("Check the Tuesday PM compartment first, before you act on this. "
-        "When I see it, I'll tell you what's there.")
-OPENING = "It is past 10:00 PM. About your question: Did I take my night pills?"
+TAIL = ("Could you have a quick look at the Tuesday PM compartment yourself "
+        "before you act on this? Once I can see it, I'll tell you what's there.")
+OPENING = ("Just checking in: it's past 10:00 PM. You asked me to keep an eye on "
+           "this one: did you take your night pills?")
+SPOKEN_PILLS = "did you take your night pills?"
 
 
 def check(name, cond):
@@ -95,6 +97,8 @@ def all_safety_templates():
         out[f"alerts.SPAN_TEMPLATES[{name}]"] = text
     for name, text in checkloop_module.MISS_CHECK_TEMPLATES.items():
         out[f"checkloop.MISS_CHECK_TEMPLATES[{name}]"] = text
+    for name, text in checkloop_module.MISS_CHECK_ANSWERS.items():
+        out[f"checkloop.MISS_CHECK_ANSWERS[{name}]"] = text
     # The refusal is spoken for safety questions only (the stove).
     # The redo reminder is not scanned: it is spoken only after the act
     # was seen, and says what she did ("You took your night pills at
@@ -133,8 +137,8 @@ def test_no_safety_template_instructs_the_act():
         check(f"{name} has no action verb (found {found})", found == [])
     for name in ("look_at", "look"):
         text = alerts_module.MISS_TEMPLATES[name]
-        check(f"the safety direction {name} says check first, before acting",
-              text.startswith("Check ") and "first, before you act on this" in text)
+        check(f"the safety direction {name} asks for a look first, before acting",
+              "have a quick look" in text and "yourself before you act on this" in text)
     check("there is no bare yes or no line for the state check",
           set(checkloop_module.MISS_CHECK_TEMPLATES) == {"reason", "reason_look_at"})
 
@@ -164,7 +168,7 @@ def test_rendered_safety_lines_have_no_action_verbs():
     for cov in cases:
         for e in (entry, plain):
             line = miss_line(e, until, cov=cov, start=start, day=DAY.date())
-            spoken = line.replace(PILLS, " ").replace("the Tuesday PM compartment", " ")
+            spoken = line.replace(SPOKEN_PILLS, " ").replace("the Tuesday PM compartment", " ")
             found = action_verbs_in(spoken)
             check(f"rendered {cov['kind']} line has no action verb ({found})",
                   found == [])
@@ -257,8 +261,8 @@ def test_sweep_wording_for_the_three_cases():
           and created[0]["coverage"] == "complete"
           and created[0]["safety"] is True
           and created[0]["line"]
-          == f"{OPENING} I was with you the whole window, from 9:00 PM to "
-             f"10:00 PM, and didn't see it. {TAIL}")
+          == f"{OPENING} I was with you the whole time, from 9:00 to "
+             f"10:00 PM, and I didn't see it happen. {TAIL}")
 
     tmp, store, alerts, checks = sweep_rig()
     slug = planted(store)
@@ -268,9 +272,9 @@ def test_sweep_wording_for_the_three_cases():
     check("partial coverage: I was with you from ... to ... and didn't see it",
           created[0]["coverage"] == "partial"
           and created[0]["line"]
-          == f"{OPENING} I was with you from 9:10 PM to 9:50 PM and "
-             "didn't see it. I wasn't with you for the rest of the window. "
-             f"{TAIL}")
+          == f"{OPENING} I was with you from 9:10 to 9:50 PM, and I "
+             "didn't see it then. I wasn't with you for the rest of the window, "
+             f"so I can't be sure. {TAIL}")
 
     tmp, store, alerts, checks = sweep_rig()
     slug = planted(store)
@@ -281,8 +285,8 @@ def test_sweep_wording_for_the_three_cases():
           "and another question's checks do not count",
           created[0]["coverage"] == "none"
           and created[0]["line"]
-          == f"{OPENING} I wasn't with you during that window, from "
-             f"9:00 PM to 10:00 PM, so I can't say either way. {TAIL}")
+          == f"{OPENING} I wasn't with you between "
+             f"9:00 and 10:00 PM, so I honestly can't say either way. {TAIL}")
 
 
 def test_partial_wording_with_several_spans():
@@ -292,15 +296,15 @@ def test_partial_wording_with_several_spans():
            "spans": [(at(21, 5), at(21, 5)), (at(21, 30), at(21, 45))]}
     line = miss_line(entry, until, cov=two, start=start, day=DAY.date())
     check("a one-check span is spoken as a moment, spans joined with and",
-          "I was with you at 9:05 PM and from 9:30 PM to 9:45 PM and "
-          "didn't see it." in line)
+          "I was with you at 9:05 PM and from 9:30 to 9:45 PM, and "
+          "I didn't see it then." in line)
     many = {"kind": "partial",
             "spans": [(at(21, m), at(21, m + 3)) for m in (0, 12, 24, 36)]}
     line = miss_line(entry, until, cov=many, start=start, day=DAY.date())
     check("more than three spans are summed up",
-          "I was with you on and off between 9:00 PM and 9:39 PM" in line)
+          "I was with you on and off between 9:00 and 9:39 PM" in line)
     check("a question that is not safety gets no direction at all",
-          "Check" not in line)
+          "have a quick look" not in line and "before you act" not in line)
 
 
 def test_safety_without_look_at():
@@ -309,8 +313,8 @@ def test_safety_without_look_at():
     created = sweep_missed(store, alerts, now=AFTER_CLOSE, checks=checks)
     check("with nothing named to look at, she is sent to check for herself",
           created[0]["line"].endswith(
-              "Check with your own eyes first, before you act on this. "
-              "When I see it, I'll tell you what's there."))
+              "Could you have a quick look yourself before you act on this? "
+              "Once I can see it, I'll tell you what's there."))
 
 
 def test_check_log_is_plain_and_forgiving():
@@ -408,7 +412,7 @@ def test_frames_inside_the_check_gap_are_not_watching():
     check("so the alert does not claim the whole window",
           created[0]["coverage"] == "partial"
           and "the whole window" not in created[0]["line"]
-          and "I was with you on and off between 9:00 PM and 9:45 PM"
+          and "I was with you on and off between 9:00 and 9:45 PM"
           in created[0]["line"])
     check("the state check is owed for that question",
           store.get(slug)["miss_check"]["state"] == "owed")
@@ -595,9 +599,8 @@ def test_state_check_after_a_miss():
 
     clock.now = AFTER_CLOSE + timedelta(minutes=2)
     result = loop.process_frame(frame(captures, "3.jpg"))
-    expected = ("About your question, Did I take my night pills? "
-                "Here is what I see now at the Tuesday PM compartment: "
-                "The Tuesday PM compartment is empty.")
+    expected = ("I said I'd tell you once I could see it. You asked: Did you take your night pills? From what I can see at the Tuesday PM compartment now, "
+                "it looks like a yes. The Tuesday PM compartment is empty.")
     check("the next frame showing the thing speaks what is there",
           spoken == [expected] and result["speak"] == [expected])
     check("that frame is kept as evidence",
@@ -634,9 +637,8 @@ def test_a_verdict_with_no_description_is_never_spoken():
     clock.now = AFTER_CLOSE + timedelta(minutes=5)
     loop.process_frame(frame(captures, "described.jpg"))
     check("a no with a description is spoken as that description",
-          spoken == ["About your question, Did I take my night pills? Here is "
-                     "what I see now at the Tuesday PM compartment: "
-                     "The Tuesday PM compartment still holds pills."])
+          spoken == ["I said I'd tell you once I could see it. You asked: Did you take your night pills? From what I can see at the Tuesday PM compartment now, "
+                     "it still looks like a no. The Tuesday PM compartment still holds pills."])
 
 
 def test_a_miss_settled_after_midnight_is_yesterdays():
@@ -652,7 +654,7 @@ def test_a_miss_settled_after_midnight_is_yesterdays():
     check("a miss settled after midnight reads yesterday's checks and weekday",
           len(created) == 1
           and created[0]["coverage"] == "complete"
-          and created[0]["line"].startswith("Yesterday's window ended at 11:59 PM.")
+          and created[0]["line"].startswith("Just checking in about yesterday. The window ended at 11:59 PM,")
           and "the Tuesday PM compartment" in created[0]["line"])
     check("its state check is owed for yesterday",
           store.get(slug)["miss_check"] == {"date": "2026-10-27", "state": "owed"})
@@ -663,9 +665,8 @@ def test_a_miss_settled_after_midnight_is_yesterdays():
               "Look only at the Tuesday PM compartment.")
           and "Wednesday" not in loop.check_fn.calls[0]["question"])
     check("and is offered through the small hours, naming Tuesday's compartment",
-          spoken == ["About your question, Did I take my night pills? Here is "
-                     "what I see now at the Tuesday PM compartment: "
-                     "The Tuesday PM compartment is empty."])
+          spoken == ["I said I'd tell you once I could see it. You asked: Did you take your night pills? From what I can see at the Tuesday PM compartment now, "
+                     "it looks like a yes. The Tuesday PM compartment is empty."])
 
     tmp, store, alerts, checks, loop, spoken, clock, captures = loop_rig(
         [verdict("yes", "The compartment is empty.")],

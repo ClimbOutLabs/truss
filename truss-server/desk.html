@@ -656,7 +656,7 @@ async function loadSeen() {
   renderSeen();
 }
 // The seen rows. A state checked after its window closed keeps the
-// same "Checked late" chip History gives it. A live question that has
+// same "After the window" chip History gives it. A live question that has
 // no card because its sighting is here gets its Stop button on its
 // latest row, so it can always be stopped from Today.
 function paintSeen() {
@@ -666,7 +666,7 @@ function paintSeen() {
   const last = new Map();
   rows.forEach((a, i) => last.set(norm(a.question), i));
   $("seen").innerHTML = `<h2>What Truss has seen today</h2>` + rows.map((a, i) => {
-    const [word, cls] = a.kind === "state_check" ? ["Checked late", "chip clay"] : ["Seen", "chip slate"];
+    const [word, cls] = a.kind === "state_check" ? ["After the window", "chip clay"] : ["Seen", "chip slate"];
     const q = last.get(norm(a.question)) === i ? live.get(norm(a.question)) : null;
     const stop = q ? `<button class="pillstop" data-retire="${esc(q.slug)}">Stop</button>` : "";
     return eventRow(a, SEEN.day, word, cls, false, stop);
@@ -747,7 +747,7 @@ async function loadAnswers() {
     // The server returns the day newest first; each answer appears
     // once, with whether it was said out loud carried in its line.
     $("answers").innerHTML = r.answers.map((a) => {
-      const chip = {answer: ["Seen", "chip slate"], redo: ["Reminder", "chip clay"], cannot_tell: ["Couldn't tell", "chip"], state_check: ["Checked late", "chip clay"]}[a.kind];
+      const chip = {answer: ["Seen", "chip slate"], redo: ["Reminder", "chip clay"], cannot_tell: ["Couldn't tell", "chip"], state_check: ["After the window", "chip clay"]}[a.kind];
       return eventRow(a, r.day, chip ? chip[0] : "", chip ? chip[1] : "chip", a.kind === "redo" || a.kind === "state_check");
     }).join("");
   } catch (e) { $("answers").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }

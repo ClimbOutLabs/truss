@@ -42,6 +42,7 @@ from pathlib import Path
 
 from coverage import DEFAULT_GAP_MINUTES, coverage
 from questions import _window_times
+from wording import to_you
 
 # Until this time of day, the sweep also settles yesterday's windows.
 # A window that ends near midnight can close with a check still in
@@ -164,30 +165,40 @@ class AlertStore:
 
 
 # Every sentence a missed-window alert can speak. Placeholders are
-# filled with times, the question's own words, and the look-at
-# phrase; nothing else is ever added to a line. The safety direction
-# is the only instruction any alert gives, and it is to look.
+# filled with times, the question's own words said back to the wearer
+# ("Did I" becomes "did you"), and the look-at phrase; nothing else is
+# ever added to a line. The words are a companion's, not a report's,
+# but the meaning is held: a miss is only ever "I didn't see it", and
+# the safety direction is the only instruction any alert gives, and it
+# is to look before acting.
 MISS_TEMPLATES = {
-    "opening": "It is past {until}. About your question: {question}",
-    "opening_yesterday": (
-        "Yesterday's window ended at {until}. About your question: {question}"
+    "opening": (
+        "Just checking in: it's past {until}. "
+        "You asked me to keep an eye on this one: {question}"
     ),
-    "complete": "I was with you the whole window, from {start} to {end}, and didn't see it.",
+    "opening_yesterday": (
+        "Just checking in about yesterday. The window ended at {until}, "
+        "and you asked me to keep an eye on this one: {question}"
+    ),
+    "complete": (
+        "I was with you the whole time, from {start} to {end}, "
+        "and I didn't see it happen."
+    ),
     "partial": (
-        "I was with you {spans} and didn't see it. "
-        "I wasn't with you for the rest of the window."
+        "I was with you {spans}, and I didn't see it then. "
+        "I wasn't with you for the rest of the window, so I can't be sure."
     ),
     "none": (
-        "I wasn't with you during that window, from {start} to {end}, "
-        "so I can't say either way."
+        "I wasn't with you between {start} and {end}, "
+        "so I honestly can't say either way."
     ),
     "look_at": (
-        "Check {look_at} first, before you act on this. "
-        "When I see it, I'll tell you what's there."
+        "Could you have a quick look at {look_at} yourself before you act on this? "
+        "Once I can see it, I'll tell you what's there."
     ),
     "look": (
-        "Check with your own eyes first, before you act on this. "
-        "When I see it, I'll tell you what's there."
+        "Could you have a quick look yourself before you act on this? "
+        "Once I can see it, I'll tell you what's there."
     ),
 }
 
@@ -204,27 +215,40 @@ def _clock(moment):
     return moment.strftime("%I:%M %p").lstrip("0")
 
 
+def _clock_range(first, last):
+    """Two clock times for "from ... to ...", with the AM or PM said
+    once when both share it: "5:03 to 5:05 PM", as a person says it."""
+    a, b = _clock(first), _clock(last)
+    if a[-2:] == b[-2:]:
+        a = a[:-3]
+    return a, b
+
+
 def _spans_text(spans):
     if len(spans) > 3:
-        return SPAN_TEMPLATES["on_and_off"].format(
-            first=_clock(spans[0][0]), last=_clock(spans[-1][1])
-        )
+        a, b = _clock_range(spans[0][0], spans[-1][1])
+        return SPAN_TEMPLATES["on_and_off"].format(first=a, last=b)
     parts = []
     for first, last in spans:
         if _clock(first) == _clock(last):
             parts.append(SPAN_TEMPLATES["moment"].format(first=_clock(first)))
         else:
-            parts.append(
-                SPAN_TEMPLATES["range"].format(first=_clock(first), last=_clock(last))
-            )
+            a, b = _clock_range(first, last)
+            parts.append(SPAN_TEMPLATES["range"].format(first=a, last=b))
     if len(parts) == 1:
         return parts[0]
     return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def _question_text(entry):
-    question = entry["question"].strip()
-    return question if question.endswith("?") else question + "?"
+    """The question said back to the wearer inside a sentence: "Did I
+    take my pills" gives "did you take your pills?"."""
+    question = to_you(entry["question"].strip())
+    if not question.endswith("?"):
+        question += "?"
+    if question[:1].isupper() and not question[1:2].isupper():
+        question = question[:1].lower() + question[1:]
+    return question
 
 
 def look_at_text(entry, day):
@@ -243,17 +267,21 @@ def miss_line(entry, until, cov=None, start=None, day=None, yesterday=False):
     midnight is spoken as yesterday's."""
     cov = cov or {"kind": "none", "spans": []}
     day = day or datetime.now().date()
-    start_text = _clock(datetime.combine(day, start)) if start else None
+    start_text = None
     until_text = _clock(datetime.combine(day, until))
+    if start:
+        start_text, end_text = _clock_range(
+            datetime.combine(day, start), datetime.combine(day, until)
+        )
     opening = MISS_TEMPLATES["opening_yesterday" if yesterday else "opening"]
     sentences = [opening.format(until=until_text, question=_question_text(entry))]
     kind = cov["kind"]
     if kind == "partial":
         sentences.append(MISS_TEMPLATES["partial"].format(spans=_spans_text(cov["spans"])))
     elif kind == "complete" and start_text:
-        sentences.append(MISS_TEMPLATES["complete"].format(start=start_text, end=until_text))
+        sentences.append(MISS_TEMPLATES["complete"].format(start=start_text, end=end_text))
     elif start_text:
-        sentences.append(MISS_TEMPLATES["none"].format(start=start_text, end=until_text))
+        sentences.append(MISS_TEMPLATES["none"].format(start=start_text, end=end_text))
     if entry.get("safety"):
         target = look_at_text(entry, day)
         if target:

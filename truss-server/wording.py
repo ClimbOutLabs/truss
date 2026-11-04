@@ -56,3 +56,43 @@ def action_verbs_in(text):
     bare = re.sub(r"\{[a-z_]+\}", " ", text)
     words = re.findall(r"[a-z]+", bare.lower())
     return sorted({FORBIDDEN_WORDS[w] for w in words if w in FORBIDDEN_WORDS})
+
+
+# The wearer's words are their own ("my pills"); Mannie says them back
+# to them ("your pills").
+TO_YOU = {
+    "i": "you", "me": "you", "my": "your", "mine": "yours",
+    "myself": "yourself", "we": "you", "us": "you", "our": "your",
+    "ours": "yours", "i'm": "you're", "i've": "you've", "i'll": "you'll",
+    "i'd": "you'd", "we're": "you're", "we've": "you've",
+}
+
+# The verb that goes with "I" changes too when it is said back:
+# "am I" is "are you", "I was" is "you were".
+_WITH_I = {"am": "are", "was": "were"}
+
+
+def to_you(text):
+    """A question in the wearer's own words said back to them: "Did I
+    take my pills?" gives "Did you take your pills?". Only pronouns
+    and the two verbs that agree with "I" change; every other word,
+    and the punctuation, is kept as typed. A question already worded
+    another way comes back unchanged."""
+    parts = re.split(r"([A-Za-z']+)", text)
+    words = [i for i in range(1, len(parts), 2)]
+    lower = [parts[i].lower() for i in words]
+    out = list(parts)
+    for n, i in enumerate(words):
+        word = lower[n]
+        if word in _WITH_I and (
+            (n > 0 and lower[n - 1] == "i") or (n + 1 < len(lower) and lower[n + 1] == "i")
+        ):
+            new = _WITH_I[word]
+        elif word in TO_YOU:
+            new = TO_YOU[word]
+        else:
+            continue
+        if parts[i][:1].isupper() and (word != "i" or i == words[0]):
+            new = new[:1].upper() + new[1:]
+        out[i] = new
+    return "".join(out)

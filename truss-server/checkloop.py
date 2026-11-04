@@ -55,7 +55,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from questions import look_at_for
-from wording import action_verbs_in
+from wording import TO_YOU, action_verbs_in, to_you
 
 
 def model_name(result):
@@ -96,7 +96,9 @@ def _clock(moment):
 
 
 def _spoken_question(entry):
-    question = entry["question"].strip()
+    """The question said back to the wearer: "Did I take my pills?"
+    is spoken as "Did you take your pills?"."""
+    question = to_you(entry["question"].strip())
     if not question.endswith("?"):
         question += "?"
     return question
@@ -105,17 +107,18 @@ def _spoken_question(entry):
 # Every sentence the loop speaks for a firing or a redo reminder.
 # A firing names the time it was seen, so the bedtime round says when
 # each thing was found the way it was, and the checker's reason, so
-# she hears what was seen rather than a bare yes. The redo reminder
-# names the witnessed time and says it was seen, because "I saw you"
-# is what lets her stop fretting.
+# the wearer hears what was seen rather than a bare yes. The redo
+# reminder names the witnessed time and says it was seen, because "I
+# saw you" is what lets them stop fretting. Worded the way a companion
+# would say it, not read out like a report.
 SPOKEN_TEMPLATES = {
-    "state": "{question} Yes, as of {time}. {reason}",
-    "state_bare": "{question} Yes, as of {time}.",
-    "done": "{question} Yes. I saw it at {time}. {reason}",
-    "done_bare": "{question} Yes. I saw it at {time}.",
-    "redo": "You {act} at {time}. I saw you.",
-    "redo_plain": "That is already done. You did it at {time}. I saw you.",
-    "next_window": "The next window opens at {time}.",
+    "state": "{question} Yes, that's how it looked at {time}. {reason}",
+    "state_bare": "{question} Yes, that's how it looked at {time}.",
+    "done": "{question} Yes, I saw it happen at {time}. {reason}",
+    "done_bare": "{question} Yes, I saw it happen at {time}.",
+    "redo": "Just so you know, you already {act} at {time}. I saw you.",
+    "redo_plain": "Just so you know, that's already done. I saw it at {time}.",
+    "next_window": "The next window is at {time}.",
 }
 
 # The past tense of the verbs a done question is likely to open with.
@@ -131,13 +134,9 @@ _PAST = {
     "water": "watered",
 }
 
-# The wearer's words are hers ("my pills"); Mannie says them back to
-# her ("your pills").
-_TO_YOU = {
-    "i": "you", "me": "you", "my": "your", "mine": "yours",
-    "myself": "yourself", "we": "you", "us": "you", "our": "your",
-    "ours": "yours", "i'm": "you're", "i've": "you've",
-}
+# The wearer's words are their own ("my pills"); Mannie says them back
+# ("your pills"). See wording.to_you.
+_TO_YOU = TO_YOU
 
 
 # Regular verbs a done question is likely to open with. Only these
@@ -248,34 +247,46 @@ def state_prompt(entry):
     )
 
 
-# Every sentence the post-miss state check can speak. The checker's
-# reason is spoken as it is: a description of the frame. There is no
-# line for a bare yes or no: a verdict with nothing seen behind it is
-# not spoken at all.
+# Every sentence the post-miss state check can speak. It leads with
+# what the frame means for the question, read from the verdict against
+# the question's own yes look, then the checker's reason as it is: a
+# description of the frame. There is no line for a bare yes or no: a
+# verdict with nothing seen behind it is not spoken at all.
 MISS_CHECK_TEMPLATES = {
-    "reason": "About your question, {question} Here is what I see now: {reason}",
-    "reason_look_at": (
-        "About your question, {question} Here is what I see now at "
-        "{look_at}: {reason}"
+    "reason": (
+        "I said I'd tell you once I could see it. You asked: {question} "
+        "From what I can see now, {answer}. {reason}"
     ),
+    "reason_look_at": (
+        "I said I'd tell you once I could see it. You asked: {question} "
+        "From what I can see at {look_at} now, {answer}. {reason}"
+    ),
+}
+
+# What the state check's verdict means, said plainly. A yes is that the
+# frame matches the question's yes look; a no, that it does not yet.
+MISS_CHECK_ANSWERS = {
+    "yes": "it looks like a yes",
+    "no": "it still looks like a no",
 }
 
 
 def miss_check_text(entry, result):
     """The spoken state-check result, or None when the checker gave
-    no description to speak."""
+    no description to speak, or a verdict that is neither yes nor no."""
     reason = _reason_text(result)
-    if not reason:
+    answer = MISS_CHECK_ANSWERS.get(result.get("verdict"))
+    if not reason or answer is None:
         return None
-    question = entry["question"].strip()
-    if not question.endswith("?"):
-        question += "?"
+    question = _spoken_question(entry)
     target = _owed_look_at(entry)
     if target:
         return MISS_CHECK_TEMPLATES["reason_look_at"].format(
-            question=question, look_at=target, reason=reason
+            question=question, look_at=target, answer=answer, reason=reason
         )
-    return MISS_CHECK_TEMPLATES["reason"].format(question=question, reason=reason)
+    return MISS_CHECK_TEMPLATES["reason"].format(
+        question=question, answer=answer, reason=reason
+    )
 
 
 # The refusal: what Mannie says when a safety question is in front of
@@ -286,8 +297,8 @@ def miss_check_text(entry, result):
 # saying out loud, once the thing itself is confirmed in view. No
 # refusal ever tells her what to do; test_safety.py scans these too.
 REFUSAL_TEMPLATES = {
-    "detail": "{question} I can't tell. I can't see {detail} from here.",
-    "plain": "{question} I can't tell from here.",
+    "detail": "{question} I can't tell from here. I can't quite see {detail}.",
+    "plain": "{question} I can't tell from here, so I won't guess.",
 }
 
 # A refusal is spoken at most this often per question, so standing at

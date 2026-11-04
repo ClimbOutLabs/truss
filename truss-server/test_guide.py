@@ -100,7 +100,7 @@ def test_start_and_the_walk():
     restate = guide.process_frame(frame(captures, "4.jpg"), checker)
     check(
         "the second cannot-tell in a row restates the step",
-        restate["speak"] == ["Have another look. Is the wrench on the cartridge nut?"],
+        restate["speak"] == ["Let's have another look. Is the wrench on the cartridge nut?"],
     )
     fifth = guide.process_frame(frame(captures, "5.jpg"), checker)
     check("after the restate, a yes advances", fifth["speak"] == [
@@ -109,7 +109,7 @@ def test_start_and_the_walk():
 
     guide.process_frame(frame(captures, "6.jpg"), checker)
     done = guide.process_frame(frame(captures, "7.jpg"), checker)
-    check("the last step speaks a summary", done["speak"] == ["All steps done."])
+    check("the last step speaks a summary", done["speak"] == ["That's every step. Nicely done."])
     check("guide is done", guide.state == "done")
     check(
         "every step was checked in order",
@@ -140,7 +140,7 @@ def test_skip_and_stop():
     )
     guide.process_frame(frame(captures, "2.jpg"), checker)
     stopped = guide.stop()
-    check("stop speaks once", stopped == ["Stopped."])
+    check("stop speaks once", stopped == ["Okay, I've stopped the guide."])
     check("guide is stopped", guide.state == "stopped")
     check("no log line on stop", not list((Path(captures).parent / "log").rglob("answers.txt")))
     after = guide.process_frame(frame(captures, "3.jpg"), checker)
@@ -155,7 +155,7 @@ def test_skip_on_last_step_finishes_with_a_note():
     done = guide.skip()
     check(
         "skipping the only step finishes with the skipped note",
-        done == ["All steps done: 0 confirmed, 1 skipped.", "Skipped: the water shut off under the sink."],
+        done == ["That's the last step. 1 of the 1 was skipped.", "We skipped: the water shut off under the sink."],
     )
     check("guide is done", guide.state == "done")
 

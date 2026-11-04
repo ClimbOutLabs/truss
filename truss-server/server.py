@@ -24,6 +24,7 @@ from coverage import CheckLog
 import endpoint
 import sam_client
 import verdict
+import voice
 from bedtime import plant_round
 from checkloop import CheckLoop
 from guide import Guide
@@ -1382,16 +1383,20 @@ class TrussHandler(BaseHTTPRequestHandler):
                 wav_path = tmp_wav.name
             
             try:
-                # Generate AIFF with 'say'
-                subprocess.run(
-                    ["say", "-o", aiff_path, text],
-                    check=True,
-                    timeout=10
-                )
+                # Generate AIFF with 'say', in the most natural voice
+                # installed (see voice.py). Should that voice fail, the
+                # line is still spoken in the system default.
+                try:
+                    subprocess.run(
+                        voice.say_command(text, aiff_path), check=True, timeout=20
+                    )
+                except Exception:
+                    subprocess.run(["say", "-o", aiff_path, text], check=True, timeout=20)
                 
-                # Convert to 16-bit WAV with afconvert
+                # Convert to 16-bit WAV with afconvert. 24 kHz keeps the
+                # voice's warmth; 16 kHz made it sound like a phone line.
                 subprocess.run(
-                    ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", aiff_path, wav_path],
+                    ["afconvert", "-f", "WAVE", "-d", "LEI16@24000", aiff_path, wav_path],
                     check=True,
                     timeout=10
                 )
@@ -1473,6 +1478,7 @@ def main():
     print(f"Captures will be saved to: {CAPTURES_DIR.absolute()}")
     print(f"Server log: {(LOG_DIR / 'server.log').absolute()} (tail -f it from another window)")
     print(f"Live (what the glasses say, for others to hear): http://{host}:{port}/desk#live")
+    print(voice.describe())
     print(f"Press Ctrl+C to stop\n")
     
     try:

@@ -79,11 +79,11 @@ class Guide:
             if outcome == "skipped"
         ]
         if not skipped:
-            return ["All steps done."]
+            return ["That's every step. Nicely done."]
         return [
-            f"All steps done: {len(self.steps) - len(skipped)} confirmed, "
-            f"{len(skipped)} skipped.",
-            "Skipped: " + "; ".join(skipped) + ".",
+            f"That's the last step. {len(skipped)} of the {len(self.steps)} "
+            f"{'was' if len(skipped) == 1 else 'were'} skipped.",
+            "We skipped: " + "; ".join(skipped) + ".",
         ]
 
     # -- the walk -------------------------------------------------------------
@@ -114,7 +114,7 @@ class Guide:
                 self.streak += 1
                 if self.streak >= 2:
                     self.streak = 0
-                    speak = [f"Have another look. {self.steps[self.index]}"]
+                    speak = [f"Let's have another look. {self.steps[self.index]}"]
             # A no, and a failed check, are silent: the step stands.
         finally:
             frame_path.unlink(missing_ok=True)
@@ -137,7 +137,7 @@ class Guide:
         if self.state != "active":
             return []
         self.state = "stopped"
-        return ["Stopped."]
+        return ["Okay, I've stopped the guide."]
 
     # -- inside -----------------------------------------------------------------
 
