@@ -100,12 +100,13 @@ class FeedTest(unittest.TestCase):
 
 class LogTabTest(unittest.TestCase):
     def test_keys_are_hidden(self):
-        env = {"TRUSS_META_API_KEY": "LLM|12345|abcdefghij", "AMAN_TOKEN": "short"}
+        env = {"TRUSS_META_API_KEY": "LLM|12345|abcdefghij", "AMAN_TOKEN": "short", "TRUSS_SAM_KEY": "sam-secret-123"}
         self.assertEqual(
             serverlog.hide_keys("sent LLM|12345|abcdefghij to meta", env),
             "sent [key hidden] to meta",
         )
         self.assertEqual(serverlog.hide_keys("short stays", env), "short stays")
+        self.assertEqual(serverlog.hide_keys("sam key sam-secret-123", env), "sam key [key hidden]")
         self.assertEqual(
             serverlog.hide_keys("Authorization: Bearer abc123def456", {}),
             "Authorization: Bearer [key hidden]",

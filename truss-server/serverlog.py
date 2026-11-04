@@ -105,7 +105,7 @@ def tidy(line, keep_polls=False):
 
 
 # Environment variables whose values are keys; never written out.
-SECRET_ENV = ("TRUSS_META_API_KEY", "TRUSS_API_KEY", "MODEL_API_KEY", "AMAN_TOKEN")
+SECRET_ENV = ("TRUSS_META_API_KEY", "TRUSS_API_KEY", "MODEL_API_KEY", "AMAN_TOKEN", "TRUSS_SAM_KEY")
 BEARER = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
 HIDDEN = "[key hidden]"
 
