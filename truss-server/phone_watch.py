@@ -23,11 +23,13 @@ LOOK_FRESH_SECONDS only.
 A request carries a fresh random id. The phone acts on an id it has not
 acted on before, once, so pressing Stop on the phone after the Desk
 asked for watching is not overruled on the next check-in, and a server
-restart cannot make an old id look new. A request older than
-FRESH_SECONDS is not acted on, so a phone that only opens the app
-later never starts watching by itself on an old start: the phone
-checks in every few seconds while the app is open, so a minute is
-plenty for a start pressed now.
+restart cannot make an old id look new. A request the phone's
+check-ins still report as unmet stays worth acting on for
+ACT_CAP_SECONDS (see report): the reply widens fresh_seconds to
+cover its age, so an ask the phone was blocked from hearing for a
+few minutes is still heard when a check-in lands. Past the cap it
+ages out, so a phone that only opens the app much later never
+starts watching by itself on an old start.
 
 Only the Desk's own Start and Stop buttons leave a request. Planting
 a question or taking a look never starts watching on its own; a look
@@ -46,6 +48,12 @@ from datetime import datetime
 FRESH_SECONDS = 60
 # How long a Desk look request stays worth acting on.
 LOOK_FRESH_SECONDS = 60
+# How long an unmet start or stop stays worth acting on. Check-ins
+# can be blocked for minutes at a time (the phone on the glasses'
+# Wi-Fi, the app asleep), so the fresh minute alone dropped asks
+# the phone never had the chance to hear. Past this cap an ask
+# ages out for good.
+ACT_CAP_SECONDS = 600
 # A phone not heard from for this long is shown as not reachable.
 PHONE_QUIET_SECONDS = 30
 
@@ -117,9 +125,23 @@ class WatchDesk:
                 "at": now,
                 "from": address,
             }
+            request = self._request_view(now)
+            fresh = FRESH_SECONDS
+            if request is not None and self._request is not None:
+                # The phone acts on a request only while its age reads
+                # as inside fresh_seconds, and it marks the id handled
+                # either way, so an ask first seen when old was lost
+                # for good. While this check-in still reports the ask
+                # unmet, widen the window to cover its age, up to the
+                # cap; the age itself is reported honestly, so the
+                # phone's own guards (a start from before its last
+                # stop is not acted on) keep working.
+                met = (data.get("watching") is True) == self._request["on"]
+                if not met and request["age_seconds"] <= ACT_CAP_SECONDS:
+                    fresh = max(fresh, request["age_seconds"])
             return {
-                "request": self._request_view(now),
-                "fresh_seconds": FRESH_SECONDS,
+                "request": request,
+                "fresh_seconds": fresh,
                 "look": self._look_view(now),
             }
 

@@ -802,7 +802,6 @@ class TrussHandler(BaseHTTPRequestHandler):
             self.send_error(400, str(e))
             return
         self.send_json({"day": day, "answers": items})
-        print(f"GET /answers -> {day}: {len(items)} answers")
 
     def handle_evidence(self):
         """One kept photo from a day's log folder: GET
@@ -895,7 +894,6 @@ class TrussHandler(BaseHTTPRequestHandler):
             alerts.append(item)
         alerts += guide_waiting()
         self.send_json({"alerts": alerts})
-        print(f"GET /alerts -> {len(alerts)} pending")
 
     def _json_body(self):
         content_length = int(self.headers.get("Content-Length", 0))
