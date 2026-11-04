@@ -14,7 +14,7 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
-from http.server import HTTPServer
+from http.server import HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -176,7 +176,7 @@ def test_steps_are_capped_and_deduplicated():
 
 # -- the server ---------------------------------------------------------------
 
-def serve():
+def serve(threaded=False):
     import server as server_module
     from alerts import AlertStore
     tmp = Path(tempfile.mkdtemp())
@@ -185,18 +185,18 @@ def serve():
     server_module.CAPTURES_DIR.mkdir()
     server_module.GUIDE["session"] = None
     server_module.GUIDE_SAY.clear()
-    httpd = HTTPServer(("127.0.0.1", 0), server_module.TrussHandler)
+    httpd = (ThreadingHTTPServer if threaded else HTTPServer)(("127.0.0.1", 0), server_module.TrussHandler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return server_module, httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
 
 
-def call(base, path, body=None):
+def call(base, path, body=None, timeout=30):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(base + path, data=data, method="GET" if body is None else "POST")
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as e:
         return e.code, None
@@ -302,6 +302,52 @@ def test_stop_with_phone_replaces_the_queue():
         httpd.shutdown()
 
 
+def test_writing_steps_never_holds_up_the_rest():
+    """While the model writes the steps (it can take a minute or more),
+    the guide's status and a capture answer at once: the writing runs
+    off the write lock, as the live server runs (threaded)."""
+    server_module, httpd, base = serve(threaded=True)
+    real_ask = server_module.endpoint.ask_json
+    release, entered = threading.Event(), threading.Event()
+    plain = asker({"title": "Shelf", "steps": ["Is the shelf level?", "Are all four legs on?"], "left_out": []})
+
+    def slow(*args, **kwargs):
+        entered.set()
+        release.wait(10)
+        return plain(*args, **kwargs)
+
+    server_module.endpoint.ask_json = slow
+    result = {}
+    try:
+        t = threading.Thread(target=lambda: result.update(r=call(base, "/guide/task", {"task": "build a shelf"})))
+        t.start()
+        check("the model call started", entered.wait(5))
+        status, st = call(base, "/guide/status", timeout=3)
+        check("status answers while the steps are written", status == 200 and not st.get("active"))
+        release.set()
+        t.join(10)
+        status, reply = result["r"]
+        check("the steps still start the guide", status == 200 and reply["of"] == 2)
+    finally:
+        release.set()
+        server_module.endpoint.ask_json = real_ask
+        call(base, "/guide/stop", {"phone": False})
+        httpd.shutdown()
+
+
+def test_unexpected_failure_is_a_plain_error():
+    server_module, httpd, base = serve()
+    real = server_module.task_steps.compose_steps
+    server_module.task_steps.compose_steps = lambda *a: (_ for _ in ()).throw(KeyError("x"))
+    try:
+        status, _ = call(base, "/guide/task", {"task": "lock up"})
+        check("an unexpected failure is answered, not dropped", status == 500)
+        check("no guide was started", server_module.GUIDE["session"] is None)
+    finally:
+        server_module.task_steps.compose_steps = real
+        httpd.shutdown()
+
+
 if __name__ == "__main__":
     test_steps_come_back_cleaned()
     test_all_clears_are_moved_out_by_the_judge()
@@ -314,4 +360,6 @@ if __name__ == "__main__":
     test_server_task_queues_lines_for_the_phone()
     test_server_task_failure_starts_nothing()
     test_stop_with_phone_replaces_the_queue()
+    test_writing_steps_never_holds_up_the_rest()
+    test_unexpected_failure_is_a_plain_error()
     print("ALL PASS")

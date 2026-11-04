@@ -32,7 +32,10 @@ raises TaskError with a plain sentence the Desk can show.
 MAX_STEPS = 8
 MAX_STEP_CHARS = 160
 MAX_TASK_CHARS = 200
-MAX_TOKENS = 2048
+# Room for Muse Spark's thinking as well as the answer. At 2048 its
+# thinking used up the room, the reply was cut off, and the retry was
+# cut off too, so no steps were written.
+MAX_TOKENS = 8192
 
 TASK_SCHEMA = {
     "type": "object",
