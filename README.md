@@ -1,213 +1,380 @@
-# Truss
+<p align="center">
+  <img src="./docs/assets/truss-eye.svg" alt="The Truss mark: an eye drawn in ink strokes" width="120">
+</p>
 
-**Trust the Truss. Your witness for your life.**
+<h1 align="center">Truss</h1>
 
-Truss watches for the answers to questions you leave standing around your
-day: "Is the stove off?" "Did I take my night pills?" "Is the front door
-locked?" You plant each question once, with two photos from your own home:
-what yes looks like and what no looks like. As you go about your day wearing
-Meta glasses, the photos they take are checked only against the questions
-that are due. When a photo answers one, Mannie, the voice of Truss, speaks
-first, without being asked, and the photo that answered it is kept on your
-own computer as evidence. Photos that answer nothing are deleted.
-**Truss Memory** then shows, for any question, every look Truss took at it
-today, in time order, with what it saw each time.
+<p align="center">
+  <strong>"Did I already take my pills?" Truss saw.</strong><br>
+  Ask once. Truss watches through your Meta glasses, speaks up the moment it sees the answer, and keeps the photo as proof.<br>
+  Reach for a second dose, and it tells you that you already took them, and when.<br>
+  <em>Trust the Truss. Your witness for your life.</em>
+</p>
 
-Built for the Meta Global AI Developer Hackathon (Indie track, "Build for
-Your World"). Truss uses Meta models only: every check and every
-plant-time compile goes to Muse Spark 1.3 over the Meta Model API, with
-Muse Glimmer 30B on your own hardware as an optional fallback, and
-evidence outlines come from SAM 3.1, also on your own hardware.
+<p align="center">
+  <img src="https://img.shields.io/badge/models-Meta_only-141414.svg" alt="Meta models only">
+  <img src="https://img.shields.io/badge/glasses-Meta_Wearables_Toolkit-5b5548.svg" alt="Meta Wearables Device Access Toolkit">
+  <img src="https://img.shields.io/badge/server-Python_stdlib_only-141414.svg" alt="Server: Python standard library only">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5b5548.svg" alt="MIT license"></a>
+</p>
 
-## Run it yourself
+<p align="center">
+  <a href="#get-started"><strong>Get started</strong></a> &nbsp;·&nbsp;
+  <a href="#what-it-does">What it does</a> &nbsp;·&nbsp;
+  <a href="#where-your-data-goes">Where your data goes</a> &nbsp;·&nbsp;
+  <a href="#how-it-works">How it works</a>
+</p>
 
-This section takes a developer with a pair of Meta glasses from a fresh
-clone to Mannie answering a question, in about 30 minutes. Three machines
-are involved, all on the same Wi-Fi network:
+<p align="center">
+  <img src="./docs/screenshots/desk-today.png" alt="The Truss Desk, Today tab: what Truss has seen today, each answer with its time, the glasses photo it was seen in and the reason, such as the Wed compartment of the pill organizer being empty while Thu and Fri still hold pills" width="900">
+</p>
 
-- **The glasses**: Meta glasses that Meta's Wearables Device Access
-  Toolkit supports, paired with the Meta AI app on the phone. Truss was
-  built and tested on Oakley Meta Vanguard.
-- **The phone**: an Android phone (Android 12 or newer) running the Truss
-  app. It takes the photos from the glasses and plays Mannie's voice back
-  through them.
-- **The computer**: runs the Truss server and the Truss Desk, a web page
-  where you plant questions and watch what Truss sees. macOS, Windows or
+---
+
+## Why
+
+Some of the things we do every day are the ones we are least sure we did.
+Did I turn the stove off? Did I take the pills, or was that yesterday? Did
+anyone feed the dog? Looking again is easy. Trusting that you looked is not,
+so you fret for an hour, or you do it again to be safe. A second dose is
+where the harm is.
+
+Truss does not sell seeing. Seeing is free. It sells remembering, at the
+moment you are about to do it twice.
+
+You plant a question once, with two photos from your own home: what yes
+looks like and what no looks like. Then you go about your day wearing Meta
+glasses. When a photo answers a question that is due, Truss speaks up first,
+in your ear, without being asked, and the photo that answered it is
+kept on your own computer. Photos that answer nothing are deleted.
+
+A family member or a carer can plant the questions for someone else.
+
+## What it does
+
+- **Speaks first.** You never ask. When the glasses see the answer to a
+  question that is due, Truss tells you, through the glasses.
+- **Remembers what you did.** "Did I take my night pills?" is answered from
+  what Truss saw inside the window, not from how the box looks now. Reach
+  for the organizer again and Truss says you already took them, and when.
+- **Says when it didn't see.** If a window closes with no sighting, you hear
+  it once, with how much of the window was watched. It never says "you
+  didn't", because you may have done it with the glasses off.
+- **Keeps the proof.** Every answer comes with the photo it was seen in, the
+  time, the reason in one sentence, and the model that made the call.
+- **Truss Memory.** Pick a question and see every look Truss took at it
+  today, oldest first, including the ones that found nothing, so you can see
+  it was looking.
+- **Would rather say "can't tell" than guess.** Every check is yes, no or
+  cannot tell, with a reason. A failed call is never an answer.
+- **Your home, your looks.** The reference photos are of your stove, your
+  organizer, your door. Truss checks against those, not against a picture
+  of a stove in general.
+- **Cheap by design.** A photo is only checked against the questions due
+  right now. Nothing due, no model call.
+
+## See it
+
+### What the glasses see
+
+Live view on the Desk: each photo as it arrives from the glasses, and what
+Truss said about it.
+
+<p align="center">
+  <img src="./docs/screenshots/desk-live-view.png" alt="The Desk's Live view: a strip of glasses photos as they arrived, of a laptop on a table and a pill organizer beside it, each with its time, next to what Truss said and a switch to play what Truss says on the computer" width="850">
+</p>
+
+### Truss Memory
+
+Every check of one question today, oldest first: the time, what Truss
+decided, why, and the photo when one was kept. Here, a no at 1:15 PM while
+the compartment still held pills, then a yes at 1:16 PM once it was empty.
+
+<p align="center">
+  <img src="./docs/screenshots/truss-memory.png" alt="Truss Memory for the question Did I take my Wed vitamins: two checks today, a No at 1:15 PM because the Wed compartment still holds pills, and a Yes at 1:16 PM with its photo because the compartment is empty while Thu and Fri still hold pills" width="850">
+</p>
+
+<!-- Add the phone app here when a screenshot is ready: docs/screenshots/phone-home.png, width 320. -->
+
+## Get started
+
+Setup takes about 30 minutes. Three things, all on the same Wi-Fi network:
+
+- **Meta glasses** that the Meta Wearables Device Access Toolkit supports,
+  paired with the Meta AI app, with **Developer Mode** turned on in that
+  app. Truss was built and tested on Oakley Meta Vanguard.
+- **An Android phone** (Android 12 or newer) for the Truss app.
+- **A computer** for the Truss server and the Truss Desk: macOS, Windows or
   Linux.
+- **Python 3.12** on that computer (3.10 is the oldest that works). The
+  server uses only the standard library, so there is nothing to
+  `pip install`. Check with `python3 --version` (Windows: `py --version`).
 
-### 1. What you need
+  | | Install Python 3.12 |
+  |---|---|
+  | macOS | `brew install python@3.12`, or the installer from [python.org](https://www.python.org/downloads/) |
+  | Windows | `winget install -e --id Python.Python.3.12`, or the python.org installer with **py launcher** ticked. Then open a new PowerShell window. |
+  | Linux | `sudo apt install python3.12` (or your distribution's package) |
 
-| | |
-|---|---|
-| Python 3.10 or newer | The server is Python standard library only: nothing to `pip install`. On Linux, also `espeak-ng` for Mannie's voice. |
-| A Meta Model API key | From the Meta Model API console. Checks go to Muse Spark 1.3. |
-| Android Studio (Narwhal or newer) with JDK 17 and Android SDK 36 | To build the app. The Meta Wearables toolkit (`com.meta.wearable:mwdat-core` and `mwdat-camera` 1.0.1) comes from Maven Central by itself; there is nothing to download by hand. |
-| The Meta AI app on the phone, with the glasses paired | And **Developer Mode** turned on for the glasses in the Meta AI app's settings. |
-| Git | To clone this repository. |
+You also need a **Meta Model API key** (checks go to Muse Spark 1.3), and
+Android Studio (Narwhal or newer, JDK 17, Android SDK 36) to build the app.
 
-Optional, for running everything in your own home with no cloud call:
-an NVIDIA DGX Spark or a GPU machine with about 24 GB of memory, for Muse
-Glimmer 30B and SAM 3.1 (step 8).
-
-### 2. Get the code
+### 1. Start the server
 
 ```bash
 git clone https://github.com/ClimbOutLabs/truss.git
-cd truss
-```
-
-### 3. Start the server
-
-The server is `truss-server/server.py`. It listens on port 8792 and prints
-the address the phone and the Desk should use.
-
-**macOS**
-
-```bash
-cd truss-server
+cd truss/truss-server
 python3 server.py
 ```
 
-Mannie's voice is the Mac's built-in speech (`say`). For the most
-natural voice, add a Premium or Enhanced English voice once in System
-Settings > Accessibility > Spoken Content > System voice > Manage Voices,
-then restart the server; its start-up banner names the voice it uses.
+It listens on port 8792 and prints the address the phone and the Desk
+should use. The first start may raise a firewall prompt: allow Python on
+private networks, or the phone can't reach it.
 
-**Windows** (PowerShell, Python 3.10 or newer from python.org)
+<details>
+<summary><strong>Windows</strong></summary>
+
+In PowerShell, from your home folder (not `C:\Windows\system32`):
 
 ```powershell
-cd truss-server
+cd $HOME
+git clone https://github.com/ClimbOutLabs/truss.git
+cd truss\truss-server
 py server.py
 ```
 
-Mannie's voice uses Windows' built-in speech engine; there is nothing to
-install. `TRUSS_VOICE` can name an installed voice, such as
-`"Microsoft Zira Desktop"`. Windows voices sound flatter than the Mac's
-Premium ones. The server switches itself to UTF-8 mode;
-`py -X utf8 server.py` also works. In PowerShell, settings are set with
-`$env:NAME = "value"`, not `export`.
+`py` not recognized? Python 3.12 isn't installed yet (see the table
+above), or the window was open before you installed it: open a new
+PowerShell window. If only `python` works, use that instead of `py`.
 
-**Linux**
+Settings are set with `$env:NAME = "value"`, not `export`. Truss's voice
+uses Windows' built-in speech; `TRUSS_VOICE` can name a voice such as
+`"Microsoft Zira Desktop"`. Windows support is new: the full test suite passes
+on a real Windows machine, but it has had less live use than the Mac, so
+expect a few more bumps.
+
+</details>
+
+<details>
+<summary><strong>Linux</strong></summary>
 
 ```bash
-sudo apt install espeak-ng      # Mannie's voice; TRUSS_VOICE picks an espeak voice
-cd truss-server
+sudo apt install espeak-ng      # Truss's voice
+cd truss/truss-server
 python3 server.py
 ```
 
-On Windows and Linux the server uses the address of the network adapter
-that routes to your network (on macOS, the Wi-Fi address). If it picks
-the wrong one, such as a VPN, Docker, WSL or Ethernet instead of Wi-Fi,
-set `TRUSS_HOST` to this computer's Wi-Fi IP (or `0.0.0.0` for every
-adapter) and restart. With no speech engine installed the server still
-runs and logs each line Mannie would say, but nothing is spoken in the
-glasses. Windows support has been tested on Linux and with simulated
-Windows calls, not yet on a real Windows machine.
+</details>
 
-On any system, the first start may raise a firewall prompt (on Windows,
-Windows Defender Firewall): allow Python on private networks, or the
-phone cannot reach port 8792.
+On a Mac, Truss speaks with the built-in `say`. For the most natural voice,
+add a Premium or Enhanced English voice in System Settings > Accessibility >
+Spoken Content > Manage Voices, then restart the server.
 
-### 4. Give the server your Meta key
+If the printed address is a VPN, Docker, WSL or Ethernet adapter rather
+than your Wi-Fi, set `TRUSS_HOST` to the computer's Wi-Fi IP and restart.
 
-With the key set, each photo that a due question is checked against is
-sent to Meta's Model API, with the question's words and, at planting, its
-two reference photos. Read [Where your data goes](#where-your-data-goes)
-first; step 8 keeps everything in your home instead.
+### 2. Add your Meta key
 
-Either way below works; the key is never written into the repository,
-never printed and never logged.
+Open the Desk at `http://<the printed address>:8792/desk` (the printed
+address, not `localhost`). Go to **Settings**, paste the key, and press
+**Test**. It is saved to `~/.truss/settings.json`, readable only by you,
+and is never printed, logged or written into the repository.
 
-- **From the Desk (any system).** Open the Desk at
-  `http://<the address the server printed>:8792/desk`, go to
-  **Settings**, paste the key, and press **Test**. It is saved to
-  `~/.truss/settings.json` (on Windows, `%USERPROFILE%\.truss\settings.json`),
-  readable only by you, and takes effect at once.
-- **From the shell**, before starting the server:
+Or set it in the shell before starting the server:
 
-  ```bash
-  export TRUSS_META_API_KEY="<your key>"            # macOS, Linux
-  ```
-  ```powershell
-  $env:TRUSS_META_API_KEY = "<your key>"            # Windows PowerShell
-  ```
+```bash
+export TRUSS_META_API_KEY="<your key>"          # macOS, Linux
+$env:TRUSS_META_API_KEY = "<your key>"          # Windows PowerShell
+```
 
-  On a Mac only, you can keep it in the keychain instead of typing it:
-  `export TRUSS_META_API_KEY="$(security find-generic-password -s truss-meta -w)"`.
+Read [Where your data goes](#where-your-data-goes) first: with the key set,
+photos of due questions go to Meta's Model API.
 
-To check the route: the Desk's **Test** button makes one words-only
-Muse Spark call (no photo). With the key exported, the same check from a
-terminal is `python3 truss-server/endpoint.py --smoke`.
+### 3. Build the app
 
-### 5. Build and install the app
+Open the **repository root** in Android Studio, let Gradle sync, plug in the
+phone with USB debugging on, and Run the `app` configuration. Or from a
+terminal: `./gradlew installDebug` (Windows: `.\gradlew.bat installDebug`).
 
-1. Open the **repository root** in Android Studio and let Gradle sync.
-2. Android Studio writes `local.properties` with `sdk.dir`. With Developer
-   Mode on in the Meta AI app, nothing else is needed: the toolkit's
-   `mwdat_application_id` and `mwdat_client_token` default to `0`. Without
-   Developer Mode, add both to `local.properties` from the Wearables
-   Developer Center.
-3. Plug in the phone with USB debugging on, choose the `app` run
-   configuration, and press Run. From a terminal instead:
-   `./gradlew installDebug` (on Windows, `gradlew.bat installDebug`).
+With Developer Mode on in the Meta AI app, nothing else is needed. Without
+it, add `mwdat_application_id` and `mwdat_client_token` from the Wearables
+Developer Center to `local.properties`.
 
-### 6. Connect the phone, the glasses and the computer
+### 4. Connect everything
 
-1. Open Truss on the phone and grant the Bluetooth and nearby-devices
-   permissions it asks for.
-2. Tap **Connect glasses** on the Home screen (or **Connect** under
-   Settings > Connections). The Meta AI app opens to approve Truss;
-   approve it and come back.
-3. **Settings > Connections > Laptop address**: type the address the
-   server printed (just the IP, such as `192.168.1.20`), then tap
-   **Check connection**.
-4. Optional: **Settings > Diagnostics** takes one test photo and speaks a
-   test sentence through the glasses, each with a step-by-step log.
-   **Look now** on the Home screen takes one photo and checks it.
+1. Open Truss on the phone and grant the Bluetooth permissions.
+2. Tap **Connect glasses**. The Meta AI app opens; approve Truss and come back.
+3. **Settings > Connections > Laptop address**: type the IP the server
+   printed, then tap **Check connection**.
 
-### 7. Plant a question and start watching
+### 5. Plant a question
 
-On the computer, open the Desk at `http://<address>:8792/desk`:
+On the Desk, press **Watch for me**:
 
-1. **Watch for me**: type the question the way you would say it
-   ("Is the stove off?"), and say whether it is something to check or
-   something you did.
-2. Show Truss what yes and no look like: look at the thing with the
-   glasses and press **Take the yes photo with the glasses**, then the
-   same for no. You can also drop in two JPEGs.
-3. Choose when Truss should look (every few minutes, from a time until it
-   is done, or during set hours), tick **Be extra careful** for the stove,
-   pills or anything where a wrong answer could do harm, and press
-   **Start watching for me**. The phone starts watching within a few
-   seconds while the Truss app is open.
-4. Wear the glasses and go look at the thing. When a photo answers the
-   question, Mannie says so through the glasses.
+1. Type the question the way you'd say it: "Is the stove off?"
+2. Show Truss yes and no: look at the thing with the glasses and press
+   **Take the yes photo with the glasses**, then the same for no. Two JPEGs
+   work too.
+3. Choose when to look, tick **Be extra careful** for the stove, the pills
+   or anything where a wrong answer could do harm, and press **Start
+   watching for me**.
+4. Wear the glasses and go look at it. Truss answers through the glasses.
 
-The other Desk tabs:
+More help: [troubleshooting](#troubleshooting) · [all settings](#settings) ·
+[server details](truss-server/README.md) · [app details](app/README.md)
 
-- **Today**: every question by time, with how it stands in a word
-  (Watching, Needs its photos, Not seen, Yes), sample questions one click
-  from planting, and a banner for any missed-window alert.
-- **Live view**: what the glasses see now, and what Truss said. It can
-  play Mannie's lines out loud on the computer too.
-- **Watch me do this**: a guided task, one step at a time, each step
-  checked before the next.
-- **History**: a day's answers with their evidence photos.
-- **Truss Memory**: pick a question and see every check of it today,
-  oldest first: the time, what Truss decided, why, and the photo when one
-  was kept. Checks that found nothing are listed too, so you can see that
-  Truss was looking. The app has the same timeline under History.
-- **Settings**: the Meta key and who answers the checks, each with a
-  Test button.
-- **Log**: the server's log, without a terminal.
+## Where your data goes
 
-Planting also works from the app (**Questions**), by typing.
+Photos go from the glasses to the phone to your computer. **From your
+computer, each photo that a due question is checked against goes to Meta's
+Model API (Muse Spark)**, with the question's words and, at planting, its
+two reference photos. That is the one place anything leaves your home.
 
-### 8. Optional: run the models in your own home
+Be clear about one thing: this build ran on the hackathon's free API
+credits, and Meta's billing page says that while free credits are in use,
+content may be used for product improvement. In that configuration, those
+photos and words can be used by Meta.
 
-To check with no cloud call, serve Muse Glimmer 30B under llama.cpp's
-`llama-server` and point the server at it. On an NVIDIA DGX Spark (or a
-Linux machine with a CUDA GPU):
+To keep everything at home, leave the Meta key unset and serve Muse Glimmer
+30B on your own GPU ([below](#run-the-models-at-home)): every call then goes
+there, through the same code.
+
+The kept record stays on your computer as plain files: the evidence photos
+and a plain-text answer log per day. A photo no question fires on is
+deleted after its check. The app talks only to your computer: no cloud
+SDKs, no analytics. There is no speech to text; nothing you say is recorded.
+
+## Built on Meta
+
+| Model | Where it runs | What it does |
+|---|---|---|
+| **Muse Spark 1.3** (`muse-spark-1.3`, standard tier) | Meta Model API | Every check, and the plant-time compile of each question's looks |
+| **Muse Glimmer 30B** (open weights, GGUF Q4_K_M) | Your own GPU, under llama.cpp's `llama-server` | Fallback when the API fails; every call when no Meta key is set |
+| **SAM 3.1** (open weights, `facebook/sam3.1`) | Your own GPU, a small HTTP service (`dgx/sam/`) | Outlines the object in kept evidence photos (optional) |
+| **Wearables Device Access Toolkit** (`mwdat-core`, `mwdat-camera` 1.0.1) | The phone | Photos and video from the glasses, and whether they are being worn |
+
+Rules Truss holds itself to, in code:
+
+- No non-Meta model makes any check, compile or outline.
+- Never the Muse Spark contributor tier, which trains on what it is sent.
+  Any model name containing `contributor` is refused before anything is sent.
+- The Meta key is only ever sent over https to the Meta Model API, never to
+  the local fallback.
+
+## How it works
+
+```mermaid
+flowchart LR
+    Glasses(["Meta glasses<br/>camera · speaker"])
+    App["Truss app<br/>Android phone<br/>Wearables toolkit"]
+
+    subgraph Home["Your computer"]
+        direction TB
+        Server["truss-server<br/>Python standard library"]
+        Desk["Truss Desk<br/>plant · Today · Live view · Memory"]
+        Store[("Questions, answer log<br/>and evidence photos<br/>as plain files")]
+    end
+
+    Meta["Muse Spark 1.3<br/>Meta Model API"]
+
+    subgraph GPU["Your GPU (optional)"]
+        direction TB
+        Glimmer["Muse Glimmer 30B<br/>fallback"]
+        SAM["SAM 3.1<br/>evidence outline"]
+    end
+
+    Glasses <-- "photo · voice" --> App
+    App <-- "Wi-Fi" --> Server
+    Desk --- Server
+    Server --- Store
+    Server -- "due questions only" --> Meta
+    Server -.-> GPU
+
+    classDef paper fill:#f4f1ea,stroke:#5b5548,color:#141414
+    classDef ink fill:#141414,stroke:#141414,color:#f4f1ea
+    class App,Server,Desk,Glimmer,SAM,Meta paper
+    class Glasses,Store ink
+    style Home fill:#fbfaf7,stroke:#c9c2b2,color:#5b5548
+    style GPU fill:#fbfaf7,stroke:#c9c2b2,color:#5b5548,stroke-dasharray: 4 4
+```
+
+- **The phone** watches hands-free. In live view it keeps the glasses video
+  open and sends a photo when the view changes and holds still; in timed
+  photos it takes one every 15, 30 or 60 seconds and skips one nearly
+  identical to the last. It pauses while the glasses are off your face.
+- **The server** keeps each question as a plain folder: its words, the yes
+  and no photos, when to watch, and what planting learned. Only questions
+  that are due ever see a photo, and a question rests once it has fired.
+- **A check** is one OpenAI-compatible `chat/completions` call with image
+  inputs and a strict JSON reply: `yes`, `no` or `cannot_tell`, with a
+  one-sentence reason. All questions due on a photo go in one call; a
+  safety question is always asked alone.
+- **Planting** makes one call that writes, in words, what tells this home's
+  yes-look from its no-look ("both knobs point to OFF"), plus short object
+  names for SAM. Checks then read the photo with those words.
+- **Truss's voice** is your computer's own text to speech, played through
+  the phone to the glasses.
+
+### Two kinds of question
+
+- **State questions** ask how the world is now: is the stove off, is the
+  door locked. The current photo answers them.
+- **Done questions** ask about something you did: did I take my night
+  pills. The current state can lie (a fed dog's bowl is empty an hour later
+  because the dog ate), so the answer comes from what Truss witnessed. A
+  done question has a window, such as 9 to 10 PM. The first time the
+  glasses see the yes-look inside it, Truss keeps that photo and its time
+  as the witness. If the window closes with no witness, an alert is raised
+  that survives restarts and clears only when the phone confirms it was
+  spoken.
+
+Truss uses done questions only where the act leaves a trace that stays: a
+compartment that goes empty, a deadbolt that turns. Pills taken from a
+bottle need act recognition, which Truss does not attempt.
+
+### Safety
+
+The failure designed against is a wrong all-clear, above all on the stove
+and the pills.
+
+- **Cannot tell, instead of a guess.** A yes or no with no reason is read as
+  cannot tell. A check that fails for any reason (timeout, a reply cut off,
+  invalid JSON) is never a verdict.
+- **Description over verdict.** A missed pills window never says "you didn't
+  take your pills". It asks you to look ("Could you have a quick look at the
+  Tuesday PM compartment yourself before you act on this?"), and a test
+  fails the build if any alert sentence holds an action verb such as take,
+  turn, feed or lock (`truss-server/test_safety.py`).
+- **Coverage is stated.** A missed-window alert says how much of the window
+  was really watched, counted from the photos actually checked.
+- **Extra careful questions think harder.** Muse Spark runs at a higher
+  reasoning effort for them.
+
+Truss reduces fretting and redoing. It is not the last line of defense on a
+stove.
+
+### Cost
+
+The expensive thing, a model looking at a photo, is made rare by gates
+that cost nothing: a photo is checked only against questions due now; a
+question rests once it has answered; and the phone skips a photo whose
+16 by 16 grey thumbnail is within 8 levels of the last one sent in the past
+two minutes. A photo-a-second design was costed and rejected.
+
+Over the API, a check is priced at Muse Spark 1.3 standard rates ($1.25 per
+million input tokens, $4.25 per million output). Run at home, the cost is
+the GPU's electricity for the seconds a check takes. In the first live
+end-to-end run, on Muse Glimmer at home, a glasses photo took 11 to 13
+seconds from arriving at the computer to the verdict, and about 15 seconds
+to Truss speaking. Measured per-day cost and battery per hour of wear are
+not reported yet.
+
+## For developers
+
+### Run the models at home
+
+On an NVIDIA DGX Spark or a Linux machine with a CUDA GPU and about 24 GB of
+memory:
 
 ```bash
 ./dgx/bringup.sh all            # downloads Glimmer, builds llama.cpp, serves on :8080
@@ -216,318 +383,138 @@ Linux machine with a CUDA GPU):
 
 Then, where the server runs, set `TRUSS_BASE_URL=http://<gpu-machine>:8080/v1`
 (and `TRUSS_EVIDENCE_OUTLINE=1`, `TRUSS_SAM_URL=http://<gpu-machine>:8090`
-for outlines) and restart it. With the Meta key also set, Glimmer is the
-fallback when Muse Spark fails; with the key unset, every check goes to
-Glimmer and nothing leaves your home. Details:
+for outlines) and restart. With the Meta key also set, Glimmer is the
+fallback; with it unset, nothing leaves your home. Details:
 [`dgx/RUNBOOK.md`](dgx/RUNBOOK.md) and [`dgx/sam/RUNBOOK.md`](dgx/sam/RUNBOOK.md).
 
-### Settings you may want
+### Tests
 
-All are environment variables read when the server starts; none is
-needed for a first run beyond the Meta key.
+Plain Python, standard library only:
+
+```bash
+cd truss-server
+for t in test_*.py; do python3 "$t" || echo "FAILED: $t"; done
+```
+
+On Windows: `Get-ChildItem test_*.py | ForEach-Object { py -X utf8 $_.Name }`.
+
+`eval/` is a harness of 21 staged household questions, five of them safety
+questions, with tuning and held-out frames and the safety false all-clear
+rate reported on its own ([`eval/RUNBOOK.md`](eval/RUNBOOK.md)). Its numbers
+are not reported yet.
+
+<details id="settings">
+<summary><strong>Settings</strong></summary>
+
+All are environment variables read when the server starts. Only the Meta
+key is needed for a first run.
 
 | Variable | Default | What it does |
 |---|---|---|
 | `TRUSS_META_API_KEY` | unset | The Meta key. Turns on Muse Spark 1.3. Sent over https only. |
 | `TRUSS_META_MODEL` | `muse-spark-1.3` | The Muse Spark model. The contributor tier is always refused. |
-| `TRUSS_META_REASONING_EFFORT` | `low` | How hard Muse Spark thinks on an ordinary check: `minimal`, `low`, `medium`, `high`, `xhigh`, or `default` to leave it to the model. Lower is faster. |
-| `TRUSS_META_SAFETY_REASONING_EFFORT` | `medium` | The same, for a question marked extra careful (the stove, the pills). |
+| `TRUSS_META_REASONING_EFFORT` | `low` | How hard Muse Spark thinks on an ordinary check: `minimal`, `low`, `medium`, `high`, `xhigh`, or `default`. Lower is faster. |
+| `TRUSS_META_SAFETY_REASONING_EFFORT` | `medium` | The same, for a question marked extra careful. |
 | `TRUSS_META_TIMEOUT_S` | `120` | Longest wait for one Muse Spark call. |
-| `TRUSS_HOLD_ON` | off | `1` lets Mannie say "Hold on, let me check something." within a couple of seconds when you reach for or look closely at the thing a question is about, then give the full answer. A "did I…" question already seen done is then reminded every time the thing is in shot again, not once per window. Needs an app built from the same commit. |
-| `TRUSS_BASE_URL` | unset | The local fallback, Glimmer under `llama-server` (step 8). |
+| `TRUSS_HOLD_ON` | off | `1` lets Truss say "Hold on, let me check something." when you reach for the thing a question is about, then give the answer. A done question already seen is then reminded every time it is in shot again. Needs an app built from the same commit. |
+| `TRUSS_BASE_URL` | unset | The local fallback, Glimmer under `llama-server`. |
 | `TRUSS_EVIDENCE_OUTLINE` / `TRUSS_SAM_URL` | off / `http://127.0.0.1:8090` | Outline the object in kept evidence photos with SAM 3.1. |
-| `TRUSS_REFUSALS` | `1` | Mannie says when it cannot see the deciding detail ("I can't see the knobs from here"). `0` keeps every cannot-tell silent. |
+| `TRUSS_REFUSALS` | `1` | Truss says when it can't see the deciding detail ("I can't see the knobs from here"). `0` keeps every cannot-tell silent. |
 | `TRUSS_BATCH_CHECKS` | `1` | All questions due on a photo in one call. `0` asks each separately. |
-| `TRUSS_HOST` | found by itself | The address to listen on, when the server picks the wrong network adapter. `0.0.0.0` listens on all. |
-| `TRUSS_VOICE` / `TRUSS_VOICE_RATE` | best installed / system | Mannie's voice by name (a macOS, Windows or espeak voice), and words per minute (macOS and Linux). |
+| `TRUSS_HOST` | found by itself | The address to listen on. `0.0.0.0` listens on all. |
+| `TRUSS_VOICE` / `TRUSS_VOICE_RATE` | best installed / system | Truss's voice by name, and words per minute (macOS and Linux). |
 | `TRUSS_SETTINGS` | `~/.truss/settings.json` | Where the Desk saves its settings. |
-| `TRUSS_PLANT_MINUTES` / `TRUSS_BEDTIME_AFTER` | `15` / `20:00` | For quick live tests only; leave unset otherwise. |
+| `TRUSS_PLANT_MINUTES` / `TRUSS_BEDTIME_AFTER` | `15` / `20:00` | For quick live tests only. |
 
-The full list, and how each part works, is in
-[`truss-server/README.md`](truss-server/README.md).
+The full list is in [`truss-server/README.md`](truss-server/README.md).
 
-### If something does not work
+</details>
 
-- **The phone cannot reach the computer.** Both must be on the same Wi-Fi
-  network, and the computer's firewall must allow Python on it. If the
-  address the server printed is not this computer's Wi-Fi address, set
-  `TRUSS_HOST`. Open
-  `http://<address>:8792/` in the phone's browser: it should answer.
-- **Mannie never speaks.** Run `python3 truss-server/preflight.py` with
-  the server running and the app open: it checks the clock, the model
-  route, that the phone polled and sent a photo, and the planted
-  questions, and every FAIL line says how to fix it. The Desk's **Log**
-  tab shows each check as it happens.
+<details id="troubleshooting">
+<summary><strong>Troubleshooting</strong></summary>
+
+- **The phone can't reach the computer.** Same Wi-Fi for both, and the
+  firewall must allow Python. If the printed address isn't the Wi-Fi
+  address, set `TRUSS_HOST`. Open `http://<address>:8792/` in the phone's
+  browser: it should say the server is running.
+- **The Desk won't open on `localhost`.** The server listens only on the
+  network address it printed. Use that.
+- **Truss never speaks.** With the server running and the app open, run
+  `python3 truss-server/preflight.py` (Windows: `py -X utf8 truss-server\preflight.py`).
+  Every FAIL line says how to fix it. The Desk's **Log** tab shows each check
+  as it happens.
 - **Every answer is "cannot tell" naming Muse Spark.** The key is missing
-  or refused: test it on the Desk's Settings tab.
+  or refused: test it on the Desk's Settings tab. A key saved on the Desk
+  is not read by command-line tools such as `endpoint.py --smoke`; set
+  `TRUSS_META_API_KEY` in that shell too.
 - **The glasses take no photo.** Check Developer Mode in the Meta AI app,
-  then tap **Connect** again under Settings > Connections in Truss. Truss pauses while
+  then tap **Connect** again under Settings > Connections. Truss pauses while
   the glasses are off your face.
 
-Tests are plain Python, standard library only: run any
-`truss-server/test_*.py` with `python3`.
+</details>
 
-## Who it is for
+<details>
+<summary><strong>The Desk, tab by tab</strong></summary>
 
-An older person living alone who forgets: the gas stove, the pills, whether
-the dog was fed. They can look at the stove themselves. What fails is trusting
-their own memory of having looked, so they fret for hours or do the thing
-again to be safe. A second dose of the night pills is where the harm is.
+- **Today**: every question by time, with how it stands in a word
+  (Watching, Needs its photos, Not seen, Yes), samples one click from
+  planting, and a banner for any missed-window alert.
+- **Watch for me**: plant a question.
+- **Live view**: what the glasses see now, and what Truss said. It can play
+  Truss's lines on the computer too.
+- **Watch me do this**: a guided task, one step at a time, each step checked
+  before the next.
+- **History**: a day's answers with their evidence photos.
+- **Truss Memory**: every check of one question today, oldest first.
+- **Settings**: the Meta key and who answers the checks, each with a Test button.
+- **Log**: the server's log, without a terminal.
 
-Truss does not sell seeing. Seeing is free. It sells remembering, at the
-moment they are about to do it twice. A family member or a caretaker can
-plant the questions for them.
+</details>
 
-## Two kinds of question
-
-- **State questions** ask how the world is now: is the stove off, is the
-  door locked. The current photo answers them.
-- **Done questions** ask about something the wearer did: did I take my night pills.
-  Here the current state can lie (a fed dog's bowl is empty an hour later
-  because the dog ate), so the answer comes from witnessed history. A done
-  question has a time window, such as 9 to 10 PM. The first time the glasses
-  see the yes-look inside the window, Truss keeps that one photo and its
-  time as the witness. If the wearer comes back to the organizer later in the
-  window, Mannie says it is already done, and when ("Just so you know, you
-  already took them at 9:12. I saw you."): once per window by default, or
-  every time it is in shot again with `TRUSS_HOLD_ON=1`. If the window
-  closes with no witness, an alert is raised that survives restarts and
-  clears only when the phone confirms it was spoken.
-
-Truss uses done questions only where the act leaves a trace that does not
-undo itself: a pill organizer compartment that goes empty, a deadbolt that
-turns. A bowl that fills and then empties, or pills taken from a bottle,
-need act recognition, which Truss does not attempt.
-
-## Safety posture
-
-The failure designed against is a wrong all-clear, above all on the stove
-and the pills.
-
-- **Cannot tell, instead of a guess.** Every check returns `yes`, `no` or
-  `cannot_tell`, with a one-sentence reason naming what in the photo decides
-  it, and what is missing when it cannot tell. A yes or no with no reason
-  is read as cannot tell. A check that fails for any reason (timeout, a
-  reply cut off, invalid JSON) is never a verdict.
-- **Description over verdict.** A missed pills window never says "you
-  didn't take your pills": the wearer may have taken them with the glasses off,
-  and that sentence is how Truss would cause the double dose it exists to
-  prevent. It asks the wearer to look instead ("Could you have a quick look at
-  the Tuesday PM compartment yourself before you act on this?"), and a test fails the build
-  if any alert sentence holds an action verb such as take, turn, feed or
-  lock (`truss-server/test_safety.py`).
-- **Coverage is stated.** A missed-window alert says how much of the window
-  was actually watched, counted from the photos that were really checked:
-  the whole window, from 9:10 to 9:50, or not at all.
-- **The evidence is always kept with the answer**, and every line in the
-  answer log names the model that made the call.
-
-Truss reduces fretting and redoing. It is not the last line of defense on a
-stove.
-
-## Architecture
-
-```
- Meta glasses            Android phone                 Laptop (home)                  The DGX (home)
- (Oakley Meta    BT  ┌──────────────────┐  LAN  ┌──────────────────────────┐  LAN  ┌──────────────────────────┐
-  Vanguard)  ──────► │ Truss app        │ ────► │ truss-server             │ ────► │ llama-server             │
-  photo              │ Wearables toolkit│ HTTP  │ Python standard library  │ HTTP  │ Muse Glimmer 30B (GGUF)  │
-             ◄────── │ capture, diff,   │ ◄──── │ question store (files)   │ ◄──── │ OpenAI-compatible API    │
-  speaker            │ speak, alerts    │       │ check loop, done windows │       ├──────────────────────────┤
-                     └──────────────────┘       │ alerts, evidence, log    │ ────► │ SAM 3.1 service          │
-                                                │ local text to speech     │       │ (evidence outline)       │
-                                                └──────────────────────────┘       └──────────────────────────┘
-```
-
-- **Glasses and phone (`app/`).** An Android app on Meta's Wearables Device
-  Access Toolkit takes photos from the glasses and sends them to the laptop,
-  and plays Mannie's spoken answers back through the glasses. Questions are
-  planted by typing them in the app. The camera session always ends before any
-  answer is spoken, because the toolkit session and the Bluetooth audio
-  channel cannot be held open together. Watch hands-free either keeps the
-  glasses video open and takes a photo when the view changes and holds still
-  (live view), or takes a photo every 15, 30 or 60 seconds and skips one that
-  is nearly identical to the last photo sent (timed photos). It pauses while
-  the glasses are off your face. The app talks only to the laptop: no cloud SDKs, no analytics.
-  See [`app/README.md`](app/README.md).
-- **Laptop server (`truss-server/`).** Python standard library only, no
-  database, no cloud account. Each question is a plain folder: its words,
-  the yes and no reference photos, its watch pattern, and two files written
-  at plant time (below). Answers go to a plain-text log per day, with the
-  evidence photos beside it. Only questions that are due ever see a photo,
-  and a question rests once it has fired. See
-  [`truss-server/README.md`](truss-server/README.md).
-- **Checking.** One OpenAI-compatible `chat/completions` call with image
-  inputs and a strict JSON schema reply. With `TRUSS_META_API_KEY` set,
-  as in the demo, it goes to Muse Spark 1.3 over the Meta Model API. If
-  the API fails and `TRUSS_BASE_URL` points at Muse Glimmer 30B under
-  llama.cpp's `llama-server` on an NVIDIA DGX Spark in the home, that
-  answers instead, and Muse Spark rests for five minutes after an outage.
-  Every answer line names the model that answered.
-- **Plant-time compile.** When a question has both reference photos, one
-  call to the same route writes `looks.txt` (in words, what tells this
-  home's yes-look from its no-look, such as the knob positions) and
-  `prompts.txt` (two or three short noun phrases for SAM: `stove`,
-  `pill organizer`). Checks then read the current photo plus `looks.txt`.
-- **Evidence outline.** When a question fires, SAM 3.1 on the DGX can find
-  the object by those phrases and save a copy of the evidence photo with
-  the object outlined. It runs in the background and can never delay or
-  stop a spoken answer.
-- **Voice out.** Mannie's lines are spoken by the computer's own text to
-  speech (`say` on macOS, the built-in engine on Windows, espeak-ng on
-  Linux) and played through the phone to the glasses. There is no
-  speech to text: nothing the wearer says is recorded.
-
-### Where your data goes
-
-Photos go from the glasses to the phone to the laptop. From the laptop,
-each photo that a due question is checked against goes to Meta's Model
-API (Muse Spark), together with the question's words and, at planting,
-its two reference photos. That is the one place anything leaves the home.
-The API account runs on the hackathon's free credits, and Meta's billing
-page says that while free credits are in use, content may be used for
-product improvement. So in the demo configuration, those photos and
-words can be used by Meta. Only due questions ever see a photo, and a
-question rests once it has fired, so few photos go. Anyone who wants
-nothing to leave the home leaves `TRUSS_META_API_KEY` unset: every call
-then goes to Glimmer on the DGX, the same code.
-
-The kept record stays on the laptop: evidence photos and the answer log
-are plain files there. A photo no question fires on is deleted from the
-laptop after its check. SAM outlines run on the DGX, in the home.
-
-## Meta models used
-
-| Model | Where it runs | What it does | Status |
-|---|---|---|---|
-| **Muse Spark 1.3** (Meta Model API, standard tier `muse-spark-1.3`) | Meta's API | Every check, and the plant-time compile | <!-- TODO: live result --> _Wired; first live run pending_ |
-| **Muse Glimmer 30B** (open weights, `meta-models/Muse-Glimmer-30B-GGUF`, Q4_K_M with its mmproj and dflash drafter) | Locally, llama.cpp `llama-server` on an NVIDIA DGX Spark | Optional fallback when the API fails; every call when no Meta key is set | Answered real glasses photos end to end before the API key arrived |
-| **SAM 3.1** (open weights, `facebook/sam3.1`; SAM 3 as fallback) | Locally, a small HTTP service on the same DGX (`dgx/sam/`) | Outlines the object in kept evidence photos | <!-- TODO: SAM acceptance result --> _Kit built; live result pending_ |
-
-Rules Truss holds itself to:
-
-- No non-Meta model makes any check, compile or outline, in the demo or
-  the eval.
-- Never the Muse Spark contributor tier, which trains on what it is sent.
-  Any model name containing `contributor` is refused in code before
-  anything is sent.
-- The Meta key is only ever sent over https to the Meta Model API. It is
-  never sent to the fallback, never logged and never in the repo; the
-  local `llama-server` runs without a key.
-
-How to bring the models up on a DGX Spark:
-[`dgx/RUNBOOK.md`](dgx/RUNBOOK.md) (Glimmer) and
-[`dgx/sam/RUNBOOK.md`](dgx/sam/RUNBOOK.md) (SAM).
-
-## Eval
-
-`eval/` is a harness of 21 staged household questions, five of them safety
-questions (stove, oven, front door, tonight's pills, hair straightener)
-where a false yes is a false all-clear. Frames are split into tuning and
-held-out; prompts are tuned on tuning only, and numbers are reported on
-held-out. The false all-clear rate on safety questions is reported as its
-own headline number, never averaged into overall accuracy. One question is
-a cannot-tell probe, where a confident answer is wrong, and so is any
-frame staged with the deciding detail out of view.
-
-The eval runs through the product's own checker against Muse Glimmer on
-the DGX, and asks SAM whether it finds each question's objects:
-`python3 eval/first_numbers.py` ([`eval/RUNBOOK.md`](eval/RUNBOOK.md)).
-
-The headline comparison is generic questions (the question alone) against
-planted questions (with the home's own reference looks).
-
-<!-- TODO: fill from the F v0/v1 run (eval/first_numbers.py, Muse Glimmer 30B). Mock numbers in eval/SCORECARD.md only validate the harness. -->
-
-| Held-out, _model TBD_ | Generic | Planted |
-|---|---|---|
-| Accuracy | _TBD_ | _TBD_ |
-| Safety false all-clear rate | _TBD_ | _TBD_ |
-| Miss rate | _TBD_ | _TBD_ |
-| Cannot-tell rate | _TBD_ | _TBD_ |
-| Frames (n) | _TBD_ | _TBD_ |
-
-## Cost card
-
-Truss is designed so that the expensive thing, a model looking at a photo,
-happens rarely. The gates that keep photos away from the model are all free:
-
-1. **Due-question gating.** A photo is checked only against questions that
-   are due now (an interval, a nightly time, or a done window). With
-   nothing due, no model call is made.
-2. **Rest once fired.** A question that has answered rests until its next
-   due time.
-3. **On-phone diff.** The phone skips a photo whose 16 by 16 grey
-   thumbnail is within 8 levels of the last one sent in the past two
-   minutes.
-
-A photo-a-second design was costed and rejected.
-
-**Method.** Cost per day = checks per day × cost per check. In the demo
-configuration the cost per check is the DGX's electricity for the seconds
-the check takes; there is no per-call fee. For comparison, the same check
-over the Meta Model API is priced from its measured tokens at Muse Spark
-1.3 standard rates ($1.25 per million input tokens, $4.25 per million
-output tokens), and an outline over the API at SAM 3.1's $2.50 per 1,000
-images. On a worn device, battery bounds watching before dollars do, so
-wear-hours per charge sits on the card next to cost per day.
-
-<!-- TODO: fill from the eval run (latency, tokens) and the one-hour wear (watch-log.txt). -->
-
-| | Measured |
-|---|---|
-| Checks per day (bedtime round + daytime questions) | _TBD_ |
-| Time per check on the DGX, p50 / p95 | _TBD_ |
-| Tokens per check, in / out | _TBD_ |
-| Cost per day, local (electricity) | _TBD_ |
-| Cost per day, same checks over the Meta Model API | _TBD_ |
-| Photos sent per hour of wear, and skipped by the diff | _TBD_ |
-| Glasses battery per hour of wear at the demo cadence | _TBD_ |
-
-In the first live end-to-end run, a glasses photo took about 11 to 13
-seconds from arriving at the laptop to Glimmer's verdict, and about
-15 seconds to Mannie speaking.
-
-## Repository
+<details>
+<summary><strong>Repository layout</strong></summary>
 
 | Path | What |
 |---|---|
-| `app/` | Android companion app (Kotlin, Compose, Meta Wearables toolkit) |
-| `truss-server/` | Laptop server: question store, check loop, done windows, alerts, spoken answers, evidence |
+| `app/` | Android app (Kotlin, Compose, Meta Wearables toolkit) |
+| `truss-server/` | Server and Desk: question store, check loop, done windows, alerts, voice, evidence |
 | `dgx/` | Bring-up and bench scripts for Muse Glimmer 30B under `llama-server` |
 | `dgx/sam/` | Local SAM 3.1 service, its setup script and acceptance run |
 | `eval/` | Eval harness: question set, capture tool, runner, scorer |
-| `REVIEW.md` | The review checklist every change goes through |
+| `docs/` | Images for this README |
+
+</details>
 
 ## Beyond the demo
 
-- **Sensor-agnostic.** Nothing in the server knows the photos come from
-  glasses: a question, its two looks, and a frame. The worn, first-person
-  viewpoint is the point of Truss, because it sees what the wearer sees where
-  they are, but the same store and checks would take frames from any camera.
-- **The guide.** `truss-server/guide.py` is an over-the-shoulder mode: a
-  job stated as steps, each step a question a glance can settle, spoken one
-  at a time and checked before the next. It checks only presence, absence,
-  count, position and order, never a safety verdict, keeps no photos, and
-  is not in the demo.
+- **Any camera.** Nothing in the server knows the photos come from glasses:
+  a question, its two looks, and a frame. A fixed camera at home could feed
+  the same questions.
+- **An assistant that plants for you.** An assistant that knows your day
+  could ask "want me to keep an eye on the stove?" and plant the question
+  itself.
+- **The guide.** `truss-server/guide.py` talks you through a job one step at
+  a time, each step checked by eye before the next. It never makes a safety
+  call and keeps no photos.
 
 ## Built during the event
 
-All code in this repository was written during the hackathon, which began
-October 26, 2026; the first commit is from October 27. Pre-existing pieces it relies on:
+Truss was built for the Meta Global AI Developer Hackathon (Indie track,
+"Build for Your World"). All code here was written during the event, which
+began October 26, 2026; the first commit is from October 27. Pre-existing
+pieces it relies on:
 
 - Meta's Wearables Device Access Toolkit; the app's registration and
   permission flow follows its CameraAccess sample.
-- llama.cpp and the SAM 3 code from
-  `facebookresearch/sam3`, installed by the scripts, not vendored.
+- llama.cpp and the SAM 3 code from `facebookresearch/sam3`, installed by
+  the scripts, not vendored.
 - Hanken Grotesk, under the SIL Open Font License
   ([`third_party/fonts/`](third_party/fonts/)).
-- Before Glimmer was running locally, early end-to-end checks went through
-  a bridge to the author's own local assistant, a separate project from
-  before the event that runs a non-Meta model (`truss-server/aman_check.py`,
-  and the spike script `eval/aman_truss_spike.py`).
-  It is off by default, never used in the demo or the eval, and nothing it
-  answered counts as a Truss result.
+- Before Glimmer was running locally, early end-to-end checks went through a
+  bridge to the author's own local assistant, a separate project from before
+  the event that runs a non-Meta model (`truss-server/aman_check.py` and
+  `eval/aman_truss_spike.py`). It is off by default, never used in the demo
+  or the eval, and nothing it answered counts as a Truss result.
 
 ## License
 
